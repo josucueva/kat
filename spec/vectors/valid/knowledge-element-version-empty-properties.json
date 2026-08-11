@@ -1,0 +1,13 @@
+{
+  "name": "knowledge-element-version-empty-properties",
+  "comment": "Minimal KnowledgeElementVersion: active requirement with an empty property map. Demonstrates UUID tag 37 encoding, shortest-form integers, text type_id, and the required properties field encoded explicitly as an empty map.",
+  "object": {
+    "kind": "knowledge-element-version",
+    "element_id": "7c8e0c81-b9fc-4c31-9974-b9db8fa72e51",
+    "type": "kat.core/requirement",
+    "lifecycle": "active",
+    "properties": {}
+  },
+  "cbor_hex": "a400010101020103a400d825507c8e0c81b9fc4c319974b9db8fa72e5101746b61742e636f72652f726571756972656d656e74020003a0",
+  "object_id": "8f83be9fd3d31de06ad47004929ac094f830ff57058cb08fceb9c8b2b5210185"
+}
