@@ -8,6 +8,7 @@ description = "KAT - a semantic software repository: specification-first represe
 uuid = { version = "1", features = ["v4"] }
 hex = "0.4"
 thiserror = "2"
+sha2 = "0.10"
 
 [dev-dependencies]
 # Only the vector-conformance harness (tests/) parses fixture JSON. The

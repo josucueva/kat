@@ -2,10 +2,10 @@
 //!
 //! Walks `spec/vectors/valid/*.json`, builds the logical object from each
 //! fixture's diagnostic representation, encodes it with `canonical_bytes`,
-//! and asserts the exact canonical bytes match the fixture's `cbor_hex`.
-//!
-//! Step 0.6 adds the ObjectId assertion (`object_id(&bytes)` equals the
-//! fixture's `object_id`).
+//! and asserts both the exact canonical bytes (`cbor_hex`) and the derived
+//! ObjectId (`object_id`). The stored ObjectIds were independently computed,
+//! so these assertions prove the full identity chain against externally
+//! derived values.
 //!
 //! Per `spec/vectors/README.md`, the fixture JSON is test metadata only —
 //! never canonical KAT data.
@@ -26,6 +26,8 @@ use kat::domain::relationship::RelationshipVersion;
 use kat::domain::state::{ElementStateEntry, RelationshipStateEntry, SemanticState};
 use kat::encoding::canonical_bytes;
 use kat::encoding::object::{CanonicalObject, CanonicalPayload};
+// Aliased to avoid colliding with the local JSON `object_id` parser helper.
+use kat::encoding::object_id as hash_object_id;
 
 const VALID_VECTORS_DIR: &str = "spec/vectors/valid";
 
@@ -57,6 +59,11 @@ fn valid_vectors_encode_to_exact_canonical_bytes() {
             hex::encode(&bytes),
             fixture["cbor_hex"].as_str().unwrap(),
             "cbor bytes mismatch for {name}"
+        );
+        assert_eq!(
+            hash_object_id(&bytes).to_string(),
+            fixture["object_id"].as_str().unwrap(),
+            "object_id mismatch for {name}"
         );
     }
 }
