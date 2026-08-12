@@ -12,6 +12,7 @@ pub mod validation;
 
 pub use change::{
     ChangeContext, ChangeError, CreateElementInput, PreconditionError, PreparedElementCreation,
-    apply_create_element, prepare_change,
+    apply_create_element, prepare_change, validate_create_element_ontology,
 };
 pub use open::{Repository, open_repository};
+pub use validation::ontology::OntologyError;

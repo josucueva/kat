@@ -45,6 +45,7 @@ use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use crate::repository::object_store::{ObjectStore, ObjectStoreError};
 use crate::repository::open::Repository;
 use crate::repository::ref_store::AcceptedRef;
+use crate::repository::validation::ontology::{OntologyError, validate_element_type};
 
 /// A failing operation-level precondition (operation *application* condition,
 /// near the Change Engine rather than in `repository::validation`).
@@ -84,6 +85,9 @@ pub enum ChangeError {
     /// An operation-level precondition was not satisfied.
     #[error("precondition violated: {0}")]
     Precondition(#[from] PreconditionError),
+    /// The candidate violates ontology conformance.
+    #[error("ontology conformance error: {0}")]
+    Ontology(#[from] OntologyError),
     /// The application input contained a duplicate canonical property key.
     #[error("duplicate property key: {0}")]
     DuplicatePropertyKey(String),
@@ -272,6 +276,20 @@ pub fn apply_create_element(
     })
 }
 
+/// Applies the step 1.3 ontology-conformance stage to a prepared element
+/// creation: the element's `type_id` must exist in the base `OntologyVersion`.
+///
+/// The validator uses **only** `prepared.context.ontology` — the ontology
+/// loaded from the repository's `base_state.ontology_version` — never a global
+/// core ontology. Step 1.3 enforces this single rule and nothing else: no
+/// invariant validation (1.4), no persistence, no ChangeRevision, no CAS.
+pub fn validate_create_element_ontology(
+    prepared: PreparedElementCreation,
+) -> Result<PreparedElementCreation, ChangeError> {
+    validate_element_type(&prepared.context.ontology, &prepared.element.type_id)?;
+    Ok(prepared)
+}
+
 /// Sorts property keys into canonical order (bytewise comparison of their full
 /// deterministic CBOR encodings, RFC 8949 §4.2.1) and rejects duplicate keys.
 ///
@@ -314,6 +332,18 @@ mod tests {
     /// A `ChangeContext` over a manually constructed base state. `accepted`
     /// references `object_id(1)`; the base state's `ontology_version` is `object_id(2)`.
     fn context_with_base(elements: Vec<ElementStateEntry>) -> ChangeContext {
+        context_with_parts(
+            elements,
+            initial_core_ontology(OntologyId::from_uuid(Uuid::nil())),
+        )
+    }
+
+    /// A `ChangeContext` whose active ontology is `ontology` (the authoritative,
+    /// base-state-referenced ontology for validation, not a global core).
+    fn context_with_parts(
+        elements: Vec<ElementStateEntry>,
+        ontology: OntologyVersion,
+    ) -> ChangeContext {
         let base_state = SemanticState {
             ontology_version: object_id(2),
             elements,
@@ -326,7 +356,7 @@ mod tests {
             },
             base_state_id: object_id(1),
             base_state,
-            ontology: initial_core_ontology(OntologyId::from_uuid(Uuid::nil())),
+            ontology,
         }
     }
 
@@ -501,5 +531,85 @@ mod tests {
             .candidate_state
             .validate_canonical_structure()
             .unwrap();
+    }
+
+    #[test]
+    fn ontology_validation_accepts_known_core_types() {
+        for (type_id, id) in [
+            ("kat.core/requirement", 1),
+            ("kat.core/constraint", 2),
+            ("kat.core/implementation", 3),
+        ] {
+            let prepared =
+                apply_create_element(context_with_base(vec![]), input(id, type_id, vec![]))
+                    .unwrap();
+            let validated = validate_create_element_ontology(prepared).unwrap();
+            assert_eq!(validated.element.type_id, type_id);
+        }
+    }
+
+    #[test]
+    fn ontology_validation_rejects_unknown_type() {
+        let prepared = apply_create_element(
+            context_with_base(vec![]),
+            input(9, "kat.core/not-a-real-type", vec![]),
+        )
+        .unwrap();
+
+        let err = validate_create_element_ontology(prepared).unwrap_err();
+        assert!(matches!(
+            err,
+            ChangeError::Ontology(OntologyError::UnknownElementType(t))
+                if t == "kat.core/not-a-real-type"
+        ));
+    }
+
+    #[test]
+    fn ontology_validation_uses_the_base_ontology_not_a_global_core() {
+        // A custom authoritative ontology defining only "constraint" — no
+        // "requirement". The context's loaded ontology must decide, not a
+        // hardcoded core.
+        let custom = crate::domain::ontology::OntologyVersion {
+            ontology_id: OntologyId::from_uuid(Uuid::from_u128(99)),
+            element_types: vec![crate::domain::ontology::ElementTypeDefinition {
+                type_id: "kat.core/constraint".into(),
+                name: "Constraint".into(),
+            }],
+            relationship_types: vec![],
+        };
+
+        // "requirement" is not in the authoritative (base) ontology -> rejected.
+        let prepared = apply_create_element(
+            ChangeContext {
+                ontology: custom.clone(),
+                ..context_with_base(vec![])
+            },
+            input(2, "kat.core/requirement", vec![]),
+        )
+        .unwrap();
+        let err = validate_create_element_ontology(prepared).unwrap_err();
+        assert!(matches!(
+            err,
+            ChangeError::Ontology(OntologyError::UnknownElementType(t))
+                if t == "kat.core/requirement"
+        ));
+    }
+
+    #[test]
+    fn ontology_validation_does_not_mutate_the_prepared_creation() {
+        let prepared = apply_create_element(
+            context_with_base(vec![]),
+            input(7, "kat.core/requirement", vec![]),
+        )
+        .unwrap();
+        let element_before = prepared.element.clone();
+        let candidate_before = prepared.candidate_state.clone();
+        let context_before_ontology = prepared.context.ontology.clone();
+
+        let validated = validate_create_element_ontology(prepared).unwrap();
+
+        assert_eq!(validated.element, element_before);
+        assert_eq!(validated.candidate_state, candidate_before);
+        assert_eq!(validated.context.ontology, context_before_ontology);
     }
 }
