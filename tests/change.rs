@@ -17,7 +17,8 @@ use std::path::{Path, PathBuf};
 
 use kat::domain::property::PropertyValue;
 use kat::repository::change::{
-    apply_create_element, prepare_change, validate_create_element_ontology,
+    apply_create_element, prepare_change, validate_create_element_invariants,
+    validate_create_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::open_repository;
@@ -183,6 +184,44 @@ fn ontology_validation_end_to_end_does_not_persist_or_publish() {
     assert_eq!(validated.candidate_state.elements.len(), 1);
 
     // Repository untouched.
+    assert_eq!(object_ids(root), objects_before);
+    assert_eq!(objects_before.len(), 2);
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
+}
+
+#[test]
+fn invariant_validation_end_to_end_has_no_side_effects() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+    let objects_before = object_ids(root);
+
+    let repo = open_repository(root).unwrap();
+    let context = prepare_change(&repo).unwrap();
+    let prepared = apply_create_element(
+        context,
+        kat::repository::change::CreateElementInput {
+            element_id: kat::domain::identity::ElementId::from_uuid(Uuid::from_u128(13)),
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("A requirement".into()))],
+        },
+    )
+    .unwrap();
+    let validated =
+        validate_create_element_ontology(validate_create_element_invariants(prepared).unwrap())
+            .unwrap();
+
+    assert_eq!(
+        validated.element.lifecycle,
+        kat::domain::element::Lifecycle::Active
+    );
+    assert_eq!(validated.candidate_state.elements.len(), 1);
+
+    // V1/S1 are logical only: nothing persisted, accepted ref unchanged.
     assert_eq!(object_ids(root), objects_before);
     assert_eq!(objects_before.len(), 2);
     assert_eq!(

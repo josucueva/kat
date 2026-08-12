@@ -45,6 +45,9 @@ use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use crate::repository::object_store::{ObjectStore, ObjectStoreError};
 use crate::repository::open::Repository;
 use crate::repository::ref_store::AcceptedRef;
+use crate::repository::validation::invariant::{
+    InvariantError, validate_create_element_invariants as validate_candidate_invariants,
+};
 use crate::repository::validation::ontology::{OntologyError, validate_element_type};
 
 /// A failing operation-level precondition (operation *application* condition,
@@ -88,6 +91,9 @@ pub enum ChangeError {
     /// The candidate violates ontology conformance.
     #[error("ontology conformance error: {0}")]
     Ontology(#[from] OntologyError),
+    /// The candidate violates a semantic repository invariant.
+    #[error("invariant violated: {0}")]
+    Invariant(#[from] InvariantError),
     /// The application input contained a duplicate canonical property key.
     #[error("duplicate property key: {0}")]
     DuplicatePropertyKey(String),
@@ -287,6 +293,20 @@ pub fn validate_create_element_ontology(
     prepared: PreparedElementCreation,
 ) -> Result<PreparedElementCreation, ChangeError> {
     validate_element_type(&prepared.context.ontology, &prepared.element.type_id)?;
+    Ok(prepared)
+}
+
+/// Applies the step 1.4 invariant stage to a prepared element creation.
+///
+/// Validates the **candidate SemanticState** invariants (structural canonical
+/// form, Active lifecycle, correct V1 identity + reference, preserved ontology
+/// and unrelated content). It does **not** require persistence (V1/S1 are not
+/// yet in the ObjectStore — that is 1.6 and repository open/integrity), and it
+/// never publishes. Pure: no side effects.
+pub fn validate_create_element_invariants(
+    prepared: PreparedElementCreation,
+) -> Result<PreparedElementCreation, ChangeError> {
+    validate_candidate_invariants(&prepared)?;
     Ok(prepared)
 }
 
