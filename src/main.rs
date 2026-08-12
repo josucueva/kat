@@ -9,26 +9,38 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::str::FromStr;
 
-use kat::domain::identity::{ElementId, ObjectId};
+use kat::domain::identity::{ChangeId, ElementId, ObjectId};
+use kat::domain::ontology::OntologyVersion;
 use kat::domain::operation::Operation;
+use kat::domain::property::PropertyValue;
+use kat::repository::change::{
+    ChangeContext, ChangeError, CreateElementInput, PublishedChange, apply_create_element,
+    persist_prepared_change, prepare_change, prepare_change_revision, publish_persisted_change,
+    validate_create_element_invariants, validate_create_element_ontology,
+};
 use kat::repository::init::init_repository;
-use kat::repository::open::open_repository;
+use kat::repository::open::{Repository, open_repository};
 use kat::repository::query::{HistoryEntry, QueryError, history, show_element};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("init") => cmd_init(),
+        Some("create") => cmd_create(&args[1..]),
         Some("show") => cmd_show(&args[1..]),
         Some("history") => cmd_history(&args[1..]),
         Some(other) => {
             eprintln!("kat: unknown command '{other}'");
-            eprintln!("usage: kat init | kat show <element-id> | kat history");
+            eprintln!(
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat show <element-id> | kat history"
+            );
             ExitCode::FAILURE
         }
         None => {
             eprintln!("kat: missing command");
-            eprintln!("usage: kat init | kat show <element-id> | kat history");
+            eprintln!(
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat show <element-id> | kat history"
+            );
             ExitCode::FAILURE
         }
     }
@@ -50,6 +62,174 @@ fn cmd_init() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Parsed `kat create` arguments.
+struct CreateArgs {
+    type_arg: String,
+    title: String,
+    description: Option<String>,
+}
+
+/// Parses exactly the `cli.md` sketch: `kat create <type> --title "..."
+/// [--description "..."]`. No generic `--property` support yet.
+fn parse_create_args(args: &[String]) -> Result<CreateArgs, String> {
+    let (type_arg, rest) = args
+        .split_first()
+        .ok_or_else(|| "expected <type> --title \"...\"".to_string())?;
+    let mut title: Option<String> = None;
+    let mut description: Option<String> = None;
+    let mut i = 0;
+    while i < rest.len() {
+        let flag = rest[i].as_str();
+        let value = rest
+            .get(i + 1)
+            .ok_or_else(|| format!("missing value for {flag}"))?;
+        match flag {
+            "--title" => {
+                if title.is_some() {
+                    return Err("duplicate --title".to_string());
+                }
+                title = Some(value.clone());
+            }
+            "--description" => {
+                if description.is_some() {
+                    return Err("duplicate --description".to_string());
+                }
+                description = Some(value.clone());
+            }
+            other => return Err(format!("unknown option '{other}'")),
+        }
+        i += 2;
+    }
+    let title = title.ok_or_else(|| "--title is required".to_string())?;
+    Ok(CreateArgs {
+        type_arg: type_arg.clone(),
+        title,
+        description,
+    })
+}
+
+/// Maps a CLI type argument to a canonical element type ID.
+///
+/// Fully-qualified IDs (containing `/`) pass through and are validated by the
+/// engine against the repository ontology. Short names resolve to the unique
+/// element type in the base ontology whose ID ends in `/short-name`
+/// (e.g. `requirement` -> `kat.core/requirement`), so the authoritative base
+/// ontology is the only source of type names — never a hardcoded CLI table.
+fn resolve_element_type(ontology: &OntologyVersion, arg: &str) -> Result<String, String> {
+    if arg.contains('/') {
+        return Ok(arg.to_string());
+    }
+    let mut matches = ontology
+        .element_types
+        .iter()
+        .filter(|definition| definition.type_id.rsplit('/').next() == Some(arg));
+    match (matches.next(), matches.next()) {
+        (Some(only), None) => Ok(only.type_id.clone()),
+        (None, _) => Err(format!("unknown element type '{arg}'")),
+        (Some(_), Some(_)) => Err(format!("ambiguous element type '{arg}'")),
+    }
+}
+
+/// `kat create <type> --title "..." [--description "..."]` — run a
+/// `CreateElement` change end to end through the Change Engine and publish it
+/// (thin dispatch; all semantics live in the library).
+///
+/// Identity (ElementId, ChangeId) is generated here; the engine stays
+/// deterministic. The resulting stable identifiers are printed for the
+/// caller (and for `kat show`/`kat history`).
+fn cmd_create(args: &[String]) -> ExitCode {
+    let parsed = match parse_create_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("kat create: {message}");
+            eprintln!("usage: kat create <type> --title \"...\" [--description \"...\"]");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat create: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Prepare first so the base ontology is available to resolve the type
+    // argument against (short name -> canonical ID).
+    let context = match prepare_change(&repository) {
+        Ok(context) => context,
+        Err(error) => return fail_create(error),
+    };
+    let type_id = match resolve_element_type(&context.ontology, &parsed.type_arg) {
+        Ok(type_id) => type_id,
+        Err(message) => {
+            eprintln!("kat create: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let published = match create_pipeline(&repository, context, type_id, &parsed) {
+        Ok(published) => published,
+        Err(error) => return fail_create(error),
+    };
+
+    let prepared = &published.persisted.prepared;
+    println!("element_id: {}", prepared.creation.element.element_id);
+    println!("version_id: {}", prepared.creation.element_version_id);
+    println!("state_id: {}", prepared.state_id);
+    println!("change_id: {}", prepared.change.change_id);
+    println!("change_revision_id: {}", prepared.change_revision_id);
+    ExitCode::SUCCESS
+}
+
+/// Prints a change-engine failure and returns the failure exit code. A CAS
+/// conflict is reported explicitly and never retried automatically.
+fn fail_create(error: ChangeError) -> ExitCode {
+    match error {
+        ChangeError::Conflict => {
+            eprintln!(
+                "kat create: the accepted repository state changed while creating; nothing was published. Re-run kat create."
+            );
+        }
+        other => eprintln!("kat create: {other}"),
+    }
+    ExitCode::FAILURE
+}
+
+/// Runs a prepared `CreateElement` through the full engine pipeline and
+/// publishes it: apply -> ontology -> invariants -> revision -> persist ->
+/// publish. `--title`/`--description` become text element properties; the
+/// engine owns canonical normalization.
+fn create_pipeline(
+    repository: &Repository,
+    context: ChangeContext,
+    type_id: String,
+    parsed: &CreateArgs,
+) -> Result<PublishedChange, ChangeError> {
+    let mut properties = vec![(
+        "title".to_string(),
+        PropertyValue::Text(parsed.title.clone()),
+    )];
+    if let Some(description) = &parsed.description {
+        properties.push((
+            "description".to_string(),
+            PropertyValue::Text(description.clone()),
+        ));
+    }
+    let input = CreateElementInput {
+        element_id: ElementId::new(),
+        type_id,
+        properties,
+    };
+    let prepared = apply_create_element(context, input)?;
+    let validated = validate_create_element_ontology(prepared)?;
+    let validated = validate_create_element_invariants(validated)?;
+    let revision = prepare_change_revision(validated, ChangeId::new(), None)?;
+    let persisted = persist_prepared_change(repository, revision)?;
+    publish_persisted_change(repository, persisted)
 }
 
 /// `kat show <element-id>` — display the currently accepted version of an

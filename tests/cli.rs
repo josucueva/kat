@@ -6,8 +6,10 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::str::FromStr;
 
-use kat::domain::identity::{ChangeId, ElementId};
+use kat::domain::identity::{ChangeId, ElementId, ObjectId};
+use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
 use kat::repository::change::{
     CreateElementInput, apply_create_element, persist_prepared_change, prepare_change,
@@ -16,6 +18,7 @@ use kat::repository::change::{
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::open_repository;
+use kat::repository::query::history;
 use uuid::Uuid;
 
 fn run_kat(dir: &Path, args: &[&str]) -> (String, String, bool) {
@@ -29,6 +32,14 @@ fn run_kat(dir: &Path, args: &[&str]) -> (String, String, bool) {
         String::from_utf8_lossy(&output.stderr).into_owned(),
         output.status.success(),
     )
+}
+
+/// Extracts the value of a `key: value` line from CLI stdout.
+fn id_line<'a>(out: &'a str, key: &str) -> &'a str {
+    let prefix = format!("{key}: ");
+    out.lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .unwrap_or_else(|| panic!("output must contain a '{key}: ...' line:\n{out}"))
 }
 
 /// The identities of a change published through the library.
@@ -165,4 +176,224 @@ fn kat_history_prints_accepted_chain() {
         published.change_revision_id, published.state_id, s0, published.version_id
     );
     assert_eq!(out, expected);
+}
+
+// ---------------------------------------------------------------------------
+// kat create — Phase 1 closure
+// ---------------------------------------------------------------------------
+
+/// The Phase 1 acceptance scenario end to end as a black-box CLI flow (per
+/// `docs/implementation-plan.md`): init -> create -> capture IDs -> fresh
+/// reopen -> verify accepted / C1 / S1 -> kat show -> kat history.
+#[test]
+fn phase1_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init (CLI).
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+    let s0 = open_repository(root).unwrap().accepted.state;
+
+    // 2-3. kat create requirement --title "User authentication"; capture IDs.
+    let (create_out, create_err, ok) = run_kat(
+        root,
+        &["create", "requirement", "--title", "User authentication"],
+    );
+    assert!(ok, "kat create failed: {create_err}\n{create_out}");
+    let element_id = ElementId::from_str(id_line(&create_out, "element_id")).unwrap();
+    let version_id = ObjectId::from_str(id_line(&create_out, "version_id")).unwrap();
+    let state_id = ObjectId::from_str(id_line(&create_out, "state_id")).unwrap();
+    let change_id = ChangeId::from_str(id_line(&create_out, "change_id")).unwrap();
+    let change_revision_id =
+        ObjectId::from_str(id_line(&create_out, "change_revision_id")).unwrap();
+
+    // 4. Fresh process reopen.
+    let repo = open_repository(root).unwrap();
+
+    // 5. Accepted head: { state: S1, change: C1 }.
+    assert_eq!(repo.accepted.state, state_id);
+    assert_eq!(repo.accepted.change, Some(change_revision_id));
+
+    // 6. C1: result_state == S1, base_states == [S0], CreateElement(V1).
+    let entries = history(&repo).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].revision_id, change_revision_id);
+    assert_eq!(entries[0].change.change_id, change_id);
+    assert_eq!(entries[0].change.result_state, state_id);
+    assert_eq!(entries[0].change.base_states, vec![s0]);
+    assert_eq!(
+        entries[0].change.operations,
+        vec![Operation::CreateElement {
+            new_version: version_id,
+        }]
+    );
+
+    // 7. S1 maps E1 -> V1.
+    let context = prepare_change(&repo).unwrap();
+    assert_eq!(context.base_state_id, state_id);
+    assert_eq!(context.base_state.elements.len(), 1);
+    assert_eq!(context.base_state.elements[0].element_id, element_id);
+    assert_eq!(context.base_state.elements[0].version, version_id);
+
+    // 8. kat show E1: requirement, active, title present.
+    let (out, err, ok) = run_kat(root, &["show", &element_id.to_string()]);
+    assert!(ok, "kat show failed: {err}");
+    assert!(out.contains("type: kat.core/requirement"));
+    assert!(out.contains("lifecycle: active"));
+    assert!(out.contains("title: User authentication"));
+
+    // 9. kat history: C1 shown, S1 shown, CreateElement(V1) shown.
+    let (out, err, ok) = run_kat(root, &["history"]);
+    assert!(ok, "kat history failed: {err}");
+    assert!(out.contains(&change_revision_id.to_string()));
+    assert!(out.contains(&state_id.to_string()));
+    assert!(out.contains(&format!("create_element {version_id}")));
+}
+
+#[test]
+fn kat_create_outside_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    let (out, err, ok) = run_kat(root, &["create", "requirement", "--title", "x"]);
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("no KAT repository found"));
+}
+
+#[test]
+fn kat_create_unknown_short_type_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    let (out, err, ok) = run_kat(root, &["create", "bogus", "--title", "x"]);
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("unknown element type 'bogus'"));
+
+    // Nothing was published.
+    assert_eq!(open_repository(root).unwrap().accepted.change, None);
+}
+
+#[test]
+fn kat_create_unknown_qualified_type_is_ontology_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    // A fully-qualified ID passes through the CLI and is rejected by the
+    // engine's ontology conformance stage.
+    let (out, err, ok) = run_kat(root, &["create", "kat.core/nope", "--title", "x"]);
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("ontology conformance"));
+    assert!(err.contains("kat.core/nope"));
+
+    assert_eq!(open_repository(root).unwrap().accepted.change, None);
+}
+
+#[test]
+fn kat_create_missing_title_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    let (out, err, ok) = run_kat(root, &["create", "requirement"]);
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("--title is required"));
+    assert!(err.contains("usage: kat create"));
+}
+
+#[test]
+fn kat_create_rejects_malformed_arguments() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    // Duplicate --title.
+    let (out, err, ok) = run_kat(
+        root,
+        &["create", "requirement", "--title", "a", "--title", "b"],
+    );
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("duplicate --title"));
+
+    // Unknown option.
+    let (out, err, ok) = run_kat(
+        root,
+        &["create", "requirement", "--title", "a", "--bogus", "x"],
+    );
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("unknown option '--bogus'"));
+
+    // Missing flag value.
+    let (out, err, ok) = run_kat(root, &["create", "requirement", "--title"]);
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("missing value for --title"));
+
+    // Nothing was published by any of the failures.
+    assert_eq!(open_repository(root).unwrap().accepted.change, None);
+}
+
+#[test]
+fn kat_create_supports_optional_description() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    let (create_out, create_err, ok) = run_kat(
+        root,
+        &[
+            "create",
+            "requirement",
+            "--title",
+            "T",
+            "--description",
+            "D",
+        ],
+    );
+    assert!(ok, "kat create failed: {create_err}\n{create_out}");
+    let element_id = ElementId::from_str(id_line(&create_out, "element_id")).unwrap();
+
+    // Both flags become text element properties.
+    let (out, err, ok) = run_kat(root, &["show", &element_id.to_string()]);
+    assert!(ok, "kat show failed: {err}");
+    assert!(out.contains("title: T"));
+    assert!(out.contains("description: D"));
+}
+
+#[test]
+fn kat_create_twice_produces_linear_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    let (c1_out, c1_err, ok) = run_kat(root, &["create", "requirement", "--title", "First"]);
+    assert!(ok, "first kat create failed: {c1_err}\n{c1_out}");
+    let (c2_out, c2_err, ok) = run_kat(root, &["create", "requirement", "--title", "Second"]);
+    assert!(ok, "second kat create failed: {c2_err}\n{c2_out}");
+
+    // Each create is a fresh process, so the second prepares against S1: the
+    // history is a linear C2 -> C1 chain (dependencies = accepted head).
+    let repo = open_repository(root).unwrap();
+    let entries = history(&repo).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].change.dependencies, vec![entries[1].revision_id]);
+    assert!(entries[1].change.dependencies.is_empty());
+
+    // Both elements are in the accepted state.
+    let context = prepare_change(&repo).unwrap();
+    assert_eq!(context.base_state.elements.len(), 2);
 }
