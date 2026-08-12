@@ -2,7 +2,7 @@
 
 This document is the working plan and progress tracker for implementing the KAT v0.1 prototype in Rust. It follows the implementation workflow and the phasing defined in `prototype-design.md` (Phase 0: Canonical Repository Substrate; Phase 1: First Semantic Vertical Slice).
 
-Status: **Phase 0 in progress** — steps 0.1 (skeleton) and 0.2 (identity primitives) complete. `cargo test` (12 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass.
+Status: **Phase 0 in progress** — steps 0.1 (skeleton), 0.2 (identity primitives), and 0.3 (canonical data model + structural validation) complete. `cargo test` (32 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass.
 
 Toolchain: Rust **stable GNU `x86_64-pc-windows-gnu` 1.97.1**, pinned via `rust-toolchain.toml` (MSVC Build Tools are not installed on this machine; MinGW-w64 provides the linker).
 
@@ -91,14 +91,16 @@ Notes: `ObjectId` parsing accepts **only** the canonical form (exactly 64 chars,
 
 Implement the model directly from `spec/canonical-format.cddl` (the CDDL is authoritative — do not design these types independently):
 
-- [ ] `PropertyValue` (null / bool / int / text / byte string / UUID / list / map; **no floating point**).
-- [ ] `KnowledgeElementVersion` (element_id, type_id, lifecycle, properties).
-- [ ] `RelationshipVersion` (relationship_id, source, relationship_type, target, properties).
-- [ ] `OntologyVersion` (ontology_id, element_type_definitions, relationship_type_definitions).
-- [ ] `SemanticState` (ontology_version, sorted element entries, sorted relationship entries).
-- [ ] `ChangeRevision` (change_id, base_states, result_state, operations, dependencies, optional description).
-- [ ] `Operation` — the six operation encodings: CreateElement(1), UpdateElement(2), DeprecateElement(3), Link(4), Unlink(5), Supersede(6).
-- [ ] `CanonicalObject` envelope: `envelope_version = 1`, `object_kind`, `schema_version = 1`, `payload`; Object IDs are **not** encoded inside the object.
+- [x] `PropertyValue` (null / bool / int / text / byte string / UUID / list / map; **no floating point**).
+- [x] `KnowledgeElementVersion` (element_id, type_id, lifecycle, properties).
+- [x] `RelationshipVersion` (relationship_id, source, relationship_type, target, properties).
+- [x] `OntologyVersion` (ontology_id, element_type_definitions, relationship_type_definitions).
+- [x] `SemanticState` (ontology_version, sorted element entries, sorted relationship entries).
+- [x] `ChangeRevision` (change_id, base_states, result_state, operations, dependencies, optional description).
+- [x] `Operation` — the six operation encodings: CreateElement(1), UpdateElement(2), DeprecateElement(3), Link(4), Unlink(5), Supersede(6).
+- [x] `CanonicalObject` envelope: `envelope_version = 1`, `object_kind`, `schema_version = 1`, `payload`; Object IDs are **not** encoded inside the object.
+
+Notes: maps, states, and ontology definitions use **ordered vectors** (not `BTreeMap`/`HashMap`) so malformed duplicates/order remain observable to validation. `Lifecycle`, `Operation`, and `ObjectKind` are semantic enums — numeric protocol IDs are assigned by the step 0.4 encoder, not hard-coded as discriminants. **Structural validation** lives in `encoding/validate.rs` (`CanonicalValidate` trait + `CanonicalStructureError`): sorted/unique SemanticState entries, sorted/unique ontology definitions and allowed-type lists, sorted (non-unique) multi-base states, sorted/unique dependencies, non-empty base_states/operations, and canonical property-key order. No CBOR, SHA-256, filesystem, or Change Engine logic added.
 
 ### 0.4 — Deterministic CBOR encoding
 
@@ -226,6 +228,7 @@ kat history
 | Date       | Milestone / step completed       | Notes                                                                                                                                                                                                                  |
 | ---------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-08-11 | Plan created                     | Phase 0 not yet started; no Rust implementation exists                                                                                                                                                                 |
+| 2026-08-11 | Step 0.3 — Canonical data model + structural validation | Domain types (`property`, `element`, `relationship`, `ontology`, `operation`, `change`, `state`) mirroring the CDDL + typed `CanonicalObject` envelope (`encoding/object.rs`). `CanonicalValidate` structural checks (`encoding/validate.rs`): sorted/unique collections, non-empty base_states/operations, canonical property-key order. `cargo test` 32 pass, fmt/clippy clean. |
 | 2026-08-11 | Step 0.1 — Rust project skeleton | `Cargo.toml` (edition 2024), `.gitignore`, `rust-toolchain.toml` (GNU), `src/{main,domain,encoding,repository}` wired. `cargo build`/`test`/`fmt`/`clippy -D warnings` clean.                                          |
 | 2026-08-11 | Step 0.2 — Identity primitives   | `src/domain/identity.rs`: six typed UUID IDs + `ObjectId([u8;32])` with strict lowercase-hex parse. Deps: `uuid`/`hex`/`thiserror`. Added library+binary split (`src/lib.rs`). `cargo test` 12 pass, fmt/clippy clean. |
 
