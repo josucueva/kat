@@ -1,28 +1,32 @@
-//! Integration tests for the Change Engine `prepare_change` (step 1.1).
+//! Integration tests for the Change Engine (steps 1.1-1.7): prepare-only
+//! context resolution, `CreateElement` application, ontology + invariant
+//! validation, `ChangeRevision` construction, persistence, and CAS
+//! publication.
 //!
 //! Step 1.1 produces only a [`ChangeContext`]: it resolves the accepted head
 //! and loads the base SemanticState + its OntologyVersion. It performs **no**
 //! mutation, persistence, or publication — these tests prove that invariant:
 //! the object store and `refs/accepted` are unchanged after a prepare.
 //!
-//! Because `prepare_change` operates on an already-`open_repository`-validated
+//! Because the engine operates on an already-`open_repository`-validated
 //! [`Repository`], integrity failures (missing / wrong-kind referenced
 //! objects) are rejected by the `open` layer first. That is the intended
 //! layered boundary: repository integrity is guaranteed before the engine can
-//! run, and the engine's own kind checks are defense-in-depth. The last test
+//! run, and the engine's own kind checks are defense-in-depth. The first test
 //! pins this boundary.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use kat::domain::identity::ObjectId;
 use kat::domain::property::PropertyValue;
 use kat::repository::change::{
     apply_create_element, persist_prepared_change, prepare_change, prepare_change_revision,
-    validate_create_element_invariants, validate_create_element_ontology,
+    publish_persisted_change, validate_create_element_invariants, validate_create_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::open_repository;
-use kat::repository::ref_store::AcceptedRef;
+use kat::repository::ref_store::{AcceptedRef, RefStore};
 use uuid::Uuid;
 
 fn kat_dir(root: &Path) -> PathBuf {
@@ -36,6 +40,40 @@ fn object_ids(root: &Path) -> Vec<String> {
         .collect();
     ids.sort();
     ids
+}
+
+fn object_id(byte: u8) -> ObjectId {
+    ObjectId::from_bytes([byte; 32])
+}
+
+/// Runs the full engine pipeline up to and including persistence against an
+/// open repository: prepare -> create -> ontology -> invariants -> revision ->
+/// persist. Used by the step 1.7 publication tests.
+fn prepare_and_persist(
+    repo: &kat::repository::open::Repository,
+    element_n: u128,
+    change_n: u128,
+) -> kat::repository::change::PersistedChange {
+    let context = prepare_change(repo).unwrap();
+    let prepared = apply_create_element(
+        context,
+        kat::repository::change::CreateElementInput {
+            element_id: kat::domain::identity::ElementId::from_uuid(Uuid::from_u128(element_n)),
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("A requirement".into()))],
+        },
+    )
+    .unwrap();
+    let validated =
+        validate_create_element_invariants(validate_create_element_ontology(prepared).unwrap())
+            .unwrap();
+    let revision = prepare_change_revision(
+        validated,
+        kat::domain::identity::ChangeId::from_uuid(Uuid::from_u128(change_n)),
+        None,
+    )
+    .unwrap();
+    persist_prepared_change(repo, revision).unwrap()
 }
 
 #[test]
@@ -466,4 +504,183 @@ fn persist_prepared_change_is_idempotent_for_same_prepared_revision() {
     assert!(objects.contains(&expected_v1_id.to_string()));
     assert!(objects.contains(&expected_s1_id.to_string()));
     assert!(objects.contains(&expected_c1_id.to_string()));
+}
+
+#[test]
+fn publish_first_change_advances_accepted_head_and_survives_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let persisted = prepare_and_persist(&repo, 61, 161);
+
+    let v1 = persisted.prepared.creation.element_version_id;
+    let s1 = persisted.prepared.state_id;
+    let c1 = persisted.prepared.change_revision_id;
+    let objects_before_publish = object_ids(root);
+
+    let published = publish_persisted_change(&repo, persisted).unwrap();
+
+    // accepted head advanced to { state: S1, change: Some(C1) }.
+    assert_eq!(published.accepted.state, s1);
+    assert_eq!(published.accepted.change, Some(c1));
+
+    // The critical relationship: accepted S1 == C1.result_state.
+    assert_eq!(published.persisted.prepared.change.result_state, s1);
+    assert_eq!(
+        published.accepted.state,
+        published.persisted.prepared.change.result_state
+    );
+
+    // refs/accepted now carries the new head (changed from {S0, none}).
+    let refs_after = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+    assert_ne!(refs_after, refs_before);
+    assert_eq!(refs_after, published.accepted.to_string());
+
+    // Publication changes only refs/accepted: no new immutable object is
+    // created. Still exactly O1, S0, V1, S1, C1.
+    assert_eq!(object_ids(root), objects_before_publish);
+    assert_eq!(objects_before_publish.len(), 5);
+
+    // A fresh process reopens at the new head and E61 resolves to V1.
+    let reopened = open_repository(root).unwrap();
+    assert_eq!(reopened.accepted.state, s1);
+    assert_eq!(reopened.accepted.change, Some(c1));
+
+    let context = prepare_change(&reopened).unwrap();
+    assert_eq!(context.base_state_id, s1);
+    assert_eq!(context.base_state.elements.len(), 1);
+    assert_eq!(
+        context.base_state.elements[0].element_id,
+        kat::domain::identity::ElementId::from_uuid(Uuid::from_u128(61))
+    );
+    assert_eq!(context.base_state.elements[0].version, v1);
+}
+
+#[test]
+fn publish_conflicts_when_accepted_ref_moved_since_preparation() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let persisted = prepare_and_persist(&repo, 62, 162);
+    let objects_before = object_ids(root);
+
+    // A concurrent writer advances the head after this change was prepared
+    // (simulated with a direct CAS against the ref store).
+    let other_winner = AcceptedRef {
+        state: object_id(0xAA),
+        change: Some(object_id(0xBB)),
+    };
+    repo.ref_store()
+        .compare_and_swap_accepted(
+            &AcceptedRef {
+                state: init.state,
+                change: None,
+            },
+            &other_winner,
+        )
+        .unwrap();
+
+    // Publishing the stale change fails with the domain-level conflict.
+    let err = publish_persisted_change(&repo, persisted).unwrap_err();
+    assert!(matches!(
+        err,
+        kat::repository::change::ChangeError::Conflict
+    ));
+
+    // The accepted head remains the concurrent winner; the failed publication
+    // created no new objects and nothing was rolled back.
+    assert_eq!(repo.ref_store().read_accepted().unwrap(), other_winner);
+    assert_eq!(object_ids(root), objects_before);
+}
+
+#[test]
+fn two_writers_from_s0_exactly_one_publication_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    // Both writers prepare + persist from the same accepted {S0, none}.
+    let writer_a = prepare_and_persist(&repo, 63, 163);
+    let writer_b = prepare_and_persist(&repo, 64, 164);
+
+    let a_v1 = writer_a.prepared.creation.element_version_id;
+    let a_s1 = writer_a.prepared.state_id;
+    let a_c1 = writer_a.prepared.change_revision_id;
+    let b_v1 = writer_b.prepared.creation.element_version_id;
+    let b_s1 = writer_b.prepared.state_id;
+    let b_c1 = writer_b.prepared.change_revision_id;
+
+    // Writer A publishes: {S0, none} -> {S1A, C1A} succeeds.
+    let published_a = publish_persisted_change(&repo, writer_a).unwrap();
+    assert_eq!(published_a.accepted.state, a_s1);
+    assert_eq!(published_a.accepted.change, Some(a_c1));
+
+    // Writer B publishes with the same expected {S0, none}: the CAS sees
+    // {S1A, C1A} and fails. Exactly one publication wins.
+    let err = publish_persisted_change(&repo, writer_b).unwrap_err();
+    assert!(matches!(
+        err,
+        kat::repository::change::ChangeError::Conflict
+    ));
+
+    // The accepted head is A's.
+    assert_eq!(
+        repo.ref_store().read_accepted().unwrap(),
+        published_a.accepted
+    );
+
+    // B's objects remain stored but unreachable from the accepted head.
+    let objects = object_ids(root);
+    assert_eq!(objects.len(), 8); // O1, S0 + A{V1,S1,C1} + B{V1,S1,C1}
+    for id in [a_v1, a_s1, a_c1, b_v1, b_s1, b_c1] {
+        assert!(objects.contains(&id.to_string()));
+    }
+
+    // A fresh process opens at A's head — the losing change is not
+    // authoritative (open integrity verifies only the reachable head).
+    let reopened = open_repository(root).unwrap();
+    assert_eq!(reopened.accepted.state, a_s1);
+    assert_eq!(reopened.accepted.change, Some(a_c1));
+    let context = prepare_change(&reopened).unwrap();
+    assert_eq!(context.base_state.elements.len(), 1);
+    assert_eq!(context.base_state.elements[0].version, a_v1);
+}
+
+#[test]
+fn publish_rejects_internally_inconsistent_prepared_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let mut persisted = prepare_and_persist(&repo, 65, 165);
+
+    // Tamper so the ChangeRevision claims a result state that is not the
+    // prepared S1. Fields are public, so this simulates an inconsistent
+    // revision reaching the publication boundary.
+    let mut tampered = persisted.prepared.change.clone();
+    tampered.result_state = object_id(0xEE);
+    persisted.prepared.change = tampered;
+
+    // Publication must refuse to make the inconsistent Change authoritative.
+    let err = publish_persisted_change(&repo, persisted).unwrap_err();
+    assert!(matches!(
+        err,
+        kat::repository::change::ChangeError::PublicationStateMismatch { .. }
+    ));
+
+    // Nothing was published: the accepted head is still {S0, none}.
+    assert_eq!(
+        repo.ref_store().read_accepted().unwrap(),
+        AcceptedRef {
+            state: init.state,
+            change: None,
+        }
+    );
 }

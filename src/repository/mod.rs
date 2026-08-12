@@ -12,9 +12,9 @@ pub mod validation;
 
 pub use change::{
     ChangeContext, ChangeError, CreateElementInput, PersistedChange, PreconditionError,
-    PreparedChangeRevision, PreparedElementCreation, ValidatedElementCreation,
+    PreparedChangeRevision, PreparedElementCreation, PublishedChange, ValidatedElementCreation,
     apply_create_element, persist_prepared_change, prepare_change, prepare_change_revision,
-    validate_create_element_invariants, validate_create_element_ontology,
+    publish_persisted_change, validate_create_element_invariants, validate_create_element_ontology,
 };
 pub use open::{Repository, open_repository};
 pub use validation::invariant::InvariantError;

@@ -45,7 +45,7 @@ use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use crate::encoding::{canonical_bytes, canonical_object_id};
 use crate::repository::object_store::{ObjectStore, ObjectStoreError};
 use crate::repository::open::Repository;
-use crate::repository::ref_store::AcceptedRef;
+use crate::repository::ref_store::{AcceptedRef, RefStore, RefStoreError};
 use crate::repository::validation::invariant::{
     InvariantError, validate_create_element_invariants as validate_candidate_invariants,
 };
@@ -110,6 +110,30 @@ pub enum ChangeError {
     /// The application input contained a duplicate canonical property key.
     #[error("duplicate property key: {0}")]
     DuplicatePropertyKey(String),
+    /// The accepted repository head changed since this change was prepared
+    /// (compare-and-swap conflict). The change's immutable objects remain
+    /// stored but unreferenced; prepare against the new head and retry.
+    #[error(
+        "accepted repository state changed since this change was prepared; re-prepare against the new head and retry"
+    )]
+    Conflict,
+    /// A ref store failure during publication, other than a CAS conflict.
+    #[error("ref store error: {0}")]
+    RefStore(#[from] RefStoreError),
+    /// The prepared change is internally inconsistent at the publication
+    /// boundary: its `ChangeRevision.result_state` does not match the prepared
+    /// `state_id`. Construction (1.5) and persistence (1.6) guarantee these
+    /// agree, so a violation here is an integrity/programming failure and the
+    /// repository must not make such a Change authoritative.
+    #[error(
+        "cannot publish inconsistent change: result_state {actual} does not match prepared state {expected}"
+    )]
+    PublicationStateMismatch {
+        /// The prepared candidate SemanticState ObjectId (`state_id`).
+        expected: ObjectId,
+        /// The ObjectId the ChangeRevision claims as its result state.
+        actual: ObjectId,
+    },
 }
 
 /// The resolved context a change is prepared against: the accepted head, the
@@ -493,6 +517,92 @@ pub fn persist_prepared_change(
     }
 
     Ok(PersistedChange { prepared })
+}
+
+/// A persisted change that has been atomically published as the repository's
+/// accepted head (step 1.7).
+///
+/// Publication only moves `refs/accepted`; the immutable objects were already
+/// materialized by persistence (step 1.6). `accepted` is the new head
+/// `{ state: S1, change: Some(C1) }`, with `C1.result_state == S1`.
+#[derive(Debug)]
+pub struct PublishedChange {
+    /// The persisted change that was just published.
+    pub persisted: PersistedChange,
+    /// The new accepted repository head (`state: S1`, `change: Some(C1)`).
+    pub accepted: AcceptedRef,
+}
+
+/// Publishes an already-persisted change by atomically advancing the accepted
+/// State and Change head — **and only if** the repository is still at the
+/// accepted ref the change was prepared against.
+///
+/// The core is a single compare-and-swap:
+///
+/// ```text
+/// expected = persisted.prepared.creation.context.accepted
+/// new      = { state: S1, change: Some(C1) }
+/// compare_and_swap_accepted(expected, new)
+/// ```
+///
+/// All semantic preparation, validation, encoding, hashing, and persistence
+/// already happened before this step, so publication is intentionally trivial.
+/// The API requires a [`PersistedChange`] — a raw `PreparedChangeRevision`
+/// cannot reach it, so a change cannot be published before its immutable
+/// objects exist in the ObjectStore (a compile-time pipeline guarantee).
+///
+/// Before the CAS, the publication-boundary invariant
+/// `prepared.change.result_state == prepared.state_id` is verified fail-fast
+/// (construction in 1.5 already guarantees it; this is a defensive check at
+/// the point where the Change becomes authoritative). `new.state ==
+/// C1.result_state` and `new.change == C1 ObjectId` then hold by construction,
+/// because `new` is built from the prepared identities.
+///
+/// On a CAS conflict the accepted ref is left as the concurrent winner and
+/// this change's objects remain stored but unreferenced — that is the intended
+/// concurrency outcome, not corruption, and nothing is rolled back. The
+/// repository-open integrity layer independently verifies the persisted
+/// relationship later.
+pub fn publish_persisted_change(
+    repository: &Repository,
+    persisted: PersistedChange,
+) -> Result<PublishedChange, ChangeError> {
+    let prepared = &persisted.prepared;
+
+    // Critical publication-boundary invariant: the ChangeRevision's result
+    // state must be exactly the prepared SemanticState S1. Construction (1.5)
+    // and persistence (1.6) guarantee this by construction; this cheap check
+    // runs at the point where the repository is about to make the Change
+    // authoritative.
+    if prepared.change.result_state != prepared.state_id {
+        return Err(ChangeError::PublicationStateMismatch {
+            expected: prepared.state_id,
+            actual: prepared.change.result_state,
+        });
+    }
+
+    // expected: the accepted ref the change was prepared against.
+    // new: S1 + C1, built from the prepared identities, so by construction
+    // new.state == C1.result_state and new.change == C1 ObjectId.
+    let expected = &prepared.creation.context.accepted;
+    let new = AcceptedRef {
+        state: prepared.state_id,
+        change: Some(prepared.change_revision_id),
+    };
+
+    match repository
+        .ref_store()
+        .compare_and_swap_accepted(expected, &new)
+    {
+        Ok(()) => Ok(PublishedChange {
+            persisted,
+            accepted: new,
+        }),
+        // The accepted head moved since preparation: surface the domain-level
+        // conflict. The losing change's objects remain stored, unreferenced.
+        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
+        Err(e) => Err(ChangeError::RefStore(e)),
+    }
 }
 
 fn identity_mismatch(kind: ObjectKind, expected: ObjectId, actual: ObjectId) -> ChangeError {

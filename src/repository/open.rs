@@ -37,12 +37,20 @@ pub struct Repository {
     pub accepted: AcceptedRef,
     /// Content-addressed object store over `.kat/objects`.
     store: ObjectStore,
+    /// Reference store over `.kat/refs` (CAS publication of `refs/accepted`).
+    refs: FileRefStore,
 }
 
 impl Repository {
     /// The content-addressed object store of this repository.
     pub fn object_store(&self) -> &ObjectStore {
         &self.store
+    }
+
+    /// The reference store of this repository, used to publish `refs/accepted`
+    /// via compare-and-swap.
+    pub fn ref_store(&self) -> &FileRefStore {
+        &self.refs
     }
 }
 
@@ -122,6 +130,7 @@ pub fn open_repository(path: &Path) -> Result<Repository, RepositoryError> {
         metadata,
         accepted,
         store,
+        refs,
     })
 }
 
