@@ -1,0 +1,7 @@
+[package]
+name = "kat"
+version = "0.1.0"
+edition = "2024"
+description = "KAT - a semantic software repository: specification-first representation, evolution, tracing, and validation of software as knowledge."
+
+[dependencies]

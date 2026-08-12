@@ -1,0 +1,5 @@
+# KAT builds with the GNU Rust toolchain, linking against the MinGW-w64
+# toolchain available on this machine (no MSVC Build Tools installed).
+# Remove this file if the MSVC toolchain becomes available.
+[toolchain]
+channel = "stable-x86_64-pc-windows-gnu"
