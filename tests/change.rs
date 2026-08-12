@@ -15,10 +15,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use kat::repository::change::prepare_change;
+use kat::domain::property::PropertyValue;
+use kat::repository::change::{apply_create_element, prepare_change};
 use kat::repository::init::init_repository;
 use kat::repository::open::open_repository;
 use kat::repository::ref_store::AcceptedRef;
+use uuid::Uuid;
 
 fn kat_dir(root: &Path) -> PathBuf {
     root.join(".kat")
@@ -114,4 +116,40 @@ fn integrity_failures_rejected_at_open_boundary_before_prepare() {
 
     // (prepare_change could not be invoked: there is no valid Repository to
     // pass to it, which is exactly the layered guarantee.)
+}
+
+#[test]
+fn apply_create_element_only_creates_a_logical_candidate_nothing_persisted() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+    let objects_before = object_ids(root);
+
+    let repo = open_repository(root).unwrap();
+    let context = prepare_change(&repo).unwrap();
+    let prepared = apply_create_element(
+        context,
+        kat::repository::change::CreateElementInput {
+            element_id: kat::domain::identity::ElementId::from_uuid(Uuid::from_u128(42)),
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("A requirement".into()))],
+        },
+    )
+    .unwrap();
+
+    // S1 exists logically and maps E42 -> V1 (V1 ObjectId known), but...
+    assert_eq!(prepared.candidate_state.elements.len(), 1);
+    assert_eq!(
+        prepared.element.lifecycle,
+        kat::domain::element::Lifecycle::Active
+    );
+
+    // ...nothing was persisted and the accepted ref is unchanged.
+    assert_eq!(object_ids(root), objects_before);
+    assert_eq!(objects_before.len(), 2);
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
 }

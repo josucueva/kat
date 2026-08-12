@@ -28,21 +28,40 @@
 //! OntologyVersion into a reusable [`ChangeContext`]. It performs **no**
 //! mutation, no persistence, and no publication.
 
+use std::cmp::Ordering;
+
+use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
+use crate::domain::identity::ElementId;
 use crate::domain::identity::ObjectId;
 use crate::domain::ontology::OntologyVersion;
-use crate::domain::state::SemanticState;
+use crate::domain::property::PropertyValue;
+use crate::domain::state::{ElementStateEntry, SemanticState};
+use crate::encoding::canonical_object_id;
+use crate::encoding::cbor::cmp_encoded_text;
 use crate::encoding::decode::DecodingError;
 use crate::encoding::decode_canonical;
-use crate::encoding::object::{CanonicalObject, ObjectKind};
+use crate::encoding::error::EncodingError;
+use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use crate::repository::object_store::{ObjectStore, ObjectStoreError};
 use crate::repository::open::Repository;
 use crate::repository::ref_store::AcceptedRef;
 
+/// A failing operation-level precondition (operation *application* condition,
+/// near the Change Engine rather than in `repository::validation`).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PreconditionError {
+    /// The ElementId already appears in the base state. In v0.1 a state maps
+    /// one semantic ID to its current version, so a present ID — active,
+    /// deprecated, or superseded — cannot be created; reuse/resurrection is an
+    /// explicit operation's concern, not `CreateElement`'s.
+    #[error("element {0} already exists in the base state")]
+    ElementAlreadyExists(ElementId),
+}
+
 /// Error produced by the Change Engine.
 ///
 /// Only variants reachable by the engine are defined; further variants
-/// (e.g. preconditions, ontology, invariants) are added when the respective
-/// steps require them.
+/// (ontology, invariants) are added when the respective steps require them.
 #[derive(Debug, thiserror::Error)]
 pub enum ChangeError {
     /// An object store failure while loading a referenced object.
@@ -51,6 +70,9 @@ pub enum ChangeError {
     /// A referenced object failed strict canonical decoding.
     #[error("decoding error: {0}")]
     Decoding(#[from] DecodingError),
+    /// A canonical object failed to encode (fail-closed).
+    #[error("encoding error: {0}")]
+    Encoding(#[from] EncodingError),
     /// A referenced object has a different canonical kind than expected.
     #[error("expected object kind {expected}, found {actual}")]
     UnexpectedObjectKind {
@@ -59,6 +81,12 @@ pub enum ChangeError {
         /// The canonical kind the stored object actually has.
         actual: ObjectKind,
     },
+    /// An operation-level precondition was not satisfied.
+    #[error("precondition violated: {0}")]
+    Precondition(#[from] PreconditionError),
+    /// The application input contained a duplicate canonical property key.
+    #[error("duplicate property key: {0}")]
+    DuplicatePropertyKey(String),
 }
 
 /// The resolved context a change is prepared against: the accepted head, the
@@ -134,11 +162,188 @@ fn load_typed(
     Ok(object)
 }
 
+/// Application-level input for a `CreateElement` operation.
+///
+/// This is the user/application representation, not yet a canonical object.
+/// The engine establishes the canonical representation (property ordering) and
+/// consumes it; the caller supplies the stable [`ElementId`], so the engine
+/// stays deterministic and the CLI/application layer decides when to generate
+/// identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateElementInput {
+    /// Stable identity of the new element.
+    pub element_id: ElementId,
+    /// Ontology element type identifier (e.g. `kat.core/requirement`).
+    pub type_id: String,
+    /// Semantic properties as an unordered application key/value list.
+    /// Keys are normalized into canonical order; duplicates are rejected.
+    pub properties: Vec<(String, PropertyValue)>,
+}
+
+/// A logically-prepared element creation: the new Active knowledge element
+/// version, its content identity, and the candidate SemanticState it maps to.
+///
+/// Distinct from a full [`ChangeRevision`](crate::domain::change::ChangeRevision):
+/// nothing here is persisted and no accepted ref is published. `S1` exists
+/// only because `V1`'s ObjectId could be derived from its canonical bytes
+/// (hashing is not persistence).
+#[derive(Debug)]
+pub struct PreparedElementCreation {
+    /// The change context the element was created against (unchanged).
+    pub context: ChangeContext,
+    /// The constructed Active `KnowledgeElementVersion`.
+    pub element: KnowledgeElementVersion,
+    /// The content identity of `element` (SHA-256 of its canonical bytes).
+    pub element_version_id: ObjectId,
+    /// The candidate SemanticState: base plus `element_id -> element_version_id`
+    /// inserted at the canonical position.
+    pub candidate_state: SemanticState,
+}
+
+/// Applies a single `CreateElement` to `context`, producing a candidate only.
+///
+/// Step 1.2 is confined to **operation application**: it checks the
+/// `ElementId`-uniqueness precondition, builds the new Active
+/// `KnowledgeElementVersion` (normalizing property-key order and rejecting
+/// duplicates), derives its content identity, and inserts it into a candidate
+/// SemanticState at the canonical position.
+///
+/// It deliberately does **not** perform ontology conformance (1.3) or
+/// invariant validation (1.4), and it never persists or publishes.
+pub fn apply_create_element(
+    context: ChangeContext,
+    input: CreateElementInput,
+) -> Result<PreparedElementCreation, ChangeError> {
+    // Precondition: the ElementId must not already be present in the base
+    // state (present at all — active, deprecated, or superseded — is rejected).
+    let base_state = &context.base_state;
+    if base_state
+        .elements
+        .iter()
+        .any(|e| e.element_id == input.element_id)
+    {
+        return Err(ChangeError::Precondition(
+            PreconditionError::ElementAlreadyExists(input.element_id),
+        ));
+    }
+
+    // Normalize property keys into canonical order; reject duplicates.
+    // Application input may be unordered; the constructed version is canonical.
+    let properties = normalize_properties(input.properties)?;
+
+    let element = KnowledgeElementVersion {
+        element_id: input.element_id,
+        type_id: input.type_id,
+        lifecycle: Lifecycle::Active,
+        properties,
+    };
+
+    // Derive V1's content identity (encode + SHA-256). No persistence occurs.
+    let element_version_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(element.clone()),
+    })?;
+
+    // Insert `element_id -> element_version_id` at the canonical position.
+    let entry = ElementStateEntry {
+        element_id: element.element_id,
+        version: element_version_id,
+    };
+    let mut elements = base_state.elements.clone();
+    let insertion_point = match elements.binary_search_by(|e| e.element_id.cmp(&entry.element_id)) {
+        // The precondition above guarantees the id is not already present; an
+        // `Ok(_)` position is therefore unreachable. Using an `Err` step is
+        // the deterministic canonical insertion point.
+        Ok(_) => unreachable!("element_id uniqueness precondition checked"),
+        Err(pos) => pos,
+    };
+    elements.insert(insertion_point, entry);
+
+    let candidate_state = SemanticState {
+        ontology_version: base_state.ontology_version,
+        elements,
+        relationships: base_state.relationships.clone(),
+    };
+
+    Ok(PreparedElementCreation {
+        context,
+        element,
+        element_version_id,
+        candidate_state,
+    })
+}
+
+/// Sorts property keys into canonical order (bytewise comparison of their full
+/// deterministic CBOR encodings, RFC 8949 §4.2.1) and rejects duplicate keys.
+///
+/// This *establishes* the canonical representation from possibly-unordered
+/// application input; it is distinct from `canonical_bytes()` refusing to
+/// repair an already-constructed canonical object.
+fn normalize_properties(
+    properties: Vec<(String, PropertyValue)>,
+) -> Result<Vec<(String, PropertyValue)>, ChangeError> {
+    let mut props = properties.into_iter().collect::<Vec<_>>();
+    props.sort_by(|a, b| cmp_encoded_text(&a.0, &b.0));
+    for pair in props.windows(2) {
+        if cmp_encoded_text(&pair[0].0, &pair[1].0) == Ordering::Equal {
+            return Err(ChangeError::DuplicatePropertyKey(pair[1].0.clone()));
+        }
+    }
+    Ok(props)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repository::init::init_repository;
+    use crate::domain::identity::{ElementId, OntologyId};
+    use crate::domain::state::ElementStateEntry;
+    use crate::encoding::canonical_object_id;
+    use crate::encoding::object::{CanonicalObject, CanonicalPayload};
+    use crate::encoding::validate::CanonicalValidate;
+    use crate::repository::init::{init_repository, initial_core_ontology};
     use crate::repository::open::open_repository;
+    use uuid::Uuid;
+
+    fn element_id(n: u128) -> ElementId {
+        ElementId::from_uuid(Uuid::from_u128(n))
+    }
+
+    fn object_id(n: u8) -> ObjectId {
+        ObjectId::from_bytes([n; 32])
+    }
+
+    /// A `ChangeContext` over a manually constructed base state. `accepted`
+    /// references `object_id(1)`; the base state's `ontology_version` is `object_id(2)`.
+    fn context_with_base(elements: Vec<ElementStateEntry>) -> ChangeContext {
+        let base_state = SemanticState {
+            ontology_version: object_id(2),
+            elements,
+            relationships: vec![],
+        };
+        ChangeContext {
+            accepted: AcceptedRef {
+                state: object_id(1),
+                change: None,
+            },
+            base_state_id: object_id(1),
+            base_state,
+            ontology: initial_core_ontology(OntologyId::from_uuid(Uuid::nil())),
+        }
+    }
+
+    fn input(
+        id: u128,
+        type_id: &str,
+        properties: Vec<(&str, PropertyValue)>,
+    ) -> CreateElementInput {
+        CreateElementInput {
+            element_id: element_id(id),
+            type_id: type_id.to_string(),
+            properties: properties
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        }
+    }
 
     #[test]
     fn prepare_change_unit_loads_context() {
@@ -157,5 +362,144 @@ mod tests {
         assert!(context.base_state.relationships.is_empty());
         assert_eq!(context.ontology.element_types.len(), 7);
         assert_eq!(context.ontology.relationship_types.len(), 10);
+    }
+
+    #[test]
+    fn create_builds_active_element_with_canonical_properties_and_identity() {
+        let context = context_with_base(vec![]);
+        // Deliberately unordered application input.
+        let prepared = apply_create_element(
+            context,
+            input(
+                7,
+                "kat.core/requirement",
+                vec![
+                    ("description", PropertyValue::Text("A requirement".into())),
+                    ("title", PropertyValue::Text("The title".into())),
+                ],
+            ),
+        )
+        .unwrap();
+
+        // Active lifecycle, supplied identity, supplied type.
+        assert_eq!(prepared.element.lifecycle, Lifecycle::Active);
+        assert_eq!(prepared.element.element_id, element_id(7));
+        assert_eq!(prepared.element.type_id, "kat.core/requirement");
+
+        // Properties canonicalized into canonical key order.
+        let keys: Vec<&str> = prepared
+            .element
+            .properties
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect();
+        assert_eq!(keys, ["title", "description"]);
+
+        // Content identity equals the independent encode-then-hash.
+        let expected_id = canonical_object_id(&CanonicalObject {
+            payload: CanonicalPayload::KnowledgeElementVersion(prepared.element.clone()),
+        })
+        .unwrap();
+        assert_eq!(prepared.element_version_id, expected_id);
+
+        // Candidate SemanticState: ontology unchanged, relationships unchanged,
+        // exactly one element mapping E7 -> V1.
+        assert_eq!(prepared.candidate_state.ontology_version, object_id(2));
+        assert!(prepared.candidate_state.relationships.is_empty());
+        assert_eq!(
+            prepared.candidate_state.elements,
+            vec![ElementStateEntry {
+                element_id: element_id(7),
+                version: expected_id,
+            }]
+        );
+
+        // Base state and accepted ref untouched (no mutation, no publication).
+        assert!(prepared.context.base_state.elements.is_empty());
+        assert_eq!(prepared.context.accepted.change, None);
+    }
+
+    #[test]
+    fn create_rejects_when_element_id_already_in_base_state() {
+        let base = vec![ElementStateEntry {
+            element_id: element_id(9),
+            version: object_id(5),
+        }];
+        let context = context_with_base(base);
+
+        let err = apply_create_element(
+            context,
+            input(
+                9,
+                "kat.core/requirement",
+                vec![("title", PropertyValue::Text("dup".into()))],
+            ),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ChangeError::Precondition(PreconditionError::ElementAlreadyExists(id)) if id == element_id(9)
+        ));
+    }
+
+    #[test]
+    fn create_rejects_duplicate_property_key() {
+        let context = context_with_base(vec![]);
+        let err = apply_create_element(
+            context,
+            input(
+                1,
+                "kat.core/requirement",
+                vec![
+                    ("title", PropertyValue::Text("a".into())),
+                    ("title", PropertyValue::Text("b".into())),
+                ],
+            ),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ChangeError::DuplicatePropertyKey(k) if k == "title"));
+    }
+
+    #[test]
+    fn create_accepts_unknown_type_at_step_1_2() {
+        // No ontology conformance yet (that is step 1.3); a bogus type reaches
+        // the candidate successfully at 1.2, proving the layers are independent.
+        let context = context_with_base(vec![]);
+        let prepared =
+            apply_create_element(context, input(4, "kat.core/not-a-real-type", vec![])).unwrap();
+        assert_eq!(prepared.element.type_id, "kat.core/not-a-real-type");
+    }
+
+    #[test]
+    fn create_inserts_into_nonempty_base_keeping_canonical_order() {
+        // Base: E1 and E3 present; creating E2 must land between them.
+        let base = vec![
+            ElementStateEntry {
+                element_id: element_id(1),
+                version: object_id(1),
+            },
+            ElementStateEntry {
+                element_id: element_id(3),
+                version: object_id(3),
+            },
+        ];
+        let context = context_with_base(base);
+        let prepared =
+            apply_create_element(context, input(2, "kat.core/requirement", vec![])).unwrap();
+
+        let ids: Vec<u128> = prepared
+            .candidate_state
+            .elements
+            .iter()
+            .map(|e| e.element_id.as_uuid().as_u128())
+            .collect();
+        assert_eq!(ids, [1, 2, 3]);
+
+        // Candidate is structurally canonical: sorted and unique.
+        prepared
+            .candidate_state
+            .validate_canonical_structure()
+            .unwrap();
     }
 }
