@@ -78,7 +78,7 @@ disciplined, and faithful to the specifications.
 - **Library + binary split**: `src/lib.rs` declares the modules
   (`domain`, `encoding`, `repository`); `src/main.rs` is a thin CLI.
 - **Typed newtypes** for every semantic ID (UUIDv4) and `ObjectId([u8; 32])`.
-  `ObjectId` is always *derived* (hash of bytes) — there is no
+  `ObjectId` is always _derived_ (hash of bytes) — there is no
   `ObjectId::new()`; UUID IDs get `new()` via
   `#[allow(clippy::new_without_default)]` (no `Default`).
 - **Map-key ordering** = bytewise comparison of full deterministic text-key
