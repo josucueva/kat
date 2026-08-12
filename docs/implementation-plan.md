@@ -2,7 +2,7 @@
 
 This document is the working plan and progress tracker for implementing the KAT v0.1 prototype in Rust. It follows the implementation workflow and the phasing defined in `prototype-design.md` (Phase 0: Canonical Repository Substrate; Phase 1: First Semantic Vertical Slice).
 
-Status: **Phase 0 in progress** — steps 0.1-0.9 complete: skeleton, identity primitives, canonical data model + structural validation, deterministic CBOR encoding, golden/negative vectors with a conformance harness, SHA-256 Object IDs, the immutable ObjectStore, repository metadata + `AcceptedRef`, and `kat init`. `cargo test` (92 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. `main` pushed to `origin/main` at step 0.8. `kat init` verified end-to-end from the CLI.
+Status: **Phase 0 complete** — steps 0.1-0.10 done: skeleton, identity primitives, canonical data model + structural validation, deterministic CBOR encoding, golden/negative vectors with a conformance harness, SHA-256 Object IDs, the immutable ObjectStore, repository metadata + `AcceptedRef`, `kat init`, and repository open + integrity checks (including strict canonical decoding). `cargo test` (114 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. `main` pushed to `origin/main` at step 0.9. A repository written by `kat init` can now be closed and reopened by a completely new process with all integrity checks passing.
 
 Toolchain: Rust **stable GNU `x86_64-pc-windows-gnu` 1.97.1**, pinned via `rust-toolchain.toml` (MSVC Build Tools are not installed on this machine; MinGW-w64 provides the linker).
 
@@ -174,15 +174,22 @@ Notes: `repository/init.rs` — `init_repository(&Path) -> Result<InitResult, Re
 
 Reopening must prove:
 
-- [ ] `repository.toml` metadata valid and format supported.
-- [ ] `refs/accepted` exists and is syntactically valid.
-- [ ] `S0` exists and `hash(S0 bytes) == S0 ObjectId`.
-- [ ] `O1` exists.
-- [ ] Referenced object kinds match expected kinds.
+- [x] `repository.toml` metadata valid and format supported.
+- [x] `refs/accepted` exists and is syntactically valid.
+- [x] `S0` exists and `hash(S0 bytes) == S0 ObjectId`.
+- [x] `O1` exists.
+- [x] Referenced object kinds match expected kinds.
+
+Notes: split into (1) **canonical decoding** and (2) **repository open + integrity**.
+
+1. `encoding/decode.rs` — `decode_canonical(&[u8]) -> Result<CanonicalObject, DecodingError>` as strict as the encoder. Pipeline: strict CBOR reader (definite lengths, shortest integers, canonical map-key order, no duplicate keys, valid UTF-8) → strict protocol tree → typed `CanonicalObject` → `CanonicalValidate` (sorted/unique collections). `DecodingError` is separate from `EncodingError` (UnexpectedEof, TrailingData, InvalidCbor, NonCanonicalEncoding, DuplicateMapKey, UnsupportedEnvelopeVersion, UnsupportedSchemaVersion, UnknownObjectKind, InvalidObjectShape, InvalidUuid, InvalidObjectId, InvalidOperation, InvalidCanonicalStructure). `ObjectStore::get` stays byte+hash only — decoding lives solely in `encoding`.
+2. `repository/open.rs` — `open_repository(&Path) -> Result<Repository, RepositoryError>`: metadata → accepted ref → load `accepted.state` (hash + decode + require SemanticState) → load `state.ontology_version` (require OntologyVersion) → load every element/relationship version (require KnowledgeElementVersion / RelationshipVersion, correct even though S0 is empty) → if `accepted.change` present, load + require ChangeRevision and require `change.result_state == accepted.state`. `RepositoryError` gains NotFound, Decoding, UnexpectedObjectKind, AcceptedChangeStateMismatch.
+
+The 10 `invalid/encoded/` fixtures are now executable: `tests/encoded_invalid.rs` walks them and asserts rejection (variant asserted where deterministic). `tests/vector_conformance.rs` adds the decode→encode round-trip invariant for all 10 valid fixtures. `tests/open.rs` has 14 integration tests (init→open, corrupt metadata, malformed ref, missing/tampered/wrong-kind state, missing/wrong-kind ontology, missing/wrong-kind change, change result-state mismatch, non-empty state kind verification, wrong-kind element version). 22 new tests total (`cargo test` 114 pass).
 
 ---
 
-**Phase 0 complete** when a `kat init` repository can be closed and reopened with all integrity checks passing.
+**Phase 0 complete** — a `kat init` repository can be closed and reopened with all integrity checks passing.
 
 ---
 
@@ -248,7 +255,8 @@ kat history
 | 2026-08-11 | Step 0.6 — SHA-256 Object IDs                           | `encoding/hash.rs`: `object_id(&[u8]) -> ObjectId` (SHA-256) + thin `canonical_object_id`; no `ObjectId::new()`. Conformance harness asserts both bytes and externally-derived object_id for all 10 fixtures. `sha2` dep. `cargo test` 63 pass, fmt/clippy clean.                                                                                                                                                                                                  |
 | 2026-08-11 | Step 0.7 — Immutable ObjectStore                        | `repository/object_store.rs`: `put`/`get`/`exists` over flat `objects/<64 hex>`; no-overwrite + concurrent same-bytes races harmless; `get` verifies ObjectId; `exists` physical only. `ObjectStoreError` {NotFound, Integrity, Io}. `tempfile` dev-dep. All 10 required test scenarios pass. `cargo test` 73 pass, fmt/clippy clean.                                                                                                                              |
 | 2026-08-11 | Step 0.8 — `repository.toml` + `AcceptedRef`            | `repository/metadata.rs` (typed `RepositoryMetadata`, rejects unsupported/ malformed values) + `repository/ref_store.rs` (`AcceptedRef`, `RefStore` trait, `FileRefStore` with lock + atomic temp/rename CAS; no semantic interpretation). `toml` dep. 14 new tests. `cargo test` 88 pass, fmt/clippy clean.                                                                                                                                                       |
-| 2026-08-11 | Step 0.9 — `kat init`                                   | `repository/init.rs` (`init_repository`, `initial_core_ontology` from spec), `repository/error.rs` (`RepositoryError`), thin CLI in `main.rs` (manual parsing). Atomic metadata write; accepted ref = publication point. Verified end-to-end via CLI; re-init rejected. `cargo test` 92 pass, fmt/clippy clean. |
+| 2026-08-11 | Step 0.9 — `kat init`                                   | `repository/init.rs` (`init_repository`, `initial_core_ontology` from spec), `repository/error.rs` (`RepositoryError`), thin CLI in `main.rs` (manual parsing). Atomic metadata write; accepted ref = publication point. Verified end-to-end via CLI; re-init rejected. `cargo test` 92 pass, fmt/clippy clean. Pushed to `origin/main` (3669acc..673b2d3).                                                                                                                                                    |
+| 2026-08-11 | Step 0.10 — Repository open + integrity checks          | `encoding/decode.rs` strict canonical decoder (`decode_canonical`, separate `DecodingError`) as strict as the encoder; `repository/open.rs` (`open_repository`, `Repository`; hash + kind + accepted-head invariant checks). `invalid/encoded/` fixtures now executable (`tests/encoded_invalid.rs`); valid-vector decode/encode round-trip; 14 open integration tests. `cargo test` 114 pass, fmt/clippy clean. **Phase 0 complete.** |
 
 ## Non-goals during this work (do not build yet)
 

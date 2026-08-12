@@ -275,3 +275,27 @@ fn build_logical_object(v: &Value, name: &str) -> CanonicalObject {
     };
     CanonicalObject { payload }
 }
+
+#[test]
+fn valid_vectors_decode_and_round_trip() {
+    // The round-trip invariant: canonical bytes decode to a typed object and
+    // re-encode to the exact same bytes. This proves the encoder and decoder
+    // agree on the canonical protocol, against externally-derived bytes.
+    let paths = valid_vector_paths();
+    assert!(
+        !paths.is_empty(),
+        "no valid vectors found under {VALID_VECTORS_DIR}"
+    );
+
+    for path in paths {
+        let fixture = read_fixture(&path);
+        let name = fixture["name"].as_str().unwrap().to_string();
+        let bytes = hex::decode(fixture["cbor_hex"].as_str().unwrap())
+            .unwrap_or_else(|e| panic!("{name}: bad cbor_hex: {e}"));
+        let decoded = kat::encoding::decode_canonical(&bytes)
+            .unwrap_or_else(|e| panic!("{name}: decode failed: {e}"));
+        let reencoded =
+            canonical_bytes(&decoded).unwrap_or_else(|e| panic!("{name}: re-encode failed: {e}"));
+        assert_eq!(reencoded, bytes, "round-trip mismatch for {name}");
+    }
+}

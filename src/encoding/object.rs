@@ -1,6 +1,8 @@
 //! Canonical object envelope and object kinds
 //! (see `spec/canonical-format.cddl`, `canonical-object`).
 
+use std::fmt;
+
 use crate::domain::change::ChangeRevision;
 use crate::domain::element::KnowledgeElementVersion;
 use crate::domain::ontology::OntologyVersion;
@@ -58,6 +60,32 @@ pub enum CanonicalPayload {
 pub struct CanonicalObject {
     /// The typed payload; the object kind is implied by this variant.
     pub payload: CanonicalPayload,
+}
+
+impl ObjectKind {
+    /// The canonical protocol identifier for this object kind.
+    pub fn number(self) -> u64 {
+        match self {
+            ObjectKind::KnowledgeElementVersion => 1,
+            ObjectKind::RelationshipVersion => 2,
+            ObjectKind::ChangeRevision => 3,
+            ObjectKind::SemanticState => 4,
+            ObjectKind::OntologyVersion => 5,
+        }
+    }
+}
+
+impl fmt::Display for ObjectKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            ObjectKind::KnowledgeElementVersion => "knowledge-element-version",
+            ObjectKind::RelationshipVersion => "relationship-version",
+            ObjectKind::ChangeRevision => "change-revision",
+            ObjectKind::SemanticState => "semantic-state",
+            ObjectKind::OntologyVersion => "ontology-version",
+        };
+        f.write_str(name)
+    }
 }
 
 impl CanonicalObject {
