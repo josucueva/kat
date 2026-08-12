@@ -1,14 +1,29 @@
-//! Integration tests for the read-side query layer (step 1.8): resolving the
-//! currently accepted version of an element and decoding it.
+//! Integration tests for the read-side query layer (steps 1.8-1.9):
+//! resolving the currently accepted version of an element, and reconstructing
+//! the accepted Change history from the dependency graph.
 //!
-//! Queries are strictly read-only — the last test pins that invariant (object
-//! store and `refs/accepted` byte-for-byte unchanged after a query).
+//! Queries are strictly read-only — dedicated tests pin that invariant
+//! (object store and `refs/accepted` byte-for-byte unchanged after a query).
+//!
+//! History tests that need more than the single Phase 1 change construct
+//! `ChangeRevision` objects directly and store them (bypassing the engine):
+//! `history` must follow whatever stored dependency graph it finds, and must
+//! not be accidentally hardcoded to the linear single-change case.
+//!
+//! Note on the cycle case: a genuine dependency cycle is **unconstructible**
+//! through the content-addressed store — every dependency ObjectId is the
+//! SHA-256 of its target's content, so a cycle would require a hash
+//! fixed-point. `history`'s visiting-state cycle rejection is therefore
+//! defense-in-depth (tested implicitly: the shared-dependency test proves the
+//! visited set prevents duplicate traversal).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use kat::domain::change::ChangeRevision;
 use kat::domain::element::Lifecycle;
 use kat::domain::identity::{ChangeId, ElementId, ObjectId};
+use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
 use kat::domain::state::{ElementStateEntry, SemanticState};
 use kat::encoding::canonical_bytes;
@@ -19,8 +34,9 @@ use kat::repository::change::{
     validate_create_element_ontology,
 };
 use kat::repository::init::init_repository;
+use kat::repository::object_store::ObjectStoreError;
 use kat::repository::open::open_repository;
-use kat::repository::query::{QueryError, show_element};
+use kat::repository::query::{QueryError, history, show_element};
 use kat::repository::ref_store::{AcceptedRef, RefStore};
 use uuid::Uuid;
 
@@ -37,10 +53,17 @@ fn object_ids(root: &Path) -> Vec<String> {
     ids
 }
 
+/// The identities produced by publishing one element change.
+struct FirstChange {
+    element_id: ElementId,
+    version_id: ObjectId,
+    state_id: ObjectId,
+    change_revision_id: ObjectId,
+}
+
 /// Runs the full engine pipeline (prepare -> create -> validate -> revision ->
-/// persist -> publish) for one element against a fresh repository, returning
-/// its ElementId and the published version ObjectId.
-fn publish_element(root: &Path, element_n: u128, change_n: u128) -> (ElementId, ObjectId) {
+/// persist -> publish) for one element against a fresh repository.
+fn publish_first_change(root: &Path, element_n: u128, change_n: u128) -> FirstChange {
     let repo = open_repository(root).unwrap();
     let element_id = ElementId::from_uuid(Uuid::from_u128(element_n));
     let context = prepare_change(&repo).unwrap();
@@ -63,10 +86,50 @@ fn publish_element(root: &Path, element_n: u128, change_n: u128) -> (ElementId, 
     )
     .unwrap();
     let version_id = revision.creation.element_version_id;
+    let state_id = revision.state_id;
+    let change_revision_id = revision.change_revision_id;
     let persisted = persist_prepared_change(&repo, revision).unwrap();
     publish_persisted_change(&repo, persisted).unwrap();
-    (element_id, version_id)
+    FirstChange {
+        element_id,
+        version_id,
+        state_id,
+        change_revision_id,
+    }
 }
+
+/// Constructs and stores a ChangeRevision directly (bypassing the engine —
+/// the point is that `history` follows whatever stored dependency graph it
+/// finds), returning its ObjectId. `dependencies` are canonicalized (sorted,
+/// unique) exactly as the canonical validator requires.
+fn store_change_revision(
+    repo: &kat::repository::open::Repository,
+    change_n: u128,
+    base_states: Vec<ObjectId>,
+    result_state: ObjectId,
+    operations: Vec<Operation>,
+    mut dependencies: Vec<ObjectId>,
+) -> ObjectId {
+    dependencies.sort();
+    dependencies.dedup();
+    let change = ChangeRevision {
+        change_id: ChangeId::from_uuid(Uuid::from_u128(change_n)),
+        base_states,
+        result_state,
+        operations,
+        dependencies,
+        description: None,
+    };
+    let bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(change),
+    })
+    .unwrap();
+    repo.object_store().put(&bytes).unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Step 1.8 — show_element
+// ---------------------------------------------------------------------------
 
 #[test]
 fn show_returns_view_for_published_element() {
@@ -74,13 +137,13 @@ fn show_returns_view_for_published_element() {
     let root = dir.path();
     init_repository(root).unwrap();
 
-    let (element_id, version_id) = publish_element(root, 71, 171);
+    let ids = publish_first_change(root, 71, 171);
     let repo = open_repository(root).unwrap();
-    let view = show_element(&repo, element_id).unwrap();
+    let view = show_element(&repo, ids.element_id).unwrap();
 
-    assert_eq!(view.element_id, element_id);
-    assert_eq!(view.version_id, version_id);
-    assert_eq!(view.element.element_id, element_id);
+    assert_eq!(view.element_id, ids.element_id);
+    assert_eq!(view.version_id, ids.version_id);
+    assert_eq!(view.element.element_id, ids.element_id);
     assert_eq!(view.element.type_id, "kat.core/requirement");
     assert_eq!(view.element.lifecycle, Lifecycle::Active);
     assert_eq!(
@@ -92,7 +155,7 @@ fn show_returns_view_for_published_element() {
     );
 
     // The returned payload is exactly the persisted V1.
-    let stored_bytes = repo.object_store().get(version_id).unwrap();
+    let stored_bytes = repo.object_store().get(ids.version_id).unwrap();
     let stored = match kat::encoding::decode_canonical(&stored_bytes)
         .unwrap()
         .payload
@@ -109,12 +172,12 @@ fn show_version_id_matches_accepted_state_entry() {
     let root = dir.path();
     init_repository(root).unwrap();
 
-    let (element_id, version_id) = publish_element(root, 72, 172);
+    let ids = publish_first_change(root, 72, 172);
 
     // A fresh process reopens and queries the published head.
     let reopened = open_repository(root).unwrap();
-    let view = show_element(&reopened, element_id).unwrap();
-    assert_eq!(view.version_id, version_id);
+    let view = show_element(&reopened, ids.element_id).unwrap();
+    assert_eq!(view.version_id, ids.version_id);
 
     // And it is exactly what the accepted state maps E72 -> V72 to.
     let context = prepare_change(&reopened).unwrap();
@@ -122,7 +185,7 @@ fn show_version_id_matches_accepted_state_entry() {
         .base_state
         .elements
         .iter()
-        .find(|e| e.element_id == element_id)
+        .find(|e| e.element_id == ids.element_id)
         .expect("accepted state must contain the element");
     assert_eq!(entry.version, view.version_id);
 }
@@ -133,7 +196,7 @@ fn show_unknown_element_returns_not_found() {
     let root = dir.path();
     init_repository(root).unwrap();
 
-    let (present, _) = publish_element(root, 73, 173);
+    let present = publish_first_change(root, 73, 173).element_id;
     let missing = ElementId::from_uuid(Uuid::from_u128(999));
     assert_ne!(present, missing);
 
@@ -196,13 +259,13 @@ fn show_succeeds_after_fresh_reopen() {
     let root = dir.path();
     init_repository(root).unwrap();
 
-    let (element_id, version_id) = publish_element(root, 75, 175);
+    let ids = publish_first_change(root, 75, 175);
 
     // A completely new process (fresh open) resolves the same view.
     let reopened = open_repository(root).unwrap();
-    let view = show_element(&reopened, element_id).unwrap();
-    assert_eq!(view.element_id, element_id);
-    assert_eq!(view.version_id, version_id);
+    let view = show_element(&reopened, ids.element_id).unwrap();
+    assert_eq!(view.element_id, ids.element_id);
+    assert_eq!(view.version_id, ids.version_id);
     assert_eq!(view.element.lifecycle, Lifecycle::Active);
 }
 
@@ -212,12 +275,368 @@ fn show_query_does_not_mutate_repository() {
     let root = dir.path();
     init_repository(root).unwrap();
 
-    let (element_id, _) = publish_element(root, 76, 176);
+    let element_id = publish_first_change(root, 76, 176).element_id;
     let objects_before = object_ids(root);
     let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
 
     let repo = open_repository(root).unwrap();
     show_element(&repo, element_id).unwrap();
+
+    assert_eq!(object_ids(root), objects_before);
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Step 1.9 — history
+// ---------------------------------------------------------------------------
+
+#[test]
+fn history_is_empty_on_fresh_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    assert_eq!(repo.ref_store().read_accepted().unwrap().change, None);
+    assert!(history(&repo).unwrap().is_empty());
+}
+
+#[test]
+fn history_returns_published_first_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = init_repository(root).unwrap();
+
+    let ids = publish_first_change(root, 77, 177);
+    let repo = open_repository(root).unwrap();
+    let entries = history(&repo).unwrap();
+
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(entry.revision_id, ids.change_revision_id);
+    assert_eq!(
+        entry.change.change_id,
+        ChangeId::from_uuid(Uuid::from_u128(177))
+    );
+    assert_eq!(entry.change.result_state, ids.state_id);
+    assert_eq!(entry.change.base_states, vec![init.state]);
+    assert!(entry.change.dependencies.is_empty());
+    assert_eq!(
+        entry.change.operations,
+        vec![Operation::CreateElement {
+            new_version: ids.version_id,
+        }]
+    );
+}
+
+#[test]
+fn history_reopen_fresh_process_returns_same_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let ids = publish_first_change(root, 78, 178);
+
+    // A fresh process reconstructs the same history from the live ref.
+    let reopened = open_repository(root).unwrap();
+    let entries = history(&reopened).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].revision_id, ids.change_revision_id);
+    assert_eq!(entries[0].change.result_state, ids.state_id);
+}
+
+#[test]
+fn history_missing_accepted_change_object_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let ids = publish_first_change(root, 79, 179);
+    let repo = open_repository(root).unwrap();
+    fs::remove_file(
+        kat_dir(root)
+            .join("objects")
+            .join(ids.change_revision_id.to_string()),
+    )
+    .unwrap();
+
+    let err = history(&repo).unwrap_err();
+    assert!(matches!(
+        err,
+        QueryError::ObjectStore(ObjectStoreError::NotFound(_))
+    ));
+}
+
+#[test]
+fn history_accepted_change_wrong_object_kind_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = init_repository(root).unwrap();
+
+    // Point the accepted change head at the ontology object (wrong kind).
+    let repo = open_repository(root).unwrap();
+    repo.ref_store()
+        .compare_and_swap_accepted(
+            &AcceptedRef {
+                state: init.state,
+                change: None,
+            },
+            &AcceptedRef {
+                state: init.state,
+                change: Some(init.ontology),
+            },
+        )
+        .unwrap();
+
+    let err = history(&repo).unwrap_err();
+    assert!(matches!(
+        err,
+        QueryError::UnexpectedObjectKind {
+            expected: ObjectKind::ChangeRevision,
+            actual: ObjectKind::OntologyVersion,
+        }
+    ));
+}
+
+#[test]
+fn history_accepted_change_result_state_mismatch_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = init_repository(root).unwrap();
+
+    let ids = publish_first_change(root, 80, 180);
+    let repo = open_repository(root).unwrap();
+
+    // Move the accepted state back to S0 while keeping C1 (result_state S1)
+    // as the head: the live-ref result-state relationship is broken.
+    repo.ref_store()
+        .compare_and_swap_accepted(
+            &AcceptedRef {
+                state: ids.state_id,
+                change: Some(ids.change_revision_id),
+            },
+            &AcceptedRef {
+                state: init.state,
+                change: Some(ids.change_revision_id),
+            },
+        )
+        .unwrap();
+
+    let err = history(&repo).unwrap_err();
+    assert!(matches!(
+        err,
+        QueryError::AcceptedChangeStateMismatch {
+            change,
+            expected,
+            actual,
+        } if change == ids.change_revision_id && expected == init.state && actual == ids.state_id
+    ));
+}
+
+#[test]
+fn history_dependency_missing_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let ids = publish_first_change(root, 81, 181);
+    let repo = open_repository(root).unwrap();
+
+    // C2 depends on C1; delete C1's object so the traversal hits a missing
+    // dependency.
+    let c1 = ids.change_revision_id;
+    let c2 = store_change_revision(
+        &repo,
+        281,
+        vec![ids.state_id],
+        ids.state_id,
+        vec![Operation::CreateElement {
+            new_version: ids.version_id,
+        }],
+        vec![c1],
+    );
+    fs::remove_file(kat_dir(root).join("objects").join(c1.to_string())).unwrap();
+    repo.ref_store()
+        .compare_and_swap_accepted(
+            &AcceptedRef {
+                state: ids.state_id,
+                change: Some(c1),
+            },
+            &AcceptedRef {
+                state: ids.state_id,
+                change: Some(c2),
+            },
+        )
+        .unwrap();
+
+    let err = history(&repo).unwrap_err();
+    assert!(matches!(
+        err,
+        QueryError::ObjectStore(ObjectStoreError::NotFound(_))
+    ));
+}
+
+#[test]
+fn history_dependency_wrong_object_kind_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = init_repository(root).unwrap();
+
+    let ids = publish_first_change(root, 82, 182);
+    let repo = open_repository(root).unwrap();
+
+    // C2 depends on the ontology object (wrong kind for a dependency).
+    let c2 = store_change_revision(
+        &repo,
+        282,
+        vec![ids.state_id],
+        ids.state_id,
+        vec![Operation::CreateElement {
+            new_version: ids.version_id,
+        }],
+        vec![init.ontology],
+    );
+    repo.ref_store()
+        .compare_and_swap_accepted(
+            &AcceptedRef {
+                state: ids.state_id,
+                change: Some(ids.change_revision_id),
+            },
+            &AcceptedRef {
+                state: ids.state_id,
+                change: Some(c2),
+            },
+        )
+        .unwrap();
+
+    let err = history(&repo).unwrap_err();
+    assert!(matches!(
+        err,
+        QueryError::UnexpectedObjectKind {
+            expected: ObjectKind::ChangeRevision,
+            actual: ObjectKind::OntologyVersion,
+        }
+    ));
+}
+
+#[test]
+fn history_two_revision_chain_is_deterministic() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let ids = publish_first_change(root, 83, 183);
+    let repo = open_repository(root).unwrap();
+
+    // C2 -> [C1]; C1 -> []. The traversal must not be hardcoded to the
+    // single-change case.
+    let c1 = ids.change_revision_id;
+    let c2 = store_change_revision(
+        &repo,
+        283,
+        vec![ids.state_id],
+        ids.state_id,
+        vec![Operation::CreateElement {
+            new_version: ids.version_id,
+        }],
+        vec![c1],
+    );
+    repo.ref_store()
+        .compare_and_swap_accepted(
+            &AcceptedRef {
+                state: ids.state_id,
+                change: Some(c1),
+            },
+            &AcceptedRef {
+                state: ids.state_id,
+                change: Some(c2),
+            },
+        )
+        .unwrap();
+
+    let entries = history(&repo).unwrap();
+    assert_eq!(entries.len(), 2);
+    // Newest first: the accepted head, then its dependency.
+    assert_eq!(entries[0].revision_id, c2);
+    assert_eq!(entries[1].revision_id, c1);
+    assert_eq!(entries[0].change.dependencies, vec![c1]);
+    assert!(entries[1].change.dependencies.is_empty());
+}
+
+#[test]
+fn history_shared_dependency_appears_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let ids = publish_first_change(root, 84, 184);
+    let repo = open_repository(root).unwrap();
+
+    // Diamond: C3 -> [C1, C2], C2 -> [C1]. C1 is reachable through two paths
+    // but must appear exactly once (visited set).
+    let c1 = ids.change_revision_id;
+    let c2 = store_change_revision(
+        &repo,
+        284,
+        vec![ids.state_id],
+        ids.state_id,
+        vec![Operation::CreateElement {
+            new_version: ids.version_id,
+        }],
+        vec![c1],
+    );
+    let c3 = store_change_revision(
+        &repo,
+        384,
+        vec![ids.state_id],
+        ids.state_id,
+        vec![Operation::CreateElement {
+            new_version: ids.version_id,
+        }],
+        vec![c1, c2],
+    );
+    repo.ref_store()
+        .compare_and_swap_accepted(
+            &AcceptedRef {
+                state: ids.state_id,
+                change: Some(c1),
+            },
+            &AcceptedRef {
+                state: ids.state_id,
+                change: Some(c3),
+            },
+        )
+        .unwrap();
+
+    let entries = history(&repo).unwrap();
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0].revision_id, c3);
+    for id in [c1, c2, c3] {
+        assert_eq!(
+            entries.iter().filter(|e| e.revision_id == id).count(),
+            1,
+            "revision {id} must appear exactly once"
+        );
+    }
+}
+
+#[test]
+fn history_does_not_mutate_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    // Publishing is setup only; the test observes the repository before/after
+    // the query.
+    publish_first_change(root, 85, 185);
+    let objects_before = object_ids(root);
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    history(&repo).unwrap();
 
     assert_eq!(object_ids(root), objects_before);
     assert_eq!(

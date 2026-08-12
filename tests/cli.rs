@@ -31,9 +31,17 @@ fn run_kat(dir: &Path, args: &[&str]) -> (String, String, bool) {
     )
 }
 
+/// The identities of a change published through the library.
+struct Published {
+    element_id: ElementId,
+    version_id: String,
+    state_id: String,
+    change_revision_id: String,
+}
+
 /// Publishes one element through the library (the `kat create` CLI is wired
-/// later, at Phase 1 closure), returning its ElementId and version ObjectId.
-fn publish_element(root: &Path, element_n: u128, change_n: u128) -> (ElementId, String) {
+/// later, at Phase 1 closure), returning its identities.
+fn publish_element(root: &Path, element_n: u128, change_n: u128) -> Published {
     let repo = open_repository(root).unwrap();
     let element_id = ElementId::from_uuid(Uuid::from_u128(element_n));
     let context = prepare_change(&repo).unwrap();
@@ -56,9 +64,16 @@ fn publish_element(root: &Path, element_n: u128, change_n: u128) -> (ElementId, 
     )
     .unwrap();
     let version_id = revision.creation.element_version_id.to_string();
+    let state_id = revision.state_id.to_string();
+    let change_revision_id = revision.change_revision_id.to_string();
     let persisted = persist_prepared_change(&repo, revision).unwrap();
     publish_persisted_change(&repo, persisted).unwrap();
-    (element_id, version_id)
+    Published {
+        element_id,
+        version_id,
+        state_id,
+        change_revision_id,
+    }
 }
 
 #[test]
@@ -71,17 +86,18 @@ fn kat_show_prints_resolved_element() {
     assert!(ok, "kat init failed: {init_err}\n{init_out}");
 
     // Publish a change through the library.
-    let (element_id, version_id) = publish_element(root, 81, 181);
+    let published = publish_element(root, 81, 181);
 
     // `kat show <element-id>` resolves and prints the accepted version.
-    let (out, err, ok) = run_kat(root, &["show", &element_id.to_string()]);
+    let (out, err, ok) = run_kat(root, &["show", &published.element_id.to_string()]);
     assert!(ok, "kat show failed: {err}");
     let expected = format!(
-        "element_id: {element_id}\n\
-         version_id: {version_id}\n\
+        "element_id: {}\n\
+         version_id: {}\n\
          type: kat.core/requirement\n\
          lifecycle: active\n\
-         title: A requirement\n"
+         title: A requirement\n",
+        published.element_id, published.version_id
     );
     assert_eq!(out, expected);
 
@@ -115,4 +131,38 @@ fn kat_show_rejects_invalid_element_id() {
     assert!(!ok);
     assert!(out.is_empty());
     assert!(err.contains("invalid element ID"));
+}
+
+#[test]
+fn kat_history_empty_on_fresh_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    let (out, err, ok) = run_kat(root, &["history"]);
+    assert!(ok, "kat history failed: {err}");
+    assert!(out.is_empty(), "fresh repository has no history: {out}");
+}
+
+#[test]
+fn kat_history_prints_accepted_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    // The base state the change was prepared against.
+    let s0 = open_repository(root).unwrap().accepted.state;
+
+    let published = publish_element(root, 82, 182);
+
+    let (out, err, ok) = run_kat(root, &["history"]);
+    assert!(ok, "kat history failed: {err}");
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(182));
+    let expected = format!(
+        "revision_id: {}\nchange_id: {change_id}\nresult_state: {}\nbase_states:\n  {}\ndependencies:\n  none\noperations:\n  create_element {}\ndescription: none\n",
+        published.change_revision_id, published.state_id, s0, published.version_id
+    );
+    assert_eq!(out, expected);
 }

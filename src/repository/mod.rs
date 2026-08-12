@@ -18,6 +18,6 @@ pub use change::{
     publish_persisted_change, validate_create_element_invariants, validate_create_element_ontology,
 };
 pub use open::{Repository, open_repository};
-pub use query::{ElementView, QueryError, show_element};
+pub use query::{ElementView, HistoryEntry, QueryError, history, show_element};
 pub use validation::invariant::InvariantError;
 pub use validation::ontology::OntologyError;
