@@ -16,3 +16,5 @@ sha2 = "0.10"
 # canonical key order intact (a BTreeMap would silently re-sort and hide
 # structural errors).
 serde_json = { version = "1", features = ["preserve_order"] }
+# ObjectStore tests use real temp directories with automatic cleanup.
+tempfile = "3"

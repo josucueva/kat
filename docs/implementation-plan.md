@@ -2,7 +2,7 @@
 
 This document is the working plan and progress tracker for implementing the KAT v0.1 prototype in Rust. It follows the implementation workflow and the phasing defined in `prototype-design.md` (Phase 0: Canonical Repository Substrate; Phase 1: First Semantic Vertical Slice).
 
-Status: **Phase 0 in progress** — steps 0.1-0.6 complete: skeleton, identity primitives, canonical data model + structural validation, deterministic CBOR encoding, golden/negative vectors with a conformance harness, and SHA-256 Object IDs. `cargo test` (63 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. `main` pushed to `origin/main` at step 0.5.
+Status: **Phase 0 in progress** — steps 0.1-0.7 complete: skeleton, identity primitives, canonical data model + structural validation, deterministic CBOR encoding, golden/negative vectors with a conformance harness, SHA-256 Object IDs, and the immutable ObjectStore. `cargo test` (73 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. `main` pushed to `origin/main` at step 0.6.
 
 Toolchain: Rust **stable GNU `x86_64-pc-windows-gnu` 1.97.1**, pinned via `rust-toolchain.toml` (MSVC Build Tools are not installed on this machine; MinGW-w64 provides the linker).
 
@@ -135,14 +135,16 @@ Notes: 10 valid fixtures (all object kinds, all PropertyValue variants, integer 
 - [x] Test: same canonical object → same bytes → same ObjectId.
 - [x] Test: changed canonical content → different ObjectId.
 
-Notes: `encoding/hash.rs` implements `object_id(&[u8]) -> ObjectId` (SHA-256 only; no re-encoding/normalization) and a thin `canonical_object_id(&CanonicalObject)` composed as `canonical_bytes` then `object_id`. No `ObjectId::new()` — ObjectId is always *derived* (`from_bytes`/`FromStr` reconstruct existing identities). The conformance harness now asserts both exact bytes and the independently-derived `object_id` for all 10 valid fixtures. `sha2 = "0.10"` added. The full identity pipeline is complete: object → structural validation → deterministic CBOR → canonical bytes → SHA-256 → ObjectId.
+Notes: `encoding/hash.rs` implements `object_id(&[u8]) -> ObjectId` (SHA-256 only; no re-encoding/normalization) and a thin `canonical_object_id(&CanonicalObject)` composed as `canonical_bytes` then `object_id`. No `ObjectId::new()` — ObjectId is always _derived_ (`from_bytes`/`FromStr` reconstruct existing identities). The conformance harness now asserts both exact bytes and the independently-derived `object_id` for all 10 valid fixtures. `sha2 = "0.10"` added. The full identity pipeline is complete: object → structural validation → deterministic CBOR → canonical bytes → SHA-256 → ObjectId.
 
 ### 0.7 — Immutable ObjectStore
 
-- [ ] Layout: `.kat/objects/<sha256>` (no fan-out in v0.1).
-- [ ] API: `put(canonical_bytes) -> ObjectId`, `get(ObjectId) -> bytes`, `exists(ObjectId)`.
-- [ ] `put` must never overwrite different bytes; an existing object with the same ObjectId needs no write.
-- [ ] `get` supports integrity verification (SHA-256 of bytes must equal requested ObjectId).
+- [x] Layout: `.kat/objects/<sha256>` (no fan-out in v0.1).
+- [x] API: `put(canonical_bytes) -> ObjectId`, `get(ObjectId) -> bytes`, `exists(ObjectId)`.
+- [x] `put` must never overwrite different bytes; an existing object with the same ObjectId needs no write.
+- [x] `get` supports integrity verification (SHA-256 of bytes must equal requested ObjectId).
+
+Notes: `repository/object_store.rs` — stores **bytes**, not `CanonicalObject`s (no CBOR/metadata knowledge). `put` computes the ObjectId first, writes to a unique temp file under `tmp/`, flushes, then atomically renames into `objects/<64 hex>`; concurrent same-bytes writers are harmless (one canonical object, both succeed). `get` verifies the requested ObjectId (single-object integrity; no recursive graph re-verification). `exists` is purely physical (no read/hash). `ObjectStoreError` distinguishes `NotFound` vs `Integrity { expected, actual }` vs `Io`. `tempfile` added as a dev-dependency for tests. 10 required test scenarios all pass.
 
 ### 0.8 — `repository.toml` and `AcceptedRef`
 
@@ -239,7 +241,8 @@ kat history
 | 2026-08-11 | Step 0.2 — Identity primitives                          | `src/domain/identity.rs`: six typed UUID IDs + `ObjectId([u8;32])` with strict lowercase-hex parse. Deps: `uuid`/`hex`/`thiserror`. Added library+binary split (`src/lib.rs`). `cargo test` 12 pass, fmt/clippy clean.                                                                                                                                                                                                                                             |
 | 2026-08-11 | Step 0.4 — Deterministic CBOR encoding                  | Explicit encoder (`encoding/cbor.rs`): primitive writer (shortest ints, definite lengths), tag-37 UUIDs, all five payloads, all six operations, property maps. `canonical_bytes()` validates then encodes (fail-closed). Corrected map-key comparator to encoded-byte ordering, shared validator+encoder. `cargo test` 48 pass, fmt/clippy clean.                                                                                                                  |
 | 2026-08-11 | Step 0.5 — Golden + negative vectors                    | 10 valid fixtures (all kinds, all PropertyValue variants, integer boundaries, all six ops, ordering proofs, description present/absent), 6 `invalid/structural/` + 10 `invalid/encoded/` fixtures. `tests/vector_conformance.rs` harness (walks valid dir, asserts exact bytes); `tests/structural_invalid.rs` (canonical_bytes rejection). object_id values computed with independent SHA-256. `serde_json` dev-dep only. `cargo test` 58 pass, fmt/clippy clean. |
-| 2026-08-11 | Step 0.6 — SHA-256 Object IDs                           | `encoding/hash.rs`: `object_id(&[u8]) -> ObjectId` (SHA-256) + thin `canonical_object_id`; no `ObjectId::new()`. Conformance harness asserts both bytes and externally-derived object_id for all 10 fixtures. `sha2` dep. `cargo test` 63 pass, fmt/clippy clean. |
+| 2026-08-11 | Step 0.6 — SHA-256 Object IDs                           | `encoding/hash.rs`: `object_id(&[u8]) -> ObjectId` (SHA-256) + thin `canonical_object_id`; no `ObjectId::new()`. Conformance harness asserts both bytes and externally-derived object_id for all 10 fixtures. `sha2` dep. `cargo test` 63 pass, fmt/clippy clean.                                                                                                                                                                                                  |
+| 2026-08-11 | Step 0.7 — Immutable ObjectStore                        | `repository/object_store.rs`: `put`/`get`/`exists` over flat `objects/<64 hex>`; no-overwrite + concurrent same-bytes races harmless; `get` verifies ObjectId; `exists` physical only. `ObjectStoreError` {NotFound, Integrity, Io}. `tempfile` dev-dep. All 10 required test scenarios pass. `cargo test` 73 pass, fmt/clippy clean. |
 
 ## Non-goals during this work (do not build yet)
 
