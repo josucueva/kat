@@ -2,7 +2,7 @@
 
 This document is the working plan and progress tracker for implementing the KAT v0.1 prototype in Rust. It follows the implementation workflow and the phasing defined in `prototype-design.md` (Phase 0: Canonical Repository Substrate; Phase 1: First Semantic Vertical Slice).
 
-Status: **Phase 0 in progress** — step 0.1 (project skeleton) complete. Crate `kat` 0.1.0 compiles; `cargo test`, `cargo fmt --check`, and `cargo clippy -D warnings` all pass.
+Status: **Phase 0 in progress** — steps 0.1 (skeleton) and 0.2 (identity primitives) complete. `cargo test` (12 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass.
 
 Toolchain: Rust **stable GNU `x86_64-pc-windows-gnu` 1.97.1**, pinned via `rust-toolchain.toml` (MSVC Build Tools are not installed on this machine; MinGW-w64 provides the linker).
 
@@ -46,7 +46,8 @@ The substrate proves the repository-format mechanics. Per `prototype-design.md`,
 
 ```text
 src/
-├── main.rs
+├── lib.rs          (library: owns the modules)
+├── main.rs         (thin CLI binary over the library)
 ├── domain/
 │   ├── mod.rs
 │   └── identity.rs
@@ -63,9 +64,11 @@ src/
 
 - [x] Do **not** create collaboration, materialization, plugins, indexes, or query-database modules yet.
 
+Structure note (added in step 0.2): the crate uses the standard **library + binary split** (`src/lib.rs` owns the modules; `src/main.rs` is a thin CLI). This keeps newly added public types free of transient `dead_code` warnings before they are wired into the CLI, and it enables integration tests (used for the step 0.5 vectors).
+
 ### 0.2 — Identity primitives
 
-- [ ] Typed UUID semantic IDs (distinct wrapper types so they cannot be interchanged):
+- [x] Typed UUID semantic IDs (distinct wrapper types so they cannot be interchanged):
 
 ```text
 RepositoryId
@@ -76,11 +79,13 @@ ChangeId
 OntologyId
 ```
 
-- [ ] `ObjectId([u8; 32])` — SHA-256 content identity, distinct from semantic IDs.
-- [ ] Parsing/display for textual UUIDs and for 64-character lowercase hexadecimal `ObjectId`s.
-- [ ] UUID uses canonical representation per `spec/canonical-format.cddl`: CBOR tag 37, exactly 16 bytes.
+- [x] `ObjectId([u8; 32])` — SHA-256 content identity, distinct from semantic IDs.
+- [x] Parsing/display for textual UUIDs and for 64-character lowercase hexadecimal `ObjectId`s.
+- [x] UUID uses canonical representation per `spec/canonical-format.cddl`: CBOR tag 37, exactly 16 bytes.
 
 Reference: `docs/prototype-design.md` → Core Rust Types.
+
+Notes: `ObjectId` parsing accepts **only** the canonical form (exactly 64 chars, `0-9`/`a-f`, lowercase rejected). No CBOR serialization on identity types yet — that belongs to the step 0.4 encoder. Dependencies added: `uuid` (v4), `hex`, `thiserror`. `sha2`/CBOR deliberately deferred.
 
 ### 0.3 — Canonical Rust data model
 
@@ -218,10 +223,11 @@ kat history
 
 ## Progress Log
 
-| Date       | Milestone / step completed       | Notes                                                                                                                                                                         |
-| ---------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-11 | Plan created                     | Phase 0 not yet started; no Rust implementation exists                                                                                                                        |
-| 2026-08-11 | Step 0.1 — Rust project skeleton | `Cargo.toml` (edition 2024), `.gitignore`, `rust-toolchain.toml` (GNU), `src/{main,domain,encoding,repository}` wired. `cargo build`/`test`/`fmt`/`clippy -D warnings` clean. |
+| Date       | Milestone / step completed       | Notes                                                                                                                                                                                                                  |
+| ---------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-11 | Plan created                     | Phase 0 not yet started; no Rust implementation exists                                                                                                                                                                 |
+| 2026-08-11 | Step 0.1 — Rust project skeleton | `Cargo.toml` (edition 2024), `.gitignore`, `rust-toolchain.toml` (GNU), `src/{main,domain,encoding,repository}` wired. `cargo build`/`test`/`fmt`/`clippy -D warnings` clean.                                          |
+| 2026-08-11 | Step 0.2 — Identity primitives   | `src/domain/identity.rs`: six typed UUID IDs + `ObjectId([u8;32])` with strict lowercase-hex parse. Deps: `uuid`/`hex`/`thiserror`. Added library+binary split (`src/lib.rs`). `cargo test` 12 pass, fmt/clippy clean. |
 
 ## Non-goals during this work (do not build yet)
 

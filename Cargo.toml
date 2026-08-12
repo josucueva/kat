@@ -5,3 +5,6 @@ edition = "2024"
 description = "KAT - a semantic software repository: specification-first representation, evolution, tracing, and validation of software as knowledge."
 
 [dependencies]
+uuid = { version = "1", features = ["v4"] }
+hex = "0.4"
+thiserror = "2"
