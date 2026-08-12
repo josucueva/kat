@@ -37,12 +37,12 @@ use crate::domain::ontology::OntologyVersion;
 use crate::domain::operation::Operation;
 use crate::domain::property::PropertyValue;
 use crate::domain::state::{ElementStateEntry, SemanticState};
-use crate::encoding::canonical_object_id;
 use crate::encoding::cbor::cmp_encoded_text;
 use crate::encoding::decode::DecodingError;
 use crate::encoding::decode_canonical;
 use crate::encoding::error::EncodingError;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
+use crate::encoding::{canonical_bytes, canonical_object_id};
 use crate::repository::object_store::{ObjectStore, ObjectStoreError};
 use crate::repository::open::Repository;
 use crate::repository::ref_store::AcceptedRef;
@@ -85,6 +85,18 @@ pub enum ChangeError {
         expected: ObjectKind,
         /// The canonical kind the stored object actually has.
         actual: ObjectKind,
+    },
+    /// The ObjectStore returned a different ObjectId than the identity derived
+    /// during preparation. This is an integrity/programming failure and must
+    /// not be silently accepted.
+    #[error("persisted identity mismatch for {kind}: expected {expected}, actual {actual}")]
+    PersistenceIdentityMismatch {
+        /// The canonical kind that was persisted.
+        kind: ObjectKind,
+        /// The identity derived at preparation time.
+        expected: ObjectId,
+        /// The identity the ObjectStore content-addressed from the bytes.
+        actual: ObjectId,
     },
     /// An operation-level precondition was not satisfied.
     #[error("precondition violated: {0}")]
@@ -408,6 +420,87 @@ pub fn prepare_change_revision(
         change,
         change_revision_id,
     })
+}
+
+/// A prepared change whose immutable objects have been materialized into the
+/// ObjectStore (V1, S1, C1), but which has **not** been published.
+///
+/// The accepted ref is untouched — the new objects are unreferenced (an
+/// intentionally-valid, harmless state). Step 1.7 publication will require
+/// this type so a Change cannot be published before its objects are persisted.
+#[derive(Debug)]
+pub struct PersistedChange {
+    /// The prepared change whose objects were just persisted.
+    pub prepared: PreparedChangeRevision,
+}
+
+/// Materializes a prepared, validated change's immutable objects into the
+/// ObjectStore in reference order — `V1`, `S1`, then `C1`:
+///
+/// ```text
+/// C1 -> S1 -> V1
+/// ```
+///
+/// Each `ObjectStore::put` returns the content-derived ObjectId (the store
+/// hashes the bytes itself), which is verified against the identity derived at
+/// preparation time. A mismatch is an integrity/programming failure and is
+/// rejected. Step 1.6 does **not** publish: `refs/accepted` is left exactly as
+/// it was. No rollback/GC — objects persisted before a failure remain as
+/// unreachable immutable objects (harmless; reclaimable by a future GC).
+pub fn persist_prepared_change(
+    repository: &Repository,
+    prepared: PreparedChangeRevision,
+) -> Result<PersistedChange, ChangeError> {
+    let store = repository.object_store();
+
+    // V1
+    let v1_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(prepared.creation.element.clone()),
+    })?;
+    let v1_id = store.put(&v1_bytes)?;
+    if v1_id != prepared.creation.element_version_id {
+        return Err(identity_mismatch(
+            ObjectKind::KnowledgeElementVersion,
+            prepared.creation.element_version_id,
+            v1_id,
+        ));
+    }
+
+    // S1
+    let s1_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(prepared.creation.candidate_state.clone()),
+    })?;
+    let s1_id = store.put(&s1_bytes)?;
+    if s1_id != prepared.state_id {
+        return Err(identity_mismatch(
+            ObjectKind::SemanticState,
+            prepared.state_id,
+            s1_id,
+        ));
+    }
+
+    // C1
+    let c1_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
+    })?;
+    let c1_id = store.put(&c1_bytes)?;
+    if c1_id != prepared.change_revision_id {
+        return Err(identity_mismatch(
+            ObjectKind::ChangeRevision,
+            prepared.change_revision_id,
+            c1_id,
+        ));
+    }
+
+    Ok(PersistedChange { prepared })
+}
+
+fn identity_mismatch(kind: ObjectKind, expected: ObjectId, actual: ObjectId) -> ChangeError {
+    ChangeError::PersistenceIdentityMismatch {
+        kind,
+        expected,
+        actual,
+    }
 }
 
 /// Sorts property keys into canonical order (bytewise comparison of their full

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use kat::domain::property::PropertyValue;
 use kat::repository::change::{
-    apply_create_element, prepare_change, prepare_change_revision,
+    apply_create_element, persist_prepared_change, prepare_change, prepare_change_revision,
     validate_create_element_invariants, validate_create_element_ontology,
 };
 use kat::repository::init::init_repository;
@@ -301,4 +301,169 @@ fn prepare_change_revision_end_to_end_is_preparatory_only() {
         fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
         refs_before
     );
+}
+
+#[test]
+fn persist_prepared_change_materializes_v1_s1_c1_and_leaves_accepted_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = init_repository(root).unwrap();
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let context = prepare_change(&repo).unwrap();
+    let prepared = apply_create_element(
+        context,
+        kat::repository::change::CreateElementInput {
+            element_id: kat::domain::identity::ElementId::from_uuid(Uuid::from_u128(31)),
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("A requirement".into()))],
+        },
+    )
+    .unwrap();
+    let validated =
+        validate_create_element_invariants(validate_create_element_ontology(prepared).unwrap())
+            .unwrap();
+    let revision = prepare_change_revision(
+        validated,
+        kat::domain::identity::ChangeId::from_uuid(Uuid::from_u128(131)),
+        Some("persist test".into()),
+    )
+    .unwrap();
+
+    let expected_v1_id = revision.creation.element_version_id;
+    let expected_s1_id = revision.state_id;
+    let expected_c1_id = revision.change_revision_id;
+    let expected_v1 = revision.creation.element.clone();
+    let expected_s1 = revision.creation.candidate_state.clone();
+    let expected_c1 = revision.change.clone();
+
+    let persisted = persist_prepared_change(&repo, revision).unwrap();
+
+    assert_eq!(
+        persisted.prepared.creation.element_version_id,
+        expected_v1_id
+    );
+    assert_eq!(persisted.prepared.state_id, expected_s1_id);
+    assert_eq!(persisted.prepared.change_revision_id, expected_c1_id);
+
+    let v1_bytes = repo.object_store().get(expected_v1_id).unwrap();
+    let s1_bytes = repo.object_store().get(expected_s1_id).unwrap();
+    let c1_bytes = repo.object_store().get(expected_c1_id).unwrap();
+
+    let decoded_v1 = match kat::encoding::decode_canonical(&v1_bytes).unwrap().payload {
+        kat::encoding::object::CanonicalPayload::KnowledgeElementVersion(v) => v,
+        other => panic!("expected KnowledgeElementVersion, got {other:?}"),
+    };
+    let decoded_s1 = match kat::encoding::decode_canonical(&s1_bytes).unwrap().payload {
+        kat::encoding::object::CanonicalPayload::SemanticState(s) => s,
+        other => panic!("expected SemanticState, got {other:?}"),
+    };
+    let decoded_c1 = match kat::encoding::decode_canonical(&c1_bytes).unwrap().payload {
+        kat::encoding::object::CanonicalPayload::ChangeRevision(c) => c,
+        other => panic!("expected ChangeRevision, got {other:?}"),
+    };
+
+    assert_eq!(decoded_v1, expected_v1);
+    assert_eq!(decoded_s1, expected_s1);
+    assert_eq!(decoded_c1, expected_c1);
+
+    let objects = object_ids(root);
+    assert!(objects.contains(&init.ontology.to_string()));
+    assert!(objects.contains(&init.state.to_string()));
+    assert!(objects.contains(&expected_v1_id.to_string()));
+    assert!(objects.contains(&expected_s1_id.to_string()));
+    assert!(objects.contains(&expected_c1_id.to_string()));
+
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
+}
+
+#[test]
+fn repository_reopen_after_persist_before_publish_still_opens_accepted_s0() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = init_repository(root).unwrap();
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let context = prepare_change(&repo).unwrap();
+    let prepared = apply_create_element(
+        context,
+        kat::repository::change::CreateElementInput {
+            element_id: kat::domain::identity::ElementId::from_uuid(Uuid::from_u128(41)),
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("A requirement".into()))],
+        },
+    )
+    .unwrap();
+    let validated =
+        validate_create_element_invariants(validate_create_element_ontology(prepared).unwrap())
+            .unwrap();
+    let revision = prepare_change_revision(
+        validated,
+        kat::domain::identity::ChangeId::from_uuid(Uuid::from_u128(141)),
+        None,
+    )
+    .unwrap();
+
+    persist_prepared_change(&repo, revision).unwrap();
+
+    let reopened = open_repository(root).unwrap();
+    assert_eq!(reopened.accepted.state, init.state);
+    assert_eq!(reopened.accepted.change, None);
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
+}
+
+#[test]
+fn persist_prepared_change_is_idempotent_for_same_prepared_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let context = prepare_change(&repo).unwrap();
+    let prepared = apply_create_element(
+        context,
+        kat::repository::change::CreateElementInput {
+            element_id: kat::domain::identity::ElementId::from_uuid(Uuid::from_u128(51)),
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("A requirement".into()))],
+        },
+    )
+    .unwrap();
+    let validated =
+        validate_create_element_invariants(validate_create_element_ontology(prepared).unwrap())
+            .unwrap();
+    let revision = prepare_change_revision(
+        validated,
+        kat::domain::identity::ChangeId::from_uuid(Uuid::from_u128(151)),
+        Some("idempotent persist".into()),
+    )
+    .unwrap();
+
+    let expected_v1_id = revision.creation.element_version_id;
+    let expected_s1_id = revision.state_id;
+    let expected_c1_id = revision.change_revision_id;
+
+    let first = persist_prepared_change(&repo, revision).unwrap();
+    assert_eq!(first.prepared.creation.element_version_id, expected_v1_id);
+    assert_eq!(first.prepared.state_id, expected_s1_id);
+    assert_eq!(first.prepared.change_revision_id, expected_c1_id);
+    let second = persist_prepared_change(&repo, first.prepared).unwrap();
+
+    assert_eq!(second.prepared.creation.element_version_id, expected_v1_id);
+    assert_eq!(second.prepared.state_id, expected_s1_id);
+    assert_eq!(second.prepared.change_revision_id, expected_c1_id);
+
+    let objects = object_ids(root);
+    assert_eq!(objects.len(), 5);
+    assert!(objects.contains(&expected_v1_id.to_string()));
+    assert!(objects.contains(&expected_s1_id.to_string()));
+    assert!(objects.contains(&expected_c1_id.to_string()));
 }
