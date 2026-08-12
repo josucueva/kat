@@ -1,0 +1,14 @@
+{
+  "name": "relationship-version-empty-properties",
+  "comment": "Minimal RelationshipVersion: relationship_id, source, type, target, and an empty property map.",
+  "object": {
+    "kind": "relationship-version",
+    "relationship_id": "00000000-0000-0000-0000-000000000001",
+    "source_element_id": "00000000-0000-0000-0000-000000000002",
+    "relationship_type": "kat.core/addresses",
+    "target_element_id": "00000000-0000-0000-0000-000000000003",
+    "properties": {}
+  },
+  "cbor_hex": "a400010102020103a500d825500000000000000000000000000000000101d825500000000000000000000000000000000202726b61742e636f72652f61646472657373657303d825500000000000000000000000000000000304a0",
+  "object_id": "3a9b3eeb51d52b5791f9d1fed37b51a060295fedb3e080aa42c2138d6b477981"
+}

@@ -2,7 +2,7 @@
 
 This document is the working plan and progress tracker for implementing the KAT v0.1 prototype in Rust. It follows the implementation workflow and the phasing defined in `prototype-design.md` (Phase 0: Canonical Repository Substrate; Phase 1: First Semantic Vertical Slice).
 
-Status: **Phase 0 in progress** — steps 0.1-0.4 complete: skeleton, identity primitives, canonical data model + structural validation, and deterministic CBOR encoding. `cargo test` (48 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass.
+Status: **Phase 0 in progress** — steps 0.1-0.5 complete: skeleton, identity primitives, canonical data model + structural validation, deterministic CBOR encoding, and golden/negative vectors with a conformance harness. `cargo test` (58 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass.
 
 Toolchain: Rust **stable GNU `x86_64-pc-windows-gnu` 1.97.1**, pinned via `rust-toolchain.toml` (MSVC Build Tools are not installed on this machine; MinGW-w64 provides the linker).
 
@@ -122,10 +122,12 @@ Notes: implemented as a **small explicit encoder** (`encoding/cbor.rs`), not a S
 
 ### 0.5 — Golden test vectors (created alongside encoding, not after)
 
-- [ ] Fixtures live in `spec/vectors/valid/` and `spec/vectors/invalid/`.
-- [ ] First useful test: `known logical object → exact expected CBOR bytes → exact expected SHA-256`.
-- [ ] Cover per `spec/vectors/README.md`: every object kind, UUID tag 37, integer boundaries, empty/non-empty property maps, nested values, Semantic State ordering, ontology ordering, all six operations, ChangeRevision, empty initial Semantic State.
-- [ ] Invalid vectors: indefinite-length, non-shortest integers, wrong map ordering, duplicate map keys, invalid UUID, kind/payload mismatch, malformed ObjectIds, unsorted state entries, duplicate semantic IDs, unsupported versions.
+- [x] Fixtures live in `spec/vectors/valid/` and `spec/vectors/invalid/`.
+- [x] First useful test: `known logical object → exact expected CBOR bytes → exact expected SHA-256`.
+- [x] Cover per `spec/vectors/README.md`: every object kind, UUID tag 37, integer boundaries, empty/non-empty property maps, nested values, Semantic State ordering, ontology ordering, all six operations, ChangeRevision, empty initial Semantic State.
+- [x] Invalid vectors: indefinite-length, non-shortest integers, wrong map ordering, duplicate map keys, invalid UUID, kind/payload mismatch, malformed ObjectIds, unsorted state entries, duplicate semantic IDs, unsupported versions.
+
+Notes: 10 valid fixtures (all object kinds, all PropertyValue variants, integer boundaries, all six operations, UUID ordering, ObjectId ordering, description present/absent, empty initial state). `invalid/structural/` (6 JSON fixtures; tested via `tests/structural_invalid.rs` through `canonical_bytes` rejection) vs `invalid/encoded/` (10 raw `.cbor` fixtures; tests pending until a decoder exists) separate construction failure from malformed bytes. `tests/vector_conformance.rs` walks the valid directory, builds logical objects from the diagnostic JSON, and asserts exact bytes. `object_id` (SHA-256) values in fixtures were computed with an **independent** SHA-256 (verified the anchor fixture's stored value). `serde_json` added as a **dev-dependency** (preserve_order) only; the library stays serde-free. Vectors README documents the diagnostic representation and the "encoder must not be the sole oracle" derivation policy.
 
 ### 0.6 — SHA-256 Object IDs
 
@@ -233,7 +235,8 @@ kat history
 | 2026-08-11 | Step 0.3 — Canonical data model + structural validation | Domain types (`property`, `element`, `relationship`, `ontology`, `operation`, `change`, `state`) mirroring the CDDL + typed `CanonicalObject` envelope (`encoding/object.rs`). `CanonicalValidate` structural checks (`encoding/validate.rs`): sorted/unique collections, non-empty base_states/operations, canonical property-key order. `cargo test` 32 pass, fmt/clippy clean. |
 | 2026-08-11 | Step 0.1 — Rust project skeleton                        | `Cargo.toml` (edition 2024), `.gitignore`, `rust-toolchain.toml` (GNU), `src/{main,domain,encoding,repository}` wired. `cargo build`/`test`/`fmt`/`clippy -D warnings` clean.                                                                                                                                                                                                     |
 | 2026-08-11 | Step 0.2 — Identity primitives                          | `src/domain/identity.rs`: six typed UUID IDs + `ObjectId([u8;32])` with strict lowercase-hex parse. Deps: `uuid`/`hex`/`thiserror`. Added library+binary split (`src/lib.rs`). `cargo test` 12 pass, fmt/clippy clean.                                                                                                                                                            |
-| 2026-08-11 | Step 0.4 — Deterministic CBOR encoding                  | Explicit encoder (`encoding/cbor.rs`): primitive writer (shortest ints, definite lengths), tag-37 UUIDs, all five payloads, all six operations, property maps. `canonical_bytes()` validates then encodes (fail-closed). Corrected map-key comparator to encoded-byte ordering, shared validator+encoder. `cargo test` 48 pass, fmt/clippy clean. |
+| 2026-08-11 | Step 0.4 — Deterministic CBOR encoding                  | Explicit encoder (`encoding/cbor.rs`): primitive writer (shortest ints, definite lengths), tag-37 UUIDs, all five payloads, all six operations, property maps. `canonical_bytes()` validates then encodes (fail-closed). Corrected map-key comparator to encoded-byte ordering, shared validator+encoder. `cargo test` 48 pass, fmt/clippy clean.                                 |
+| 2026-08-11 | Step 0.5 — Golden + negative vectors                    | 10 valid fixtures (all kinds, all PropertyValue variants, integer boundaries, all six ops, ordering proofs, description present/absent), 6 `invalid/structural/` + 10 `invalid/encoded/` fixtures. `tests/vector_conformance.rs` harness (walks valid dir, asserts exact bytes); `tests/structural_invalid.rs` (canonical_bytes rejection). object_id values computed with independent SHA-256. `serde_json` dev-dep only. `cargo test` 58 pass, fmt/clippy clean. |
 
 ## Non-goals during this work (do not build yet)
 

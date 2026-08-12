@@ -1,0 +1,6 @@
+{
+  "name": "duplicate-property-key",
+  "comment": "KnowledgeElementVersion whose property map contains the same key twice. JSON objects cannot express duplicate keys, so this case is exercised as a constructed Rust value in tests/structural_invalid.rs.",
+  "reason": "property map contains a duplicate key",
+  "note": "Not representable as a JSON object; enforced by tests/structural_invalid.rs using a Vec<(String, PropertyValue)> with duplicate keys."
+}

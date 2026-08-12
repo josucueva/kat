@@ -1,0 +1,12 @@
+{
+  "name": "semantic-state-empty",
+  "comment": "The empty initial SemanticState: references an OntologyVersion and has no element or relationship entries. This is the S0 produced by kat init.",
+  "object": {
+    "kind": "semantic-state",
+    "ontology_version": "0000000000000000000000000000000000000000000000000000000000000000",
+    "elements": [],
+    "relationships": []
+  },
+  "cbor_hex": "a400010104020103a3005820000000000000000000000000000000000000000000000000000000000000000001800280",
+  "object_id": "da0ee7dc72c656becacfbf2853b04e138591bca31ed8f055cffc7f4af719de72"
+}

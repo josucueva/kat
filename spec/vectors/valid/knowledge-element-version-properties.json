@@ -1,0 +1,21 @@
+{
+  "name": "knowledge-element-version-properties",
+  "comment": "KnowledgeElementVersion with a non-empty property map exercising every PropertyValue variant: int (negative), bool, list, null, text, uuid (tag 37), and bytes. Keys are declared in canonical (encoded-byte) order: int, bool, list, null, text, uuid, bytes.",
+  "object": {
+    "kind": "knowledge-element-version",
+    "element_id": "00000000-0000-0000-0000-000000000001",
+    "type": "kat.core/requirement",
+    "lifecycle": "active",
+    "properties": {
+      "int": -1,
+      "bool": true,
+      "list": [1, "a"],
+      "null": null,
+      "text": "hi",
+      "uuid": { "$uuid": "00000000-0000-0000-0000-000000000007" },
+      "bytes": { "$bytes": "0102" }
+    }
+  },
+  "cbor_hex": "a400010101020103a400d825500000000000000000000000000000000101746b61742e636f72652f726571756972656d656e74020003a763696e742064626f6f6cf5646c69737482016161646e756c6cf664746578746268696475756964d8255000000000000000000000000000000007656279746573420102",
+  "object_id": "e608f69d6014a102ac29d53d5331db54477cd302b4c689d46b1705d84d85e2e2"
+}

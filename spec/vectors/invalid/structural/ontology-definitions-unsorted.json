@@ -1,0 +1,14 @@
+{
+  "name": "ontology-definitions-unsorted",
+  "comment": "OntologyVersion whose element type definitions are not sorted by type_id (requirement before constraint).",
+  "reason": "ontology element type definitions must be sorted by type ID",
+  "object": {
+    "kind": "ontology-version",
+    "ontology_id": "00000000-0000-0000-0000-000000000009",
+    "element_types": [
+      { "type_id": "kat.core/requirement", "name": "Requirement" },
+      { "type_id": "kat.core/constraint", "name": "Constraint" }
+    ],
+    "relationship_types": []
+  }
+}

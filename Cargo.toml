@@ -8,3 +8,10 @@ description = "KAT - a semantic software repository: specification-first represe
 uuid = { version = "1", features = ["v4"] }
 hex = "0.4"
 thiserror = "2"
+
+[dev-dependencies]
+# Only the vector-conformance harness (tests/) parses fixture JSON. The
+# library itself stays free of serde. preserve_order keeps fixture-declared
+# canonical key order intact (a BTreeMap would silently re-sort and hide
+# structural errors).
+serde_json = { version = "1", features = ["preserve_order"] }

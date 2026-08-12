@@ -1,0 +1,18 @@
+{
+  "name": "change-empty-base-states",
+  "comment": "ChangeRevision with no base states. The CDDL requires [1* object-id] (at least one).",
+  "reason": "ChangeRevision must contain at least one base state",
+  "object": {
+    "kind": "change-revision",
+    "change_id": "00000000-0000-0000-0000-000000000004",
+    "base_states": [],
+    "result_state": "0202020202020202020202020202020202020202020202020202020202020202",
+    "operations": [
+      {
+        "kind": "create-element",
+        "new_version": "0303030303030303030303030303030303030303030303030303030303030303"
+      }
+    ],
+    "dependencies": []
+  }
+}

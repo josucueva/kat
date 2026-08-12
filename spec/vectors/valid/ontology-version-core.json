@@ -1,0 +1,22 @@
+{
+  "name": "ontology-version-core",
+  "comment": "OntologyVersion with two element types sorted by type_id (constraint, requirement) proving textual ordering, and one relationship type with allowed source/target type lists.",
+  "object": {
+    "kind": "ontology-version",
+    "ontology_id": "00000000-0000-0000-0000-000000000009",
+    "element_types": [
+      { "type_id": "kat.core/constraint", "name": "Constraint" },
+      { "type_id": "kat.core/requirement", "name": "Requirement" }
+    ],
+    "relationship_types": [
+      {
+        "type_id": "kat.core/addresses",
+        "name": "Addresses",
+        "allowed_source_types": ["kat.core/design-decision"],
+        "allowed_target_types": ["kat.core/requirement"]
+      }
+    ]
+  },
+  "cbor_hex": "a400010105020103a300d82550000000000000000000000000000000090182a200736b61742e636f72652f636f6e73747261696e74016a436f6e73747261696e74a200746b61742e636f72652f726571756972656d656e74016b526571756972656d656e740281a400726b61742e636f72652f6164647265737365730169416464726573736573028178186b61742e636f72652f64657369676e2d6465636973696f6e0381746b61742e636f72652f726571756972656d656e74",
+  "object_id": "84b23fb44ef95b1db2fda4546eed478e4571241ebb07c61261e113e29cc7d3ca"
+}

@@ -1,0 +1,20 @@
+{
+  "name": "duplicate-element-id",
+  "comment": "SemanticState with two element entries sharing the same element ID (even with different versions). Duplicate semantic IDs are invalid.",
+  "reason": "SemanticState contains a duplicate element ID",
+  "object": {
+    "kind": "semantic-state",
+    "ontology_version": "0000000000000000000000000000000000000000000000000000000000000000",
+    "elements": [
+      {
+        "element_id": "00000000-0000-0000-0000-000000000001",
+        "version": "0101010101010101010101010101010101010101010101010101010101010101"
+      },
+      {
+        "element_id": "00000000-0000-0000-0000-000000000001",
+        "version": "0909090909090909090909090909090909090909090909090909090909090909"
+      }
+    ],
+    "relationships": []
+  }
+}

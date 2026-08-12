@@ -1,0 +1,23 @@
+{
+  "name": "knowledge-element-version-nested",
+  "comment": "KnowledgeElementVersion with integer boundary values (23/24, 255/256, -24/-25) and nested property maps/lists, proving shortest integer encoding and recursive property values. Keys declared in canonical order.",
+  "object": {
+    "kind": "knowledge-element-version",
+    "element_id": "00000000-0000-0000-0000-000000000002",
+    "type": "kat.core/requirement",
+    "lifecycle": "active",
+    "properties": {
+      "a24": 24,
+      "a255": 255,
+      "a256": 256,
+      "neg24": -24,
+      "neg25": -25,
+      "nested": {
+        "key": "value",
+        "inner": [23, 24, 255, 256, -25]
+      }
+    }
+  },
+  "cbor_hex": "a400010101020103a400d825500000000000000000000000000000000201746b61742e636f72652f726571756972656d656e74020003a6636132341818646132353518ff6461323536190100656e6567323437656e656732353818666e6573746564a2636b65796576616c756565696e6e65728517181818ff1901003818",
+  "object_id": "5d37c5bd8c92333e1c88c173afc60ec32d69cc5cb058a9c224e2c896f1994375"
+}
