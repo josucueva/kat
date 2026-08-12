@@ -1,5 +1,9 @@
-# KAT builds with the GNU Rust toolchain, linking against the MinGW-w64
-# toolchain available on this machine (no MSVC Build Tools installed).
-# Remove this file if the MSVC toolchain becomes available.
+# KAT pins to Rust stable. The plain "stable" channel resolves to each host's
+# default target (x86_64-unknown-linux-gnu on Linux, x86_64-pc-windows-msvc on
+# Windows), so no single machine's target is forced on everyone.
+#
+# Machine-local toolchain flavour is NOT committed here. If a machine needs a
+# non-default target (e.g. Windows-GNU instead of MSVC), set it per-machine with:
+#   rustup override set <toolchain>   (inside this repo; not tracked by git)
 [toolchain]
-channel = "stable-x86_64-pc-windows-gnu"
+channel = "stable"

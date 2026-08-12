@@ -4,7 +4,7 @@ This document is the working plan and progress tracker for implementing the KAT 
 
 Status: **Phase 0 complete** — steps 0.1-0.10 done: skeleton, identity primitives, canonical data model + structural validation, deterministic CBOR encoding, golden/negative vectors with a conformance harness, SHA-256 Object IDs, the immutable ObjectStore, repository metadata + `AcceptedRef`, `kat init`, and repository open + integrity checks (including strict canonical decoding). `cargo test` (114 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. `main` pushed to `origin/main` at step 0.9. A repository written by `kat init` can now be closed and reopened by a completely new process with all integrity checks passing.
 
-Toolchain: Rust **stable GNU `x86_64-pc-windows-gnu` 1.97.1**, pinned via `rust-toolchain.toml` (MSVC Build Tools are not installed on this machine; MinGW-w64 provides the linker).
+Toolchain: Rust **stable**, pinned via `rust-toolchain.toml` (`channel = "stable"`); it resolves to each host's default target on both Linux and Windows. Machine-local toolchain flavour is set with `rustup override` and is not committed.
 
 ## Authoritative Sources
 

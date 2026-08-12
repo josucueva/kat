@@ -20,8 +20,9 @@ disciplined, and faithful to the specifications.
    rules). Working tree must be clean afterward.
 4. **Update `docs/implementation-plan.md` after each step**: status line,
    checkbox states, a Notes line, and a progress-log row.
-5. **Update `/memories/repo/kat.md` after each step**: progress, commit hash,
-   and any new facts worth remembering.
+5. **Update the cross-step memory/summary after each step** (currently
+   `docs/implementation-plan.md` progress line): progress, commit hash, and
+   any new facts worth remembering.
 6. **Push to `origin/main` only after the user approves.** Report the commit
    hash and ask before pushing.
 7. **Report after each step**: what changed, validation results, commit hash,
@@ -70,11 +71,11 @@ disciplined, and faithful to the specifications.
 
 ## Coding rules
 
-- Rust **edition 2024**, toolchain pinned to **stable GNU
-  `x86_64-pc-windows-gnu` 1.97.1** via `rust-toolchain.toml` (MSVC build
-  tools are absent on this machine; MinGW-w64 provides the linker). In each
-  fresh terminal session prepend:
-  `$env:PATH = "$env:USERPROFILE\.cargo\bin;C:\msys64\mingw64\bin;$env:PATH"`
+- Rust **edition 2024**, toolchain pinned to **stable** via
+  `rust-toolchain.toml` (`channel = "stable"`), which resolves to each host's
+  default target. Machine-local toolchain flavour is **not** committed; on a
+  machine that needs a non-default target (e.g. Windows-GNU instead of MSVC),
+  set it per-machine with `rustup override set <toolchain>` inside the repo.
 - **Library + binary split**: `src/lib.rs` declares the modules
   (`domain`, `encoding`, `repository`); `src/main.rs` is a thin CLI.
 - **Typed newtypes** for every semantic ID (UUIDv4) and `ObjectId([u8; 32])`.
@@ -88,8 +89,6 @@ disciplined, and faithful to the specifications.
   and validate (rejects unsupported/malformed values).
 - **dev-dependencies only for tests**: `tempfile`, `serde_json` (with
   `preserve_order`).
-- **Ignore the benign MinGW linker warning**
-  `corrupt .drectve at end of def file`.
 - **Edition 2024 quirks**: `use std::io::Write` for `write_all`; explicit
   lifetimes where needed.
 
@@ -122,8 +121,11 @@ disciplined, and faithful to the specifications.
 
 ## Environment / machine facts
 
-- Windows, PowerShell 5.1, persistent terminal session; one-shot commands run
-  in sync mode.
+- Cross-platform: developed on both Windows and Linux. Toolchain is
+  host-agnostic (`channel = "stable"`); a machine needing a non-default
+  target uses a local `rustup override` rather than editing committed files.
+  Rust installed via `rustup` on each machine; PATH via
+  `$HOME/.cargo/env` (bash) / `$env:USERPROFILE\.cargo\bin` (PowerShell).
 - Repo: `https://github.com/josucueva/kat.git`, default branch `main`.
 - `.gitignore` currently ignores `/target` only (a `.kat/` created in-repo is
   untracked — use a temp dir or a deletable subfolder for manual `kat init`
