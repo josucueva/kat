@@ -2,7 +2,7 @@
 
 This document is the working plan and progress tracker for implementing the KAT v0.1 prototype in Rust. It follows the implementation workflow and the phasing defined in `prototype-design.md` (Phase 0: Canonical Repository Substrate; Phase 1: First Semantic Vertical Slice).
 
-Status: **Phase 0 in progress** — steps 0.1-0.7 complete: skeleton, identity primitives, canonical data model + structural validation, deterministic CBOR encoding, golden/negative vectors with a conformance harness, SHA-256 Object IDs, and the immutable ObjectStore. `cargo test` (73 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. `main` pushed to `origin/main` at step 0.6.
+Status: **Phase 0 in progress** — steps 0.1-0.8 complete: skeleton, identity primitives, canonical data model + structural validation, deterministic CBOR encoding, golden/negative vectors with a conformance harness, SHA-256 Object IDs, the immutable ObjectStore, and repository metadata + `AcceptedRef`. `cargo test` (88 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. `main` pushed to `origin/main` at step 0.7.
 
 Toolchain: Rust **stable GNU `x86_64-pc-windows-gnu` 1.97.1**, pinned via `rust-toolchain.toml` (MSVC Build Tools are not installed on this machine; MinGW-w64 provides the linker).
 
@@ -148,10 +148,12 @@ Notes: `repository/object_store.rs` — stores **bytes**, not `CanonicalObject`s
 
 ### 0.8 — `repository.toml` and `AcceptedRef`
 
-- [ ] `repository.toml`: `format_version = 1`, `repository_id`, `software_id`, `object_encoding = "cbor-deterministic-v1"`, `hash_algorithm = "sha256"`. Dynamic state/history must **not** live here.
-- [ ] `AcceptedRef`: `{ state: StateId, change: Option<ChangeRevisionId> }`.
-- [ ] Compare-and-swap publication abstraction (strongest test comes with the first Change).
-- [ ] Locked/temp-file atomic replace behind a dedicated ref-storage abstraction.
+- [x] `repository.toml`: `format_version = 1`, `repository_id`, `software_id`, `object_encoding = "cbor-deterministic-v1"`, `hash_algorithm = "sha256"`. Dynamic state/history must **not** live here.
+- [x] `AcceptedRef`: `{ state: StateId, change: Option<ChangeRevisionId> }`.
+- [x] Compare-and-swap publication abstraction (strongest test comes with the first Change).
+- [x] Locked/temp-file atomic replace behind a dedicated ref-storage abstraction.
+
+Notes: `repository/metadata.rs` — `RepositoryMetadata` with typed closed enums `ObjectEncoding`/`HashAlgorithm`; parser rejects unsupported format_version/encoding/algorithm and malformed UUIDs. `repository/ref_store.rs` — `AcceptedRef` (`state`, `change: Option<ObjectId>`; physical format `state <64 hex>` / `change <64 hex>|none`), `RefStore` trait (`read_accepted`, `init_accepted` create-only, `compare_and_swap_accepted`), `FileRefStore` with a `refs/accepted.lock` exclusive-create lock and atomic temp+rename publication (cleaned up after publication). `RefStore` has **no** semantic interpretation — the `accepted.change.result_state == accepted.state` invariant belongs to open/integrity and Change publication. `toml` dependency added. 14 new tests (round-trips, rejections, CAS success/stale, single concurrent winner, cleanup).
 
 ### 0.9 — `kat init`
 
@@ -242,7 +244,8 @@ kat history
 | 2026-08-11 | Step 0.4 — Deterministic CBOR encoding                  | Explicit encoder (`encoding/cbor.rs`): primitive writer (shortest ints, definite lengths), tag-37 UUIDs, all five payloads, all six operations, property maps. `canonical_bytes()` validates then encodes (fail-closed). Corrected map-key comparator to encoded-byte ordering, shared validator+encoder. `cargo test` 48 pass, fmt/clippy clean.                                                                                                                  |
 | 2026-08-11 | Step 0.5 — Golden + negative vectors                    | 10 valid fixtures (all kinds, all PropertyValue variants, integer boundaries, all six ops, ordering proofs, description present/absent), 6 `invalid/structural/` + 10 `invalid/encoded/` fixtures. `tests/vector_conformance.rs` harness (walks valid dir, asserts exact bytes); `tests/structural_invalid.rs` (canonical_bytes rejection). object_id values computed with independent SHA-256. `serde_json` dev-dep only. `cargo test` 58 pass, fmt/clippy clean. |
 | 2026-08-11 | Step 0.6 — SHA-256 Object IDs                           | `encoding/hash.rs`: `object_id(&[u8]) -> ObjectId` (SHA-256) + thin `canonical_object_id`; no `ObjectId::new()`. Conformance harness asserts both bytes and externally-derived object_id for all 10 fixtures. `sha2` dep. `cargo test` 63 pass, fmt/clippy clean.                                                                                                                                                                                                  |
-| 2026-08-11 | Step 0.7 — Immutable ObjectStore                        | `repository/object_store.rs`: `put`/`get`/`exists` over flat `objects/<64 hex>`; no-overwrite + concurrent same-bytes races harmless; `get` verifies ObjectId; `exists` physical only. `ObjectStoreError` {NotFound, Integrity, Io}. `tempfile` dev-dep. All 10 required test scenarios pass. `cargo test` 73 pass, fmt/clippy clean. |
+| 2026-08-11 | Step 0.7 — Immutable ObjectStore                        | `repository/object_store.rs`: `put`/`get`/`exists` over flat `objects/<64 hex>`; no-overwrite + concurrent same-bytes races harmless; `get` verifies ObjectId; `exists` physical only. `ObjectStoreError` {NotFound, Integrity, Io}. `tempfile` dev-dep. All 10 required test scenarios pass. `cargo test` 73 pass, fmt/clippy clean.                                                                                                                              |
+| 2026-08-11 | Step 0.8 — `repository.toml` + `AcceptedRef`            | `repository/metadata.rs` (typed `RepositoryMetadata`, rejects unsupported/ malformed values) + `repository/ref_store.rs` (`AcceptedRef`, `RefStore` trait, `FileRefStore` with lock + atomic temp/rename CAS; no semantic interpretation). `toml` dep. 14 new tests. `cargo test` 88 pass, fmt/clippy clean. |
 
 ## Non-goals during this work (do not build yet)
 

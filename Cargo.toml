@@ -9,6 +9,7 @@ uuid = { version = "1", features = ["v4"] }
 hex = "0.4"
 thiserror = "2"
 sha2 = "0.10"
+toml = "0.8"
 
 [dev-dependencies]
 # Only the vector-conformance harness (tests/) parses fixture JSON. The
