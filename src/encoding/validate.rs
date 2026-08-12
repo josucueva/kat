@@ -138,15 +138,13 @@ where
 
 /// Canonical ordering of two property map keys.
 ///
-/// Property map keys are text strings. Their canonical order is the bytewise
-/// ordering of the deterministic CBOR encodings of the keys (RFC 8949 §4.2.1).
-/// For text strings this equals: shorter UTF-8 byte length first, then
-/// bytewise over the UTF-8 bytes. This is why `"z"` sorts before `"aa"` even
-/// though bytewise string comparison would put `"aa"` first.
+/// Keys are ordered by bytewise comparison of their **full deterministic CBOR
+/// encodings** (RFC 8949 §4.2.1), not by the raw strings. Because the encoded
+/// text-string header participates, this is not the same as plain string
+/// comparison (e.g. `"z"` sorts before `"aa"`). The comparator is shared with
+/// the encoder so validation and encoding can never disagree.
 fn property_key_cmp(a: &str, b: &str) -> Ordering {
-    a.len()
-        .cmp(&b.len())
-        .then_with(|| a.as_bytes().cmp(b.as_bytes()))
+    crate::encoding::cbor::cmp_encoded_text(a, b)
 }
 
 /// Validates one property map: canonical key order, uniqueness, and the

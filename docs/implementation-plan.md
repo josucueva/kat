@@ -2,7 +2,7 @@
 
 This document is the working plan and progress tracker for implementing the KAT v0.1 prototype in Rust. It follows the implementation workflow and the phasing defined in `prototype-design.md` (Phase 0: Canonical Repository Substrate; Phase 1: First Semantic Vertical Slice).
 
-Status: **Phase 0 in progress** — steps 0.1 (skeleton), 0.2 (identity primitives), and 0.3 (canonical data model + structural validation) complete. `cargo test` (32 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass.
+Status: **Phase 0 in progress** — steps 0.1-0.4 complete: skeleton, identity primitives, canonical data model + structural validation, and deterministic CBOR encoding. `cargo test` (48 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass.
 
 Toolchain: Rust **stable GNU `x86_64-pc-windows-gnu` 1.97.1**, pinned via `rust-toolchain.toml` (MSVC Build Tools are not installed on this machine; MinGW-w64 provides the linker).
 
@@ -106,17 +106,19 @@ Notes: maps, states, and ontology definitions use **ordered vectors** (not `BTre
 
 The highest-risk technical component. Implement RFC 8949 Core Deterministic Encoding (Section 4.2.1):
 
-- [ ] Definite-length collections only (no indefinite-length arrays, maps, or strings).
-- [ ] Shortest integer encoding.
-- [ ] UUID as CBOR tag 37 containing exactly 16 bytes.
-- [ ] Map keys ordered by bytewise lexicographic comparison of their deterministic encoded forms (RFC 8949 §4.2.1 — not the RFC 7049 length-first alternative, §4.2.3).
-- [ ] Exact numeric envelope / object-kind / operation identifiers from the CDDL.
-- [ ] Sorted Semantic State entries (lexicographic over raw 16-byte IDs).
-- [ ] Sorted ontology element/relationship type sets (lexicographic over UTF-8 type_id).
-- [ ] No floating-point property values.
-- [ ] Property key ordering follows deterministic CBOR map ordering.
+- [x] Definite-length collections only (no indefinite-length arrays, maps, or strings).
+- [x] Shortest integer encoding.
+- [x] UUID as CBOR tag 37 containing exactly 16 bytes.
+- [x] Map keys ordered by bytewise lexicographic comparison of their deterministic encoded forms (RFC 8949 §4.2.1 — not the RFC 7049 length-first alternative, §4.2.3).
+- [x] Exact numeric envelope / object-kind / operation identifiers from the CDDL.
+- [x] Sorted Semantic State entries (lexicographic over raw 16-byte IDs).
+- [x] Sorted ontology element/relationship type sets (lexicographic over UTF-8 type_id).
+- [x] No floating-point property values.
+- [x] Property key ordering follows deterministic CBOR map ordering.
 
 Reference: `docs/canonical-format.md` → Deterministic CBOR Requirements & Canonical Collections.
+
+Notes: implemented as a **small explicit encoder** (`encoding/cbor.rs`), not a Serde-derived serializer — every protocol number is emitted literally. Public API: `encoding::canonical_bytes(&CanonicalObject) -> Result<Vec<u8>, EncodingError>`, which structurally validates first and refuses non-canonical objects (fail-closed; never sorts/repairs). Property-map key order uses the **encoded-key-byte comparator** (`cmp_encoded_text`), shared by the validator and encoder. `EncodingError` currently has only `InvalidCanonicalStructure` (the only reachable variant with the infallible in-memory writer). Golden byte tests interleaved with step 0.5: the authoritative `knowledge-element-version-empty-properties` fixture plus hand-verified fixtures for every object kind and all PropertyValue variants.
 
 ### 0.5 — Golden test vectors (created alongside encoding, not after)
 
@@ -225,12 +227,13 @@ kat history
 
 ## Progress Log
 
-| Date       | Milestone / step completed       | Notes                                                                                                                                                                                                                  |
-| ---------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-11 | Plan created                     | Phase 0 not yet started; no Rust implementation exists                                                                                                                                                                 |
+| Date       | Milestone / step completed                              | Notes                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-11 | Plan created                                            | Phase 0 not yet started; no Rust implementation exists                                                                                                                                                                                                                                                                                                                            |
 | 2026-08-11 | Step 0.3 — Canonical data model + structural validation | Domain types (`property`, `element`, `relationship`, `ontology`, `operation`, `change`, `state`) mirroring the CDDL + typed `CanonicalObject` envelope (`encoding/object.rs`). `CanonicalValidate` structural checks (`encoding/validate.rs`): sorted/unique collections, non-empty base_states/operations, canonical property-key order. `cargo test` 32 pass, fmt/clippy clean. |
-| 2026-08-11 | Step 0.1 — Rust project skeleton | `Cargo.toml` (edition 2024), `.gitignore`, `rust-toolchain.toml` (GNU), `src/{main,domain,encoding,repository}` wired. `cargo build`/`test`/`fmt`/`clippy -D warnings` clean.                                          |
-| 2026-08-11 | Step 0.2 — Identity primitives   | `src/domain/identity.rs`: six typed UUID IDs + `ObjectId([u8;32])` with strict lowercase-hex parse. Deps: `uuid`/`hex`/`thiserror`. Added library+binary split (`src/lib.rs`). `cargo test` 12 pass, fmt/clippy clean. |
+| 2026-08-11 | Step 0.1 — Rust project skeleton                        | `Cargo.toml` (edition 2024), `.gitignore`, `rust-toolchain.toml` (GNU), `src/{main,domain,encoding,repository}` wired. `cargo build`/`test`/`fmt`/`clippy -D warnings` clean.                                                                                                                                                                                                     |
+| 2026-08-11 | Step 0.2 — Identity primitives                          | `src/domain/identity.rs`: six typed UUID IDs + `ObjectId([u8;32])` with strict lowercase-hex parse. Deps: `uuid`/`hex`/`thiserror`. Added library+binary split (`src/lib.rs`). `cargo test` 12 pass, fmt/clippy clean.                                                                                                                                                            |
+| 2026-08-11 | Step 0.4 — Deterministic CBOR encoding                  | Explicit encoder (`encoding/cbor.rs`): primitive writer (shortest ints, definite lengths), tag-37 UUIDs, all five payloads, all six operations, property maps. `canonical_bytes()` validates then encodes (fail-closed). Corrected map-key comparator to encoded-byte ordering, shared validator+encoder. `cargo test` 48 pass, fmt/clippy clean. |
 
 ## Non-goals during this work (do not build yet)
 
