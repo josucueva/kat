@@ -220,25 +220,63 @@ kat show
 kat history
 ```
 
-### Work items
+### Scope for the first slice
 
-- [ ] `CreateElement` operation (element must not already be active in base state).
-- [ ] Minimal ontology validation (types exist; relationship source/target types allowed).
-- [ ] Candidate `SemanticState S1` construction.
-- [ ] Minimal required invariant validation (identity, relationship, lifecycle, change, traceability, authority, validation, history groups per `docs/invariants.md`).
-- [ ] `ChangeRevision C1` referencing `result_state = S1`.
-- [ ] Persist new immutable objects (KnowledgeElementVersion, SemanticState, ChangeRevision).
-- [ ] CAS publish `{S0, none} -> {S1, C1}`; invariant `accepted.change.result_state == accepted.state`.
-- [ ] `kat show` — inspect resulting knowledge.
-- [ ] `kat history` — reconstruct history from accepted Change head, Change Revisions, and Semantic States.
+Get exactly **one** semantic mutation — `CreateElement` — correct end to end. Do **not** start Phase 1 with `UpdateElement`, `DeprecateElement`, `Link`/`Unlink`, `Supersede`, impact analysis, or general history traversal. The goal changes from "can KAT store canonical objects?" to:
+
+> Can KAT perform a valid semantic change against an accepted state and publish the result atomically?
+
+### Work items (ordered sub-steps, mirroring the Change Application Flow in `prototype-design.md`)
+
+- [ ] **1.1 — Change application service.** A library entry point (the Change Engine) that resolves `refs/accepted`, loads the accepted SemanticState and Change head (via `open_repository`), selects the base state, and produces a **candidate** state. It must **not publish anything**; publication is a separate, explicit step.
+- [ ] **1.2 — `CreateElement` execution.** Given `ElementId`, `type_id`, `properties`: precondition — the `ElementId` must **not** already be active in the base state; construct a new `KnowledgeElementVersion` (Active lifecycle); validate its canonical form; stage/persist it (or keep staged until persist-before-publish); add `element_id -> new version ObjectId` to the candidate state.
+- [ ] **1.3 — Minimal ontology validation.** For this slice only: **element type exists in the current `OntologyVersion`** (`state.ontology_version`). Do not build every future ontology rule; no relationship type checks yet.
+- [ ] **1.4 — Minimal invariant validation.** Only what `CreateElement` and candidate-state correctness require:
+  - stable identity: no duplicate `ElementId` in the candidate state;
+  - valid lifecycle: the new version is Active;
+  - referenced objects exist and object kinds match (the new version is a `KnowledgeElementVersion`);
+  - candidate state internally coherent (structural canonical validity, per `encoding/validate.rs`).
+  - The full `docs/invariants.md` groups (relationship, traceability, authority, validation, history) are **not** enforced in this slice.
+- [ ] **1.5 — Construct `ChangeRevision C1`.** `change_id` (new), `base_states = [S0]`, `result_state = S1`, `operations = [CreateElement(...)]`, `dependencies = []`, `description = None`.
+- [ ] **1.6 — Persist before publication.** Order matters: immutable objects first (new `KnowledgeElementVersion`, `SemanticState S1`, `ChangeRevision C1`), then `refs/accepted` **last**.
+- [ ] **1.7 — CAS publication.** Publish only if the accepted ref is still `{ state: S0, change: none }`. On success the new head is `{ state: S1, change: C1 }` and `C1.result_state == S1` holds. On conflict, return a conflict and leave the newly created immutable objects unreferenced (harmless — reachable by ObjectId, not the head).
+- [ ] **1.8 — `kat show <element-id>`.** Resolve the element's current version from the accepted state and display it; proves S1 contains the new element.
+- [ ] **1.9 — `kat history`.** First case only: accepted head `C1`, `C1.base_states = [S0]`, `C1.result_state = S1`; reconstructing this single linear head proves history works (no general traversal yet).
+
+### Phase 1 acceptance test
+
+One end-to-end scenario (integration test + CLI):
+
+```text
+kat init
+    -> S0
+
+kat create requirement ...
+    -> element E1, version V1, state S1, change C1
+
+reopen repository (fresh process)
+    -> accepted.state == S1
+    -> accepted.change == C1
+    -> S1 contains E1 -> V1
+    -> C1.result_state == S1
+
+kat show E1
+    -> resolves V1
+
+kat history
+    -> shows C1
+```
+
+This is the first test that validates KAT's actual thesis — a valid semantic change applied and published atomically — not just its repository mechanics.
 
 ### Definition of done for Phase 1
 
-- [ ] KAT can create a knowledge element through a Change.
-- [ ] A new Semantic State is constructed and validated.
-- [ ] Accepted State and Change head are published atomically.
-- [ ] Resulting knowledge and history can be inspected via `kat show` and `kat history`.
-- [ ] Repository persists across executions.
+- [ ] `kat create requirement ...` performs a `CreateElement` change end to end.
+- [ ] The candidate `SemanticState S1` is constructed and ontology-/invariant-validated.
+- [ ] Accepted State and Change head are published atomically via CAS.
+- [ ] A fresh process reopens the repository and verifies the new head (`accepted.state == S1`, `accepted.change == C1`, `C1.result_state == S1`, `S1` maps `E1 -> V1`).
+- [ ] `kat show E1` resolves `V1`; `kat history` shows `C1`.
+- [ ] The repository persists across executions.
 
 ---
 
