@@ -11,7 +11,7 @@ use std::str::FromStr;
 use crate::domain::identity::{RepositoryId, SoftwareId};
 
 /// Supported repository format version (v0.1).
-const SUPPORTED_FORMAT_VERSION: u32 = 1;
+pub const SUPPORTED_FORMAT_VERSION: u32 = 1;
 
 /// Stable repository configuration persisted at `.kat/repository.toml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,12 +99,18 @@ impl RepositoryMetadata {
     }
 
     /// Writes this metadata as TOML.
+    pub fn write(&self, path: &Path) -> Result<(), MetadataError> {
+        fs::write(path, self.to_toml_string())?;
+        Ok(())
+    }
+
+    /// Formats this metadata as TOML text.
     ///
     /// The emitted values are TOML-safe (hyphenated UUIDs and fixed
     /// vocabulary strings), so the output is formatted literally rather than
     /// routed through a serializer.
-    pub fn write(&self, path: &Path) -> Result<(), MetadataError> {
-        let text = format!(
+    pub fn to_toml_string(&self) -> String {
+        format!(
             "format_version = {}\n\
              repository_id = \"{}\"\n\
              software_id = \"{}\"\n\
@@ -115,9 +121,7 @@ impl RepositoryMetadata {
             self.software_id,
             self.object_encoding.as_str(),
             self.hash_algorithm.as_str(),
-        );
-        fs::write(path, text)?;
-        Ok(())
+        )
     }
 
     fn from_table(table: &toml::Table) -> Result<Self, MetadataError> {

@@ -2,7 +2,7 @@
 
 This document is the working plan and progress tracker for implementing the KAT v0.1 prototype in Rust. It follows the implementation workflow and the phasing defined in `prototype-design.md` (Phase 0: Canonical Repository Substrate; Phase 1: First Semantic Vertical Slice).
 
-Status: **Phase 0 in progress** — steps 0.1-0.8 complete: skeleton, identity primitives, canonical data model + structural validation, deterministic CBOR encoding, golden/negative vectors with a conformance harness, SHA-256 Object IDs, the immutable ObjectStore, and repository metadata + `AcceptedRef`. `cargo test` (88 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. `main` pushed to `origin/main` at step 0.7.
+Status: **Phase 0 in progress** — steps 0.1-0.9 complete: skeleton, identity primitives, canonical data model + structural validation, deterministic CBOR encoding, golden/negative vectors with a conformance harness, SHA-256 Object IDs, the immutable ObjectStore, repository metadata + `AcceptedRef`, and `kat init`. `cargo test` (92 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. `main` pushed to `origin/main` at step 0.8. `kat init` verified end-to-end from the CLI.
 
 Toolchain: Rust **stable GNU `x86_64-pc-windows-gnu` 1.97.1**, pinned via `rust-toolchain.toml` (MSVC Build Tools are not installed on this machine; MinGW-w64 provides the linker).
 
@@ -159,14 +159,16 @@ Notes: `repository/metadata.rs` — `RepositoryMetadata` with typed closed enums
 
 First user-visible command (`docs/cli.md` contract). Must:
 
-- [ ] Verify no existing KAT repository is overwritten.
-- [ ] Generate RepositoryId and SoftwareId.
-- [ ] Create `.kat/` directory structure.
-- [ ] Write `repository.toml`.
-- [ ] Create core `OntologyVersion O1`, persist it.
-- [ ] Create empty `SemanticState S0`, persist it.
-- [ ] Publish `refs/accepted` → `{ state: S0, change: none }`.
-- [ ] Result: a repository that can be closed and reopened.
+- [x] Verify no existing KAT repository is overwritten.
+- [x] Generate RepositoryId and SoftwareId.
+- [x] Create `.kat/` directory structure.
+- [x] Write `repository.toml`.
+- [x] Create core `OntologyVersion O1`, persist it.
+- [x] Create empty `SemanticState S0`, persist it.
+- [x] Publish `refs/accepted` → `{ state: S0, change: none }`.
+- [x] Result: a repository that can be closed and reopened.
+
+Notes: `repository/init.rs` — `init_repository(&Path) -> Result<InitResult, RepositoryError>` is the thin-CLI entry (main.rs only parses `kat init` and prints the result). `initial_core_ontology(OntologyId)` carries the spec-derived core ontology (7 element types; 10 relationship types with allowed source/target sets, from `docs/ontology.md` + canonical IDs in `docs/canonical-format.md`). `repository/error.rs` adds `RepositoryError` (AlreadyExists + composed layer errors). Metadata is written via temp + atomic rename; the `accepted` ref is the publication point (immutable O1/S0 left behind by a failed init are harmless). Verified end-to-end from the CLI; `kat init` twice is rejected. 4 new tests (core ontology spec conformance + 3 integration tests: layout/metadata/O1/S0/ref, re-init rejected & unchanged, unrelated files untouched).
 
 ### 0.10 — Repository open + integrity checks
 
@@ -245,7 +247,8 @@ kat history
 | 2026-08-11 | Step 0.5 — Golden + negative vectors                    | 10 valid fixtures (all kinds, all PropertyValue variants, integer boundaries, all six ops, ordering proofs, description present/absent), 6 `invalid/structural/` + 10 `invalid/encoded/` fixtures. `tests/vector_conformance.rs` harness (walks valid dir, asserts exact bytes); `tests/structural_invalid.rs` (canonical_bytes rejection). object_id values computed with independent SHA-256. `serde_json` dev-dep only. `cargo test` 58 pass, fmt/clippy clean. |
 | 2026-08-11 | Step 0.6 — SHA-256 Object IDs                           | `encoding/hash.rs`: `object_id(&[u8]) -> ObjectId` (SHA-256) + thin `canonical_object_id`; no `ObjectId::new()`. Conformance harness asserts both bytes and externally-derived object_id for all 10 fixtures. `sha2` dep. `cargo test` 63 pass, fmt/clippy clean.                                                                                                                                                                                                  |
 | 2026-08-11 | Step 0.7 — Immutable ObjectStore                        | `repository/object_store.rs`: `put`/`get`/`exists` over flat `objects/<64 hex>`; no-overwrite + concurrent same-bytes races harmless; `get` verifies ObjectId; `exists` physical only. `ObjectStoreError` {NotFound, Integrity, Io}. `tempfile` dev-dep. All 10 required test scenarios pass. `cargo test` 73 pass, fmt/clippy clean.                                                                                                                              |
-| 2026-08-11 | Step 0.8 — `repository.toml` + `AcceptedRef`            | `repository/metadata.rs` (typed `RepositoryMetadata`, rejects unsupported/ malformed values) + `repository/ref_store.rs` (`AcceptedRef`, `RefStore` trait, `FileRefStore` with lock + atomic temp/rename CAS; no semantic interpretation). `toml` dep. 14 new tests. `cargo test` 88 pass, fmt/clippy clean. |
+| 2026-08-11 | Step 0.8 — `repository.toml` + `AcceptedRef`            | `repository/metadata.rs` (typed `RepositoryMetadata`, rejects unsupported/ malformed values) + `repository/ref_store.rs` (`AcceptedRef`, `RefStore` trait, `FileRefStore` with lock + atomic temp/rename CAS; no semantic interpretation). `toml` dep. 14 new tests. `cargo test` 88 pass, fmt/clippy clean.                                                                                                                                                       |
+| 2026-08-11 | Step 0.9 — `kat init`                                   | `repository/init.rs` (`init_repository`, `initial_core_ontology` from spec), `repository/error.rs` (`RepositoryError`), thin CLI in `main.rs` (manual parsing). Atomic metadata write; accepted ref = publication point. Verified end-to-end via CLI; re-init rejected. `cargo test` 92 pass, fmt/clippy clean. |
 
 ## Non-goals during this work (do not build yet)
 
