@@ -30,10 +30,11 @@
 
 use std::cmp::Ordering;
 
+use crate::domain::change::ChangeRevision;
 use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
-use crate::domain::identity::ElementId;
-use crate::domain::identity::ObjectId;
+use crate::domain::identity::{ChangeId, ElementId, ObjectId};
 use crate::domain::ontology::OntologyVersion;
+use crate::domain::operation::Operation;
 use crate::domain::property::PropertyValue;
 use crate::domain::state::{ElementStateEntry, SemanticState};
 use crate::encoding::canonical_object_id;
@@ -303,11 +304,110 @@ pub fn validate_create_element_ontology(
 /// and unrelated content). It does **not** require persistence (V1/S1 are not
 /// yet in the ObjectStore — that is 1.6 and repository open/integrity), and it
 /// never publishes. Pure: no side effects.
+///
+/// Returns a [`ValidatedElementCreation`] so that a `ChangeRevision` can only
+/// be constructed from a candidate that has passed ontology + invariant
+/// validation (the type system enforces this; a raw `PreparedElementCreation`
+/// cannot be used to prepare a revision).
 pub fn validate_create_element_invariants(
     prepared: PreparedElementCreation,
-) -> Result<PreparedElementCreation, ChangeError> {
+) -> Result<ValidatedElementCreation, ChangeError> {
     validate_candidate_invariants(&prepared)?;
-    Ok(prepared)
+    Ok(ValidatedElementCreation { prepared })
+}
+
+/// A `CreateElement` candidate that has passed the Phase 1 semantic validation
+/// pipeline (ontology conformance 1.3 + invariant validation 1.4).
+///
+/// The wrapped [`PreparedElementCreation`] is not exposed for mutation and is
+/// consumed only by [`prepare_change_revision`], so a `ChangeRevision` cannot
+/// be constructed through the normal API from an unvalidated candidate. The
+/// type system guarantees the pipeline is not bypassable.
+#[derive(Debug)]
+pub struct ValidatedElementCreation {
+    prepared: PreparedElementCreation,
+}
+
+impl ValidatedElementCreation {
+    /// Borrows the underlying prepared creation (read-only; it remains
+    /// validated and cannot be moved out to construct a revision directly).
+    pub fn prepared(&self) -> &PreparedElementCreation {
+        &self.prepared
+    }
+}
+
+/// A logically-prepared ChangeRevision: the derived candidate-state ObjectId,
+/// the full `ChangeRevision`, and its content identity.
+///
+/// Still purely preparatory: V1/S1/C1 ObjectIds are known but **no object is
+/// persisted** and the accepted ref is unchanged.
+#[derive(Debug)]
+pub struct PreparedChangeRevision {
+    /// The validated element creation this change wraps.
+    pub creation: PreparedElementCreation,
+    /// ObjectId of the candidate SemanticState (`S1`), derived from its
+    /// canonical bytes.
+    pub state_id: ObjectId,
+    /// The ChangeRevision (`C1`).
+    pub change: ChangeRevision,
+    /// ObjectId of `change`, derived from its canonical bytes.
+    pub change_revision_id: ObjectId,
+}
+
+/// Constructs the `ChangeRevision` for a validated `CreateElement`, deriving
+/// all content identities. Step 1.5 remains **purely preparatory**: it
+/// computes `S1` and `C1` ObjectIds but persists and publishes nothing.
+///
+/// `change_id` and `description` are supplied by the caller (application/CLI
+/// layer); the engine stays deterministic. `dependencies` is the accepted
+/// Change head (`context.accepted.change`), recording causal ancestry without
+/// hardcoding "first Change" semantics:
+///
+/// ```text
+/// accepted.change == none      -> dependencies == []
+/// accepted.change == Some(Cn)  -> dependencies == [Cn]
+/// ```
+///
+/// `result_state` and `change_revision_id` are derived here (encode-then-hash),
+/// which also exercises canonical structural validation.
+pub fn prepare_change_revision(
+    validated: ValidatedElementCreation,
+    change_id: ChangeId,
+    description: Option<String>,
+) -> Result<PreparedChangeRevision, ChangeError> {
+    let creation = validated.prepared;
+
+    // S1 ObjectId derived from the candidate state's canonical bytes.
+    let state_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(creation.candidate_state.clone()),
+    })?;
+
+    // Dependencies = the accepted Change head (canonically ordered; at most
+    // one at this linear stage).
+    let dependencies: Vec<ObjectId> = creation.context.accepted.change.into_iter().collect();
+
+    let change = ChangeRevision {
+        change_id,
+        base_states: vec![creation.context.base_state_id],
+        result_state: state_id,
+        operations: vec![Operation::CreateElement {
+            new_version: creation.element_version_id,
+        }],
+        dependencies,
+        description,
+    };
+
+    // C1 ObjectId derived from the ChangeRevision's canonical bytes.
+    let change_revision_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(change.clone()),
+    })?;
+
+    Ok(PreparedChangeRevision {
+        creation,
+        state_id,
+        change,
+        change_revision_id,
+    })
 }
 
 /// Sorts property keys into canonical order (bytewise comparison of their full
@@ -631,5 +731,78 @@ mod tests {
         assert_eq!(validated.element, element_before);
         assert_eq!(validated.candidate_state, candidate_before);
         assert_eq!(validated.context.ontology, context_before_ontology);
+    }
+
+    #[test]
+    fn prepare_change_revision_first_change_has_no_dependencies() {
+        let context = context_with_base(vec![]);
+        let validated = validate_create_element_invariants(
+            validate_create_element_ontology(
+                apply_create_element(context, input(5, "kat.core/requirement", vec![])).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let change_id = crate::domain::identity::ChangeId::from_uuid(Uuid::from_u128(7));
+        let revision = prepare_change_revision(validated, change_id, None).unwrap();
+
+        // First Change: accepted.change == none -> dependencies == [].
+        assert_eq!(revision.change.base_states, vec![object_id(1)]);
+        assert!(revision.change.dependencies.is_empty());
+        assert_eq!(revision.change.description, None);
+        assert_eq!(revision.change.change_id, change_id);
+        assert!(matches!(
+            &revision.change.operations[0],
+            Operation::CreateElement { new_version } if *new_version == revision.creation.element_version_id
+        ));
+        assert_eq!(revision.change.result_state, revision.state_id);
+    }
+
+    #[test]
+    fn prepare_change_revision_records_accepted_change_head_as_dependency() {
+        // A later Change: the accepted head is Some(Cn) -> dependencies == [Cn].
+        let previous = object_id(50);
+        let context = ChangeContext {
+            accepted: AcceptedRef {
+                state: object_id(1),
+                change: Some(previous),
+            },
+            ..context_with_base(vec![])
+        };
+        let validated = validate_create_element_invariants(
+            validate_create_element_ontology(
+                apply_create_element(context, input(6, "kat.core/requirement", vec![])).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let change_id = crate::domain::identity::ChangeId::from_uuid(Uuid::from_u128(8));
+        let revision = prepare_change_revision(validated, change_id, None).unwrap();
+
+        assert_eq!(revision.change.dependencies, vec![previous]);
+        assert_eq!(revision.change.base_states, vec![object_id(1)]);
+    }
+
+    #[test]
+    fn prepare_change_revision_preserves_supplied_description() {
+        let context = context_with_base(vec![]);
+        let validated = validate_create_element_invariants(
+            validate_create_element_ontology(
+                apply_create_element(context, input(9, "kat.core/requirement", vec![])).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let change_id = crate::domain::identity::ChangeId::from_uuid(Uuid::from_u128(9));
+        let revision =
+            prepare_change_revision(validated, change_id, Some("create requirement".to_string()))
+                .unwrap();
+        assert_eq!(
+            revision.change.description.as_deref(),
+            Some("create requirement")
+        );
     }
 }

@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 
 use kat::domain::property::PropertyValue;
 use kat::repository::change::{
-    apply_create_element, prepare_change, validate_create_element_invariants,
-    validate_create_element_ontology,
+    apply_create_element, prepare_change, prepare_change_revision,
+    validate_create_element_invariants, validate_create_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::open_repository;
@@ -212,16 +212,89 @@ fn invariant_validation_end_to_end_has_no_side_effects() {
     )
     .unwrap();
     let validated =
-        validate_create_element_ontology(validate_create_element_invariants(prepared).unwrap())
+        validate_create_element_invariants(validate_create_element_ontology(prepared).unwrap())
             .unwrap();
 
     assert_eq!(
-        validated.element.lifecycle,
+        validated.prepared().element.lifecycle,
         kat::domain::element::Lifecycle::Active
     );
-    assert_eq!(validated.candidate_state.elements.len(), 1);
+    assert_eq!(validated.prepared().candidate_state.elements.len(), 1);
 
     // V1/S1 are logical only: nothing persisted, accepted ref unchanged.
+    assert_eq!(object_ids(root), objects_before);
+    assert_eq!(objects_before.len(), 2);
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
+}
+
+#[test]
+fn prepare_change_revision_end_to_end_is_preparatory_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = init_repository(root).unwrap();
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+    let objects_before = object_ids(root);
+
+    let repo = open_repository(root).unwrap();
+    let context = prepare_change(&repo).unwrap();
+    let prepared = apply_create_element(
+        context,
+        kat::repository::change::CreateElementInput {
+            element_id: kat::domain::identity::ElementId::from_uuid(Uuid::from_u128(21)),
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("A requirement".into()))],
+        },
+    )
+    .unwrap();
+    let validated =
+        validate_create_element_invariants(validate_create_element_ontology(prepared).unwrap())
+            .unwrap();
+
+    let change_id = kat::domain::identity::ChangeId::from_uuid(Uuid::from_u128(100));
+    let revision =
+        prepare_change_revision(validated, change_id, Some("create requirement".into())).unwrap();
+
+    // base_states == [S0]; dependencies == [] (accepted.change == none).
+    assert_eq!(revision.change.base_states, vec![init.state]);
+    assert_eq!(revision.change.dependencies, vec![]);
+    assert_eq!(revision.change.change_id, change_id);
+    assert_eq!(
+        revision.change.description.as_deref(),
+        Some("create requirement")
+    );
+
+    // Operations: exactly one CreateElement -> V1.
+    assert_eq!(revision.change.operations.len(), 1);
+    assert!(matches!(
+        &revision.change.operations[0],
+        kat::domain::operation::Operation::CreateElement { new_version } if *new_version == revision.creation.element_version_id
+    ));
+
+    // result_state == S1 ObjectId == canonical id of candidate state.
+    let expected_state_id =
+        kat::encoding::canonical_object_id(&kat::encoding::object::CanonicalObject {
+            payload: kat::encoding::object::CanonicalPayload::SemanticState(
+                revision.creation.candidate_state.clone(),
+            ),
+        })
+        .unwrap();
+    assert_eq!(revision.state_id, expected_state_id);
+    assert_eq!(revision.change.result_state, revision.state_id);
+
+    // change_revision_id == canonical id of the ChangeRevision.
+    let expected_change_id =
+        kat::encoding::canonical_object_id(&kat::encoding::object::CanonicalObject {
+            payload: kat::encoding::object::CanonicalPayload::ChangeRevision(
+                revision.change.clone(),
+            ),
+        })
+        .unwrap();
+    assert_eq!(revision.change_revision_id, expected_change_id);
+
+    // Still purely preparatory: V1/S1/C1 not persisted; accepted ref unchanged.
     assert_eq!(object_ids(root), objects_before);
     assert_eq!(objects_before.len(), 2);
     assert_eq!(

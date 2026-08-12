@@ -11,9 +11,9 @@ pub mod ref_store;
 pub mod validation;
 
 pub use change::{
-    ChangeContext, ChangeError, CreateElementInput, PreconditionError, PreparedElementCreation,
-    apply_create_element, prepare_change, validate_create_element_invariants,
-    validate_create_element_ontology,
+    ChangeContext, ChangeError, CreateElementInput, PreconditionError, PreparedChangeRevision,
+    PreparedElementCreation, ValidatedElementCreation, apply_create_element, prepare_change,
+    prepare_change_revision, validate_create_element_invariants, validate_create_element_ontology,
 };
 pub use open::{Repository, open_repository};
 pub use validation::invariant::InvariantError;
