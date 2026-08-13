@@ -35,50 +35,69 @@ The six questions resolved **before** touching code:
    `DeprecateElement`/`Supersede`). Precondition: the current version is
    `Active`; the new version stays `Active`. Updating deprecated/superseded
    elements is rejected.
-4. **`expected_version` precondition semantics? — Exact ObjectId match.**
-   `canonical-format.md` + `prototype-design.md` (UpdateElement): "element_id
-   resolves to expected_version in the base state." The engine resolves the
-   current version `Vn = base.elements[E].version`, verifies it is `Active`,
-   and uses it as `expected_version` (the caller need not know it; the CAS on
-   publication is the concurrency guard). A supplied `expected_version` that
-   does not match the base mapping is a rejected precondition.
-5. **Unchanged / no-op updates? — Rejected.** `operations.md` "Changes one or
-   more properties" and `change-model.md` "Applying a valid change produces a
-   new semantic state." An empty patch, or a patch that produces a
-   content-identical version (`Vn+1` ObjectId == `Vn`), would yield
-   `result_state == base_state` and no evolution. Rejected as a precondition
-   failure so every published Change is meaningful.
+4. **`expected_version` precondition semantics? — Explicit input, exact
+   ObjectId match.** `canonical-format.md` + `prototype-design.md`
+   (UpdateElement): "element_id resolves to expected_version in the base
+   state." `expected_version` is an **explicit input** at the engine boundary
+   (`UpdateElementInput { element_id, expected_version, properties }`), giving
+   real optimistic-concurrency semantics. The engine loads the base state,
+   resolves `Vactual = base.elements[E].version`, and requires `Vactual ==
+   expected_version` before constructing `Vn+1`:
+   - element missing → precondition failure;
+   - `Vactual != expected_version` → `VersionMismatch`;
+   - `Vactual == expected_version` → construct `Vn+1`.
+   This is distinct from (and complements) the publication CAS:
+   `expected_version` protects the **element-level** assumption, while the CAS
+   protects the **repository-level** base state.
+5. **Unchanged / no-op updates? — Rejected, two distinct cases.**
+   `operations.md` "Changes one or more properties" and `change-model.md`
+   "Applying a valid change produces a new semantic state." An update that
+   produces no evolution (`result_state == base_state`) is rejected so every
+   published Change is meaningful. The two cases are conceptually different:
+   - **`EmptyUpdate`** — the patch itself is empty (no properties to change);
+   - **`NoEffectiveChange`** — a non-empty patch that produces a
+     content-identical `Vn+1` (`Vn+1` ObjectId == `Vn`).
+   They may share one error initially, but are distinguished in the design.
 6. **Invariants distinguishing `UpdateElement` from `CreateElement`?**
-   Common (shared): candidate structurally canonical; ontology reference and
-   relationships preserved; new-version content identity correct
-   (encode-then-hash); candidate references the new version. Update-specific:
-   - **identity preserved**: `Vn+1.element_id == E` (`invariants.md` Identity);
-   - **type preserved**: `Vn+1.type_id == Vn.type_id` (decision 2);
-   - **lifecycle preserved**: `Vn+1.lifecycle == Active` (decision 3);
-   - **exact single-entry replacement**: candidate.elements == base.elements
-     except E's version == `Vn+1` (no other add/remove/change) — Update's analog
-     of Create's "base + exactly E1 → V1";
-   - **postcondition** `E resolves to Vn+1` (`canonical-format.md`
-     UpdateElement) is equivalent to the replacement invariant plus the
-     candidate reference.
+   The core rule, stated normatively as a single-state-delta:
+   > For `UpdateElement(E, Vn, Vn+1)`, the candidate Semantic State MUST differ
+   > from the base Semantic State **only** in the version mapping for `E`, which
+   > changes from `Vn` to `Vn+1`.
+   This is stronger and cleaner than checking unrelated conditions
+   individually; it is Update's analog of Create's "base + exactly E1 → V1".
+   Separately required:
+   - `Vn+1.element_id == Vn.element_id == E` (`invariants.md` Identity);
+   - `Vn+1.type_id == Vn.type_id` (decision 2);
+   - `Vn+1.lifecycle == Vn.lifecycle == Active` (decision 3);
+   - `Vn+1 != Vn` by ObjectId (decision 5 — `NoEffectiveChange` rejected).
+   Common (shared with Create): candidate structurally canonical; ontology
+   reference and relationships preserved; new-version content identity correct
+   (encode-then-hash); candidate references the new version. The postcondition
+   `E resolves to Vn+1` (`canonical-format.md` UpdateElement) is implied by the
+   delta rule plus the candidate reference.
 
 ### Work items (ordered sub-steps, mirroring Phase 1)
 
 - [ ] **2.1 — `UpdateElement` application.** `apply_update_element(context,
-    UpdateElementInput { element_id, properties_to_change })`: preconditions —
-      E exists in base, current version `Vn` is Active, patch non-empty and not
-      a no-op; resolve `expected_version = Vn`; construct `Vn+1` by merging the
-      patch onto `Vn.properties` (canonical order, duplicates rejected); derive
+    UpdateElementInput { element_id, expected_version, properties })`:
+      preconditions — E exists in base (else precondition failure); resolve
+      `Vactual = base.elements[E].version` and require `Vactual ==
+      expected_version` (else `VersionMismatch`); current version `Vn` is
+      `Active`; the patch is non-empty (`EmptyUpdate` rejected) and not a no-op
+      (`NoEffectiveChange` rejected). Construct `Vn+1` by merging the patch
+      onto `Vn.properties` (canonical order, duplicates rejected); derive
       `Vn+1` ObjectId (encode-then-hash, not persisted); build the candidate
       state with E's entry version = `Vn+1`. No persistence/publication.
 - [ ] **2.2 — Ontology validation.** Reuse `validate_element_type` (`Vn+1`'s
       type is preserved, so this is defense-in-depth and keeps the pipeline
       uniform).
 - [ ] **2.3 — Invariant validation.** Update-specific
-      `validate_update_element_invariants` (identity/type/lifecycle
-      preservation, exact single-entry replacement, `Vn+1` identity + reference,
-      candidate coherence); returns a `ValidatedElementCreation`-equivalent
-      typestate so a revision cannot be built from an unvalidated candidate.
+      `validate_update_element_invariants` enforcing the normative delta rule
+      (candidate differs from base **only** in E's mapping `Vn -> Vn+1`) plus
+      identity/type/lifecycle preservation, `Vn+1 != Vn` by ObjectId, `Vn+1`
+      identity + reference, and candidate coherence; returns a
+      `ValidatedElementCreation`-equivalent typestate so a revision cannot be
+      built from an unvalidated candidate.
 - [ ] **2.4 — Construct `ChangeRevision Cn+1`.** `operations =
     [UpdateElement { element_id: E, expected_version: Vn, new_version: Vn+1 }]`,
       `base_states = [Sn]`, `result_state = Sn+1`, `dependencies = [accepted
@@ -90,7 +109,11 @@ The six questions resolved **before** touching code:
       boundary (reuses 1.7).
 - [ ] **2.7 — CLI `kat update <element-id> ...`.** Per `cli.md` sketch
       (`kat update <element-id> --property <key>=<value> ...`), thin parse +
-      dispatch; prints the new `version_id` / `state_id` / `change_id` /
+      dispatch. The CLI does **not** expose `--expected-version` yet: it reads
+      the accepted state, resolves `E -> Vn`, and passes `expected_version = Vn`
+      into the engine ("update the version I just observed"); lower-level
+      callers can explicitly carry `expected_version` across longer workflows.
+      Prints the new `version_id` / `state_id` / `change_id` /
       `change_revision_id`. (Flag shape is a CLI-layer decision; `--title` /
       `--description` convenience flags for parity with `kat create` are a
       possible addition.)
@@ -103,7 +126,8 @@ The six questions resolved **before** touching code:
 ```text
 kat init
 kat create requirement --title "A"     -> E1, V1, S1, C1
-kat update <E1> --title "B"            -> V2, S2, C2
+kat update <E1> --title "B"  # CLI resolves E1 -> V1, passes expected_version = V1
+    -> V2, S2, C2
 
 reopen (fresh process)
     accepted.state == S2, accepted.change == C2
@@ -120,7 +144,7 @@ V1 still present in objects/ (previous state traceable)
 
 - [ ] `kat update <element-id> --title "..."` performs an `UpdateElement` change end to end.
 - [ ] Patch semantics: only the named properties change; others are preserved.
-- [ ] Preconditions enforced: element exists, Active, `expected_version ==` current version, no-op rejected.
+- [ ] Preconditions enforced: element exists, Active, current version == `expected_version` (else `VersionMismatch`), `EmptyUpdate` / `NoEffectiveChange` rejected.
 - [ ] Invariants enforced: identity/type/lifecycle preserved; exact single-entry replacement.
 - [ ] Accepted State and Change head published atomically via CAS; a conflict leaves objects unreferenced.
 - [ ] Fresh reopen verifies the new head; `kat show` resolves `Vn+1`; `kat history` shows `Cn+1`; `Vn` traceable.
