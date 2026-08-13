@@ -1,10 +1,26 @@
 # KAT
 
-KAT is a **semantic software repository**: a specification-first system for representing, evolving, tracing, and validating software as *knowledge* rather than as source-code files.
+KAT is a **semantic software repository**: a specification-first system for representing, evolving, tracing, and validating software as _knowledge_ rather than as source-code files.
 
 KAT treats the specification — intent, requirements, constraints, design decisions, and their relationships — as the authoritative knowledge of a software system. Source code, tests, configuration, and documentation are artifacts that represent, implement, validate, or materialize that knowledge. They remain traceable to it, but they never independently redefine the intended state of the software.
 
-Status: KAT v0.1 is in specification. The conceptual model, architecture, and canonical storage format are defined; the Rust prototype is not yet implemented.
+Status: KAT v0.1 Rust prototype — the canonical repository substrate and the first semantic slice (`kat create` / `kat show` / `kat history` over `kat init`) are implemented.
+
+## Installation
+
+Install the `kat` CLI with one command (see [docs/install.md](docs/install.md) for Linux/Windows notes):
+
+```bash
+cargo install --path .
+```
+
+Quick check:
+
+```bash
+kat init
+kat create requirement --title "User authentication"
+kat history
+```
 
 ## Repository layout
 
@@ -58,4 +74,4 @@ For example, `spec/canonical-format.cddl` defines UUID as CBOR tag 37, and `prot
 
 ## Non-goals vs. scope
 
-`non-goals.md` answers *"What does KAT fundamentally not want to become?"* `requirements.md` (Scope Limitations) answers *"What capabilities are excluded from v0.1?"* The two are deliberately kept separate: a capability excluded from v0.1, such as branching, may appear in a later release without making KAT a Git replacement.
+`non-goals.md` answers _"What does KAT fundamentally not want to become?"_ `requirements.md` (Scope Limitations) answers _"What capabilities are excluded from v0.1?"_ The two are deliberately kept separate: a capability excluded from v0.1, such as branching, may appear in a later release without making KAT a Git replacement.
