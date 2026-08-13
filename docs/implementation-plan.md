@@ -39,11 +39,11 @@ The minimal fixture is a `KnowledgeElementVersion` with a fixed UUID, `kat.core/
 
 Detailed, per-phase plans live in dedicated files so this master stays a lean tracker; each phase file links back here.
 
-| Phase | File | Status |
-| ----- | ---- | ------ |
-| Phase 0 — Canonical Repository Substrate | [implementation-plan-phase0.md](implementation-plan-phase0.md) | **complete** |
-| Phase 1 — First Semantic Vertical Slice | [implementation-plan-phase1.md](implementation-plan-phase1.md) | **complete** |
-| Phase 2 — UpdateElement vertical slice (design) | [implementation-plan-phase2.md](implementation-plan-phase2.md) | design |
+| Phase                                           | File                                                           | Status       |
+| ----------------------------------------------- | -------------------------------------------------------------- | ------------ |
+| Phase 0 — Canonical Repository Substrate        | [implementation-plan-phase0.md](implementation-plan-phase0.md) | **complete** |
+| Phase 1 — First Semantic Vertical Slice         | [implementation-plan-phase1.md](implementation-plan-phase1.md) | **complete** |
+| Phase 2 — UpdateElement vertical slice (design) | [implementation-plan-phase2.md](implementation-plan-phase2.md) | design       |
 
 ## Progress Log
 
