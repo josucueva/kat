@@ -1,4 +1,5 @@
 > Part of the master plan: [docs/implementation-plan.md](implementation-plan.md).
+
 ## Phase 2: `UpdateElement` vertical slice (design)
 
 The second semantic mutation. It reuses the Phase 1 Change Engine pipeline and
@@ -42,13 +43,13 @@ The six questions resolved **before** touching code:
    (`UpdateElementInput { element_id, expected_version, properties }`), giving
    real optimistic-concurrency semantics. The engine loads the base state,
    resolves `Vactual = base.elements[E].version`, and requires `Vactual ==
-   expected_version` before constructing `Vn+1`:
+expected_version` before constructing `Vn+1`:
    - element missing → precondition failure;
    - `Vactual != expected_version` → `VersionMismatch`;
    - `Vactual == expected_version` → construct `Vn+1`.
-   This is distinct from (and complements) the publication CAS:
-   `expected_version` protects the **element-level** assumption, while the CAS
-   protects the **repository-level** base state.
+     This is distinct from (and complements) the publication CAS:
+     `expected_version` protects the **element-level** assumption, while the CAS
+     protects the **repository-level** base state.
 5. **Unchanged / no-op updates? — Rejected, two distinct cases.**
    `operations.md` "Changes one or more properties" and `change-model.md`
    "Applying a valid change produces a new semantic state." An update that
@@ -57,32 +58,32 @@ The six questions resolved **before** touching code:
    - **`EmptyUpdate`** — the patch itself is empty (no properties to change);
    - **`NoEffectiveChange`** — a non-empty patch that produces a
      content-identical `Vn+1` (`Vn+1` ObjectId == `Vn`).
-   They may share one error initially, but are distinguished in the design.
+     They may share one error initially, but are distinguished in the design.
 6. **Invariants distinguishing `UpdateElement` from `CreateElement`?**
    The core rule, stated normatively as a single-state-delta:
    > For `UpdateElement(E, Vn, Vn+1)`, the candidate Semantic State MUST differ
    > from the base Semantic State **only** in the version mapping for `E`, which
    > changes from `Vn` to `Vn+1`.
-   This is stronger and cleaner than checking unrelated conditions
-   individually; it is Update's analog of Create's "base + exactly E1 → V1".
-   Separately required:
+   > This is stronger and cleaner than checking unrelated conditions
+   > individually; it is Update's analog of Create's "base + exactly E1 → V1".
+   > Separately required:
    - `Vn+1.element_id == Vn.element_id == E` (`invariants.md` Identity);
    - `Vn+1.type_id == Vn.type_id` (decision 2);
    - `Vn+1.lifecycle == Vn.lifecycle == Active` (decision 3);
    - `Vn+1 != Vn` by ObjectId (decision 5 — `NoEffectiveChange` rejected).
-   Common (shared with Create): candidate structurally canonical; ontology
-   reference and relationships preserved; new-version content identity correct
-   (encode-then-hash); candidate references the new version. The postcondition
-   `E resolves to Vn+1` (`canonical-format.md` UpdateElement) is implied by the
-   delta rule plus the candidate reference.
+     Common (shared with Create): candidate structurally canonical; ontology
+     reference and relationships preserved; new-version content identity correct
+     (encode-then-hash); candidate references the new version. The postcondition
+     `E resolves to Vn+1` (`canonical-format.md` UpdateElement) is implied by the
+     delta rule plus the candidate reference.
 
 ### Work items (ordered sub-steps, mirroring Phase 1)
 
 - [ ] **2.1 — `UpdateElement` application.** `apply_update_element(context,
-    UpdateElementInput { element_id, expected_version, properties })`:
+UpdateElementInput { element_id, expected_version, properties })`:
       preconditions — E exists in base (else precondition failure); resolve
       `Vactual = base.elements[E].version` and require `Vactual ==
-      expected_version` (else `VersionMismatch`); current version `Vn` is
+  expected_version` (else `VersionMismatch`); current version `Vn` is
       `Active`; the patch is non-empty (`EmptyUpdate` rejected) and not a no-op
       (`NoEffectiveChange` rejected). Construct `Vn+1` by merging the patch
       onto `Vn.properties` (canonical order, duplicates rejected); derive
@@ -99,9 +100,9 @@ The six questions resolved **before** touching code:
       `ValidatedElementCreation`-equivalent typestate so a revision cannot be
       built from an unvalidated candidate.
 - [ ] **2.4 — Construct `ChangeRevision Cn+1`.** `operations =
-    [UpdateElement { element_id: E, expected_version: Vn, new_version: Vn+1 }]`,
+[UpdateElement { element_id: E, expected_version: Vn, new_version: Vn+1 }]`,
       `base_states = [Sn]`, `result_state = Sn+1`, `dependencies = [accepted
-    head]` (same rule as 1.5), caller-supplied `change_id`/`description`.
+head]` (same rule as 1.5), caller-supplied `change_id`/`description`.
 - [ ] **2.5 — Persist before publication.** `Vn+1 -> Sn+1 -> Cn+1` in dependency
       order, identity-verified (reuses the 1.6 pattern).
 - [ ] **2.6 — CAS publication.** `{Sn, Cn} -> {Sn+1, Cn+1}`; a Conflict leaves
