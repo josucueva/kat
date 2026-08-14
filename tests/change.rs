@@ -41,7 +41,8 @@ use kat::repository::change::{
     validate_deprecate_element_invariants, validate_deprecate_element_ontology,
     validate_link_element_invariants, validate_link_element_ontology,
     validate_supersede_element_invariants, validate_supersede_element_ontology,
-    validate_update_element_invariants, validate_update_element_ontology,
+    validate_unlink_element_invariants, validate_update_element_invariants,
+    validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -4457,4 +4458,107 @@ fn apply_unlink_element_succeeds_when_endpoint_is_deprecated() {
     .unwrap();
 
     assert_eq!(prepared.candidate_state.relationships.len(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Step 6.2 — validate_unlink_element_invariants tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unlink_invariants_valid_passes() {
+    let setup = repo_with_linked_elements();
+    let repo = &setup.repo;
+    let ctx = prepare_change(repo).unwrap();
+
+    let prepared = apply_unlink_element(
+        repo,
+        ctx,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+
+    let val = validate_unlink_element_invariants(prepared).unwrap();
+    assert_eq!(val.prepared().relationship_id, setup.r1);
+    assert_eq!(val.prepared().expected_version, setup.r1v_id);
+}
+
+#[test]
+fn unlink_invariants_tampering_checks() {
+    let setup = repo_with_linked_elements();
+    let repo = &setup.repo;
+
+    // 1. Ontology version changed
+    let ctx1 = prepare_change(repo).unwrap();
+    let mut prep1 = apply_unlink_element(
+        repo,
+        ctx1,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+    prep1.candidate_state.ontology_version = ObjectId::from_bytes([0xAA; 32]);
+    let err1 = validate_unlink_element_invariants(prep1).unwrap_err();
+    assert!(matches!(
+        err1,
+        ChangeError::Invariant(InvariantError::OntologyVersionChanged)
+    ));
+
+    // 2. Unexpected element mutation
+    let ctx2 = prepare_change(repo).unwrap();
+    let mut prep2 = apply_unlink_element(
+        repo,
+        ctx2,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+    prep2.candidate_state.elements.clear();
+    let err2 = validate_unlink_element_invariants(prep2).unwrap_err();
+    assert!(matches!(
+        err2,
+        ChangeError::Invariant(InvariantError::UnexpectedElementMutation)
+    ));
+
+    // 3. Candidate relationship mutation (keeping or adding relationship)
+    let ctx3 = prepare_change(repo).unwrap();
+    let mut prep3 = apply_unlink_element(
+        repo,
+        ctx3,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+    prep3.candidate_state.relationships = prep3.context.base_state.relationships.clone();
+    let err3 = validate_unlink_element_invariants(prep3).unwrap_err();
+    assert!(matches!(
+        err3,
+        ChangeError::Invariant(InvariantError::UnexpectedRelationshipMutation)
+    ));
+
+    // 4. Content identity mismatch on previous_relationship
+    let ctx4 = prepare_change(repo).unwrap();
+    let mut prep4 = apply_unlink_element(
+        repo,
+        ctx4,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+    prep4.previous_relationship.relationship_type = "kat.core/supersedes".into();
+    let err4 = validate_unlink_element_invariants(prep4).unwrap_err();
+    assert!(matches!(
+        err4,
+        ChangeError::Invariant(InvariantError::UnlinkRelationshipVersionIdentityMismatch { .. })
+    ));
 }

@@ -24,13 +24,13 @@
 //! those ordering rules. Ontology conformance is not repeated here (1.3).
 
 use crate::domain::element::Lifecycle;
-use crate::domain::identity::ObjectId;
+use crate::domain::identity::{ObjectId, RelationshipId};
 use crate::encoding::canonical_object_id;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload};
 use crate::encoding::validate::{CanonicalStructureError, CanonicalValidate};
 use crate::repository::change::{
     PreparedElementCreation, PreparedElementDeprecation, PreparedElementLinked,
-    PreparedElementSuperseded, PreparedElementUpdate,
+    PreparedElementSuperseded, PreparedElementUnlinked, PreparedElementUpdate,
 };
 
 /// Error reported when a candidate semantic change violates an invariant.
@@ -188,6 +188,19 @@ pub enum InvariantError {
     /// Candidate state does not reference the linked relationship version.
     #[error("candidate state does not reference the linked relationship version")]
     LinkCandidateReferenceMismatch,
+    /// Unlinking did not remove the relationship from candidate state.
+    #[error("unlinking did not remove relationship {0} from candidate state")]
+    UnlinkRelationshipNotRemoved(RelationshipId),
+    /// The previous relationship version content identity mismatch.
+    #[error(
+        "previous relationship version content identity mismatch: expected {expected}, actual {actual}"
+    )]
+    UnlinkRelationshipVersionIdentityMismatch {
+        /// Re-derived ObjectId.
+        expected: ObjectId,
+        /// Prepared ObjectId.
+        actual: ObjectId,
+    },
 }
 
 /// Validates the candidate-state invariants of a prepared `CreateElement`.
@@ -774,6 +787,81 @@ pub fn validate_link_element_invariants(
         .collect();
 
     if remaining_relationships != base.relationships {
+        return Err(InvariantError::UnexpectedRelationshipMutation);
+    }
+
+    Ok(())
+}
+
+/// Validates the candidate-state invariants of a prepared `UnlinkElement`.
+pub fn validate_unlink_element_invariants(
+    prepared: &PreparedElementUnlinked,
+) -> Result<(), InvariantError> {
+    let candidate = &prepared.candidate_state;
+    let base = &prepared.context.base_state;
+    let relationship = &prepared.previous_relationship;
+
+    // 1. Candidate state remains structurally canonical.
+    candidate.validate_canonical_structure()?;
+
+    // 2. Base ontology version reference is preserved.
+    if candidate.ontology_version != base.ontology_version {
+        return Err(InvariantError::OntologyVersionChanged);
+    }
+
+    // 3. Candidate elements are byte-for-byte identical to base elements.
+    if candidate.elements != base.elements {
+        return Err(InvariantError::UnexpectedElementMutation);
+    }
+
+    // 4. Base relationship version match: expected_version == previous_relationship_version_id
+    if prepared.expected_version != prepared.previous_relationship_version_id {
+        return Err(InvariantError::UnexpectedRelationshipMutation);
+    }
+
+    // 5. Loaded R1V relationship_id == prepared.relationship_id
+    if relationship.relationship_id != prepared.relationship_id {
+        return Err(InvariantError::UnexpectedRelationshipMutation);
+    }
+
+    // 6. previous_relationship_version_id == canonical_object_id(previous_relationship)
+    let rederived_rel_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::RelationshipVersion(relationship.clone()),
+    })
+    .expect("canonically encoded");
+
+    if rederived_rel_id != prepared.previous_relationship_version_id {
+        return Err(InvariantError::UnlinkRelationshipVersionIdentityMismatch {
+            expected: rederived_rel_id,
+            actual: prepared.previous_relationship_version_id,
+        });
+    }
+
+    // 7. Candidate relationships delta: exactly base.relationships.len() - 1
+    if candidate.relationships.len() + 1 != base.relationships.len() {
+        return Err(InvariantError::UnexpectedRelationshipMutation);
+    }
+
+    // 8. Relationship R1 absent from candidate state
+    if candidate
+        .relationships
+        .iter()
+        .any(|r| r.relationship_id == prepared.relationship_id)
+    {
+        return Err(InvariantError::UnlinkRelationshipNotRemoved(
+            prepared.relationship_id,
+        ));
+    }
+
+    // 9. Candidate relationships equal base relationships with R1 removed
+    let remaining_relationships: Vec<_> = base
+        .relationships
+        .iter()
+        .filter(|r| r.relationship_id != prepared.relationship_id)
+        .cloned()
+        .collect();
+
+    if candidate.relationships != remaining_relationships {
         return Err(InvariantError::UnexpectedRelationshipMutation);
     }
 

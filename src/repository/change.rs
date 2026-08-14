@@ -1395,6 +1395,27 @@ pub fn validate_link_element_invariants(
     Ok(ValidatedElementLinked { prepared })
 }
 
+/// A `PreparedElementUnlinked` that has passed Step 6.2 invariant validation.
+#[derive(Debug)]
+pub struct ValidatedElementUnlinked {
+    prepared: PreparedElementUnlinked,
+}
+
+impl ValidatedElementUnlinked {
+    /// Borrows the underlying prepared unlink (read-only).
+    pub fn prepared(&self) -> &PreparedElementUnlinked {
+        &self.prepared
+    }
+}
+
+/// Applies the Step 6.2 invariant validation stage to a prepared element unlink.
+pub fn validate_unlink_element_invariants(
+    prepared: PreparedElementUnlinked,
+) -> Result<ValidatedElementUnlinked, ChangeError> {
+    crate::repository::validation::invariant::validate_unlink_element_invariants(&prepared)?;
+    Ok(ValidatedElementUnlinked { prepared })
+}
+
 /// Applies the step 1.3 ontology-conformance stage to a prepared element
 /// creation: the element's `type_id` must exist in the base `OntologyVersion`.
 ///

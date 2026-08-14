@@ -21,9 +21,9 @@ pub use change::{
     PreparedUpdateChangeRevision, PublishedChange, PublishedDeprecateChange, PublishedLinkChange,
     PublishedSupersedeChange, PublishedUpdateChange, SupersedeElementInput, UnlinkElementInput,
     UpdateElementInput, ValidatedElementCreation, ValidatedElementDeprecation,
-    ValidatedElementLinked, ValidatedElementSuperseded, ValidatedElementUpdate,
-    apply_create_element, apply_deprecate_element, apply_link_element, apply_supersede_element,
-    apply_unlink_element, apply_update_element, persist_prepared_change,
+    ValidatedElementLinked, ValidatedElementSuperseded, ValidatedElementUnlinked,
+    ValidatedElementUpdate, apply_create_element, apply_deprecate_element, apply_link_element,
+    apply_supersede_element, apply_unlink_element, apply_update_element, persist_prepared_change,
     persist_prepared_deprecate_change, persist_prepared_link_change,
     persist_prepared_supersede_change, persist_prepared_update_change, prepare_change,
     prepare_change_revision, prepare_deprecate_change_revision, prepare_link_change_revision,
@@ -34,7 +34,8 @@ pub use change::{
     validate_deprecate_element_invariants, validate_deprecate_element_ontology,
     validate_link_element_invariants, validate_link_element_ontology,
     validate_supersede_element_invariants, validate_supersede_element_ontology,
-    validate_update_element_invariants, validate_update_element_ontology,
+    validate_unlink_element_invariants, validate_update_element_invariants,
+    validate_update_element_ontology,
 };
 pub use open::{Repository, open_repository};
 pub use query::{ElementView, HistoryEntry, QueryError, history, show_element};

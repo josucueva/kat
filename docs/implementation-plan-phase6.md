@@ -33,19 +33,8 @@ publish_persisted_unlink_change          (atomic CAS on refs/accepted -> { S_n+1
       Notes: `src/repository/change.rs` — defined `UnlinkElementInput` and `PreparedElementUnlinked` (carrying `previous_relationship: RelationshipVersion` and `previous_relationship_version_id: ObjectId`). Implemented `apply_unlink_element(repository: &Repository, context: ChangeContext, input: UnlinkElementInput) -> Result<PreparedElementUnlinked, ChangeError>`. Enforces preconditions (relationship presence in $S_n$, version matching `expected_version`, object store load/decoding as `RelationshipVersion`, defensive ID check). Candidate state removes $R_1$ mapping from $S_n.relationships$. Endpoint lifecycle loading is intentionally omitted. Re-exported in `repository/mod.rs`. 4 unit tests in `tests/change.rs` (valid unlink candidate, missing relationship error, version mismatch error, unlink on deprecated endpoint success). `cargo test` 293 pass, fmt/clippy clean.
 
 ### Step 6.2 — Invariant Validation (`validate_unlink_element_invariants`)
-- [ ] **6.2 — Invariant validation.**
-      Define `ValidatedElementUnlinked` typestate guard in `src/repository/change.rs`. Implement `validate_unlink_element_invariants(prepared: PreparedElementUnlinked) -> Result<ValidatedElementUnlinked, ChangeError>` in `src/repository/validation/invariant.rs` & `src/repository/change.rs`.
-      Invariants enforced:
-      1. Candidate structural canonicality (`validate_canonical_structure`).
-      2. Base ontology version reference preserved (`OntologyVersionChanged`).
-      3. Candidate elements array byte-for-byte identical to base (`UnexpectedElementMutation`).
-      4. Candidate relationships length == `base.relationships.len() - 1` (`UnexpectedRelationshipMutation`).
-      5. $R_1$ absent from candidate state (`UnlinkRelationshipNotRemoved`).
-      6. Candidate relationships equals base relationships with $R_1$ removed (`UnexpectedRelationshipMutation`).
-      7. `expected_version == previous_relationship_version_id`.
-      8. `previous_relationship.relationship_id == relationship_id`.
-      9. `canonical_object_id(&previous_relationship) == previous_relationship_version_id`.
-      Re-export in `repository/mod.rs`. Unit tests in `tests/change.rs`.
+- [x] **6.2 — Invariant validation.**
+      Notes: `src/repository/validation/invariant.rs` & `src/repository/change.rs` — defined `ValidatedElementUnlinked` typestate guard and implemented `validate_unlink_element_invariants`. Enforces structural canonicality, ontology reference preservation, element array immutability, exact 1-relationship removal delta ($S_{\text{candidate}}.relationships == S_{\text{base}}.relationships \setminus \{ R_1 \to R_1V \}$), $R_1$ absence in candidate, and $R_1V$ identity derivation check. Re-exported in `repository/mod.rs`. 2 unit tests in `tests/change.rs` (valid unlink invariants pass, tampering checks fail). `cargo test` 295 pass, fmt/clippy clean.
 
 ### Step 6.3 — Construct `ChangeRevision Cn+1` (`prepare_unlink_change_revision`)
 - [ ] **6.3 — Construct `ChangeRevision Cn+1`.**
