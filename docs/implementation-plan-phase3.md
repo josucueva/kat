@@ -25,17 +25,8 @@ $$\text{PersistedDeprecateChange} \xrightarrow{\text{publish (CAS)}} \text{Publi
 ## Detailed Step Breakdown
 
 ### Step 3.1 — Engine `DeprecateElementInput` & Apply Logic
-- **Goal**: Implement `apply_deprecate_element(repository: &Repository, context: ChangeContext, input: DeprecateElementInput) -> Result<PreparedElementDeprecation, ChangeError>`.
-- **Preconditions**:
-  1. Target element $E$ exists in `context.base_state.elements`. If missing $\to$ `PreconditionError::ElementNotFound(E)`.
-  2. Target element version in base state has `lifecycle == Lifecycle::Active`. If `lifecycle == Lifecycle::Deprecated` or `Lifecycle::Superseded` $\to$ `PreconditionError::ElementNotActive { element_id: E, actual_lifecycle }`.
-  3. `input.expected_version == base_version_id`. If mismatched $\to$ `PreconditionError::VersionMismatch { element_id: E, expected: input.expected_version, actual: base_version_id }`.
-- **Construction**:
-  - Builds $V_{n+1}$: same `element_id`, same `type_id`, `lifecycle: Lifecycle::Deprecated`, same `properties` as $V_n$.
-  - Computes `element_version_id` = $\text{canonical\_object\_id}(V_{n+1})$.
-  - Constructs candidate `SemanticState` $S_{n+1}$ replacing $E \to V_n$ with $E \to V_{n+1}$.
-  - Computes `state_id` = $\text{canonical\_object\_id}(S_{n+1})$.
-- **Return**: `PreparedElementDeprecation { context, element, previous_version_id, element_version_id, candidate_state, state_id }`.
+- [x] **3.1 — Engine `DeprecateElementInput` & apply logic.**
+      Notes: `src/repository/change.rs` — `DeprecateElementInput { element_id, expected_version }`, `PreparedElementDeprecation`, and `apply_deprecate_element(&Repository, ChangeContext, DeprecateElementInput) -> Result<PreparedElementDeprecation, ChangeError>`. Enforces preconditions (element exists, base version == `expected_version`, current lifecycle == `Active`). Constructs $V_{n+1}$ preserving `element_id`, `type_id`, and `properties` with `lifecycle: Deprecated`. Builds candidate `SemanticState` $S_{n+1}$ replacing $E \to V_n$ with $E \to V_{n+1}$. Purely preparatory: nothing persisted to `ObjectStore` and accepted ref unchanged. Re-exported in `repository/mod.rs`. 3 new unit tests (`tests/change.rs`). `cargo test` 233 pass, fmt/clippy clean.
 
 ### Step 3.2 — `DeprecateElement` Ontology Validation
 - **Goal**: Implement `validate_deprecate_element_ontology(prepared: PreparedElementDeprecation) -> Result<PreparedElementDeprecation, ChangeError>`.

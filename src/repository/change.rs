@@ -534,6 +534,135 @@ pub fn apply_update_element(
     })
 }
 
+/// Application-level input for a `DeprecateElement` operation (step 3.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeprecateElementInput {
+    /// Stable identity of the element to deprecate.
+    pub element_id: ElementId,
+    /// Expected current version ObjectId (`Vn`) for element-level optimistic
+    /// concurrency.
+    pub expected_version: ObjectId,
+}
+
+/// A logically-prepared `DeprecateElement` operation: the operation has been
+/// applied to `context` to construct a candidate `KnowledgeElementVersion`
+/// `Vn+1` with `lifecycle: Deprecated` and a candidate `SemanticState`, but
+/// no validation (3.2/3.3), revision (3.4), persistence (3.5), or publication
+/// (3.6) has occurred yet.
+#[derive(Debug)]
+pub struct PreparedElementDeprecation {
+    /// The change context the deprecation was prepared against.
+    pub context: ChangeContext,
+    /// The previous version `Vn` loaded from the base state.
+    pub previous_element: KnowledgeElementVersion,
+    /// Content identity of `previous_element` (`Vn`).
+    pub previous_version_id: ObjectId,
+    /// Expected current version ObjectId (`Vn`) supplied by caller.
+    pub expected_version: ObjectId,
+    /// The newly-constructed version `Vn+1` (`lifecycle: Deprecated`).
+    pub element: KnowledgeElementVersion,
+    /// Content identity of `element` (`Vn+1`).
+    pub element_version_id: ObjectId,
+    /// Candidate `SemanticState`: base with `E -> Vn` replaced by `E -> Vn+1`.
+    pub candidate_state: SemanticState,
+}
+
+/// Applies a single `DeprecateElement` to `context`, producing a candidate only.
+///
+/// Preconditions (in order):
+/// ```text
+/// element exists in base state
+/// current version == expected_version
+/// current version decodes as KnowledgeElementVersion
+/// current lifecycle == Active
+/// ```
+///
+/// Constructs `Vn+1` preserving identity, type, and properties with `lifecycle: Deprecated`.
+pub fn apply_deprecate_element(
+    repository: &Repository,
+    context: ChangeContext,
+    input: DeprecateElementInput,
+) -> Result<PreparedElementDeprecation, ChangeError> {
+    let base_state = &context.base_state;
+
+    // Precondition: the element must exist in the base state.
+    let entry = base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == input.element_id)
+        .ok_or(ChangeError::Precondition(
+            PreconditionError::ElementNotFound(input.element_id),
+        ))?;
+
+    // Precondition: current version == expected_version.
+    let previous_version_id = entry.version;
+    if previous_version_id != input.expected_version {
+        return Err(ChangeError::Precondition(
+            PreconditionError::VersionMismatch {
+                element_id: input.element_id,
+                expected: input.expected_version,
+                actual: previous_version_id,
+            },
+        ));
+    }
+
+    // Precondition: load and decode current version.
+    let previous_element = match load_typed(
+        repository.object_store(),
+        previous_version_id,
+        ObjectKind::KnowledgeElementVersion,
+    )?
+    .payload
+    {
+        CanonicalPayload::KnowledgeElementVersion(element) => element,
+        _ => unreachable!("kind verified by load_typed"),
+    };
+
+    // Precondition: current lifecycle must be Active.
+    if previous_element.lifecycle != Lifecycle::Active {
+        return Err(ChangeError::Precondition(
+            PreconditionError::ElementNotActive(input.element_id),
+        ));
+    }
+
+    // Construct Vn+1: identity, type, and properties are preserved; lifecycle = Deprecated.
+    let element = KnowledgeElementVersion {
+        element_id: input.element_id,
+        type_id: previous_element.type_id.clone(),
+        lifecycle: Lifecycle::Deprecated,
+        properties: previous_element.properties.clone(),
+    };
+
+    // Derive Vn+1's content identity. No persistence occurs.
+    let element_version_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(element.clone()),
+    })?;
+
+    // Candidate state: replace E -> Vn with E -> Vn+1.
+    let mut elements = base_state.elements.clone();
+    let index = elements
+        .iter()
+        .position(|e| e.element_id == input.element_id)
+        .expect("element presence precondition checked above");
+    elements[index].version = element_version_id;
+
+    let candidate_state = SemanticState {
+        ontology_version: base_state.ontology_version,
+        elements,
+        relationships: base_state.relationships.clone(),
+    };
+
+    Ok(PreparedElementDeprecation {
+        context,
+        previous_element,
+        previous_version_id,
+        expected_version: input.expected_version,
+        element,
+        element_version_id,
+        candidate_state,
+    })
+}
+
 /// Applies the step 2.2 ontology-conformance stage to a prepared element
 /// update: the newly constructed `Vn+1.type_id` must exist in the base
 /// `OntologyVersion`.

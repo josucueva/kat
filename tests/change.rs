@@ -27,12 +27,13 @@ use kat::encoding::canonical_bytes;
 use kat::encoding::canonical_object_id;
 use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
-    ChangeContext, ChangeError, CreateElementInput, PreconditionError, PreparedElementUpdate,
-    UpdateElementInput, apply_create_element, apply_update_element, persist_prepared_change,
-    persist_prepared_update_change, prepare_change, prepare_change_revision,
-    prepare_update_change_revision, publish_persisted_change, publish_persisted_update_change,
-    validate_create_element_invariants, validate_create_element_ontology,
-    validate_update_element_invariants, validate_update_element_ontology,
+    ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, PreconditionError,
+    PreparedElementUpdate, UpdateElementInput, apply_create_element, apply_deprecate_element,
+    apply_update_element, persist_prepared_change, persist_prepared_update_change, prepare_change,
+    prepare_change_revision, prepare_update_change_revision, publish_persisted_change,
+    publish_persisted_update_change, validate_create_element_invariants,
+    validate_create_element_ontology, validate_update_element_invariants,
+    validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -1856,4 +1857,99 @@ fn publish_update_rejects_internally_inconsistent_prepared_change() {
         repo.ref_store().read_accepted().unwrap().state,
         setup.state_id
     );
+}
+
+// ---------------------------------------------------------------------------
+// Step 3.1 — apply_deprecate_element
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deprecate_applies_candidate_with_lifecycle_deprecated() {
+    let setup = repo_with_element(140, 240);
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let prepared = apply_deprecate_element(
+        repo,
+        context,
+        DeprecateElementInput {
+            element_id: setup.element_id,
+            expected_version: setup.version_id,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(prepared.element.element_id, setup.element_id);
+    assert_eq!(prepared.element.lifecycle, Lifecycle::Deprecated);
+    assert_eq!(prepared.previous_version_id, setup.version_id);
+    assert_eq!(
+        prepared.element.properties,
+        prepared.previous_element.properties
+    );
+    assert_eq!(prepared.element.type_id, prepared.previous_element.type_id);
+    assert_ne!(prepared.element_version_id, setup.version_id);
+
+    // Candidate state maps E1 -> V2
+    assert_eq!(prepared.candidate_state.elements.len(), 1);
+    assert_eq!(
+        prepared.candidate_state.elements[0].element_id,
+        setup.element_id
+    );
+    assert_eq!(
+        prepared.candidate_state.elements[0].version,
+        prepared.element_version_id
+    );
+
+    // Purely preparatory: nothing persisted or published
+    assert_eq!(
+        repo.ref_store().read_accepted().unwrap().state,
+        setup.state_id
+    );
+}
+
+#[test]
+fn deprecate_rejects_missing_element() {
+    let setup = repo_with_element(141, 241);
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+    let missing_id = ElementId::from_uuid(Uuid::from_u128(999));
+
+    let err = apply_deprecate_element(
+        repo,
+        context,
+        DeprecateElementInput {
+            element_id: missing_id,
+            expected_version: object_id(0x11),
+        },
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::ElementNotFound(id)) if id == missing_id
+    ));
+}
+
+#[test]
+fn deprecate_rejects_version_mismatch() {
+    let setup = repo_with_element(142, 242);
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+    let wrong_version = object_id(0x88);
+
+    let err = apply_deprecate_element(
+        repo,
+        context,
+        DeprecateElementInput {
+            element_id: setup.element_id,
+            expected_version: wrong_version,
+        },
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::VersionMismatch { expected, actual, .. })
+            if expected == wrong_version && actual == setup.version_id
+    ));
 }
