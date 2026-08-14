@@ -8,9 +8,11 @@ use std::path::Path;
 use std::process::Command;
 use std::str::FromStr;
 
-use kat::domain::identity::{ChangeId, ElementId, ObjectId};
+use kat::domain::identity::{ChangeId, ElementId, ObjectId, RelationshipId};
 use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
+use kat::encoding::decode::decode_canonical;
+use kat::encoding::object::CanonicalPayload;
 use kat::repository::change::{
     CreateElementInput, apply_create_element, persist_prepared_change, prepare_change,
     prepare_change_revision, publish_persisted_change, validate_create_element_invariants,
@@ -1053,4 +1055,175 @@ fn kat_supersede_missing_title_fails() {
     );
     assert!(!ok);
     assert!(err.contains("--title is required"));
+}
+
+#[test]
+fn phase4_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init (Object count = 2: O1, S0)
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    let repo0 = open_repository(root).unwrap();
+    let s0_id = repo0.accepted.state;
+    let initial_objects = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(initial_objects, 2);
+
+    // 2. kat create design-decision --title "Original decision"
+    let (create_out, create_err, ok) = run_kat(
+        root,
+        &["create", "design-decision", "--title", "Original decision"],
+    );
+    assert!(ok, "kat create failed: {create_err}\n{create_out}");
+    let e1 = ElementId::from_str(id_line(&create_out, "element_id")).unwrap();
+    let v1_id = ObjectId::from_str(id_line(&create_out, "version_id")).unwrap();
+    let s1_id = ObjectId::from_str(id_line(&create_out, "state_id")).unwrap();
+    let c1_change_id = ChangeId::from_str(id_line(&create_out, "change_id")).unwrap();
+    let c1_rev_id = ObjectId::from_str(id_line(&create_out, "change_revision_id")).unwrap();
+
+    let repo1 = open_repository(root).unwrap();
+    let v1_bytes = repo1.object_store().get(v1_id).unwrap();
+    let after_create_objects = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(after_create_objects, 5); // + V1, S1, C1
+
+    // 3. kat supersede E1 design-decision --title "Replacement decision"
+    let (sup_out, sup_err, ok) = run_kat(
+        root,
+        &[
+            "supersede",
+            &e1.to_string(),
+            "design-decision",
+            "--title",
+            "Replacement decision",
+        ],
+    );
+    assert!(ok, "kat supersede failed: {sup_err}\n{sup_out}");
+
+    let out_e1 = ElementId::from_str(id_line(&sup_out, "existing_element_id")).unwrap();
+    let out_prev_v1 = ObjectId::from_str(id_line(&sup_out, "previous_version_id")).unwrap();
+    let v1_next_id = ObjectId::from_str(id_line(&sup_out, "superseded_version_id")).unwrap();
+
+    let e2 = ElementId::from_str(id_line(&sup_out, "replacement_element_id")).unwrap();
+    let v2_id = ObjectId::from_str(id_line(&sup_out, "replacement_version_id")).unwrap();
+
+    let r1 = RelationshipId::from_str(id_line(&sup_out, "relationship_id")).unwrap();
+    let r1v_id = ObjectId::from_str(id_line(&sup_out, "relationship_version_id")).unwrap();
+
+    let s2_id = ObjectId::from_str(id_line(&sup_out, "state_id")).unwrap();
+    let c2_change_id = ChangeId::from_str(id_line(&sup_out, "change_id")).unwrap();
+    let c2_rev_id = ObjectId::from_str(id_line(&sup_out, "change_revision_id")).unwrap();
+
+    assert_eq!(out_e1, e1);
+    assert_eq!(out_prev_v1, v1_id);
+    assert_ne!(v1_next_id, v1_id);
+    assert_ne!(e2, e1);
+
+    let after_supersede_objects = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(after_supersede_objects, 10); // + V1_next, V2, R1V, S2, C2
+
+    // 4. Reopen repository (fresh process) -> accepted ref == { S2, C2 }
+    let reopened = open_repository(root).unwrap();
+    assert_eq!(reopened.accepted.state, s2_id);
+    assert_eq!(reopened.accepted.change, Some(c2_rev_id));
+
+    // 5. S2 contains E1 -> V1_next (Superseded), E2 -> V2 (Active), R1 -> R1V
+    let context = prepare_change(&reopened).unwrap();
+    assert_eq!(context.base_state_id, s2_id);
+    assert_eq!(context.base_state.elements.len(), 2);
+
+    let elem_e1 = context
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == e1)
+        .unwrap();
+    assert_eq!(elem_e1.version, v1_next_id);
+
+    let elem_e2 = context
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == e2)
+        .unwrap();
+    assert_eq!(elem_e2.version, v2_id);
+
+    assert_eq!(context.base_state.relationships.len(), 1);
+    let rel_r1 = &context.base_state.relationships[0];
+    assert_eq!(rel_r1.relationship_id, r1);
+    assert_eq!(rel_r1.version, r1v_id);
+
+    // Verify R1V relationship contents
+    let r1v_bytes = reopened.object_store().get(r1v_id).unwrap();
+    let r1v_obj = decode_canonical(&r1v_bytes).unwrap();
+    let rel_v_obj = match r1v_obj.payload {
+        CanonicalPayload::RelationshipVersion(v) => v,
+        _ => panic!("expected RelationshipVersion payload"),
+    };
+    assert_eq!(rel_v_obj.relationship_id, r1);
+    assert_eq!(rel_v_obj.relationship_type, "kat.core/supersedes");
+    assert_eq!(rel_v_obj.source_element_id, e2);
+    assert_eq!(rel_v_obj.target_element_id, e1);
+
+    // 6. C2 history assertions
+    let entries = history(&reopened).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].revision_id, c2_rev_id);
+    assert_eq!(entries[0].change.change_id, c2_change_id);
+    assert_eq!(entries[0].change.result_state, s2_id);
+    assert_eq!(entries[0].change.base_states, vec![s1_id]);
+    assert_eq!(entries[0].change.dependencies, vec![c1_rev_id]);
+    assert_eq!(
+        entries[0].change.operations,
+        vec![Operation::Supersede {
+            existing_element: e1,
+            expected_existing_version: v1_id,
+            replacement_element: e2,
+            replacement_version: v2_id,
+            superseding_relationship: r1v_id,
+        }]
+    );
+
+    assert_eq!(entries[1].revision_id, c1_rev_id);
+    assert_eq!(entries[1].change.change_id, c1_change_id);
+    assert_eq!(entries[1].change.result_state, s1_id);
+    assert_eq!(entries[1].change.base_states, vec![s0_id]);
+
+    // 7. CLI queries
+    let (show1_out, show1_err, ok) = run_kat(root, &["show", &e1.to_string()]);
+    assert!(ok, "kat show E1 failed: {show1_err}");
+    assert!(show1_out.contains(&format!("version_id: {v1_next_id}")));
+    assert!(show1_out.contains("lifecycle: superseded"));
+
+    let (show2_out, show2_err, ok) = run_kat(root, &["show", &e2.to_string()]);
+    assert!(ok, "kat show E2 failed: {show2_err}");
+    assert!(show2_out.contains(&format!("version_id: {v2_id}")));
+    assert!(show2_out.contains("lifecycle: active"));
+    assert!(show2_out.contains("title: Replacement decision"));
+
+    let (hist_out, hist_err, ok) = run_kat(root, &["history"]);
+    assert!(ok, "kat history failed: {hist_err}");
+    assert!(hist_out.contains(&format!("supersede {e1} {v1_id} {e2} {v2_id} {r1v_id}")));
+
+    // 8. Update behavior
+    let (up1_out, up1_err, ok) =
+        run_kat(root, &["update", &e1.to_string(), "--title", "must fail"]);
+    assert!(!ok, "kat update E1 should fail:\n{up1_out}");
+    assert!(up1_err.contains("is not active in the base state"));
+
+    let (up2_out, up2_err, ok) = run_kat(
+        root,
+        &["update", &e2.to_string(), "--title", "still active"],
+    );
+    assert!(ok, "kat update E2 failed: {up2_err}\n{up2_out}");
+
+    // 9. V1 preserved in ObjectStore byte-for-byte unchanged
+    assert_eq!(reopened.object_store().get(v1_id).unwrap(), v1_bytes);
 }

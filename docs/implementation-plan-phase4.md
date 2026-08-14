@@ -77,8 +77,8 @@ PublishedSupersedeChange
       Notes: `src/main.rs` — wired `kat supersede <existing-id> <replacement-type> --title "..." [--description "..."]` command with `parse_supersede_args`, `cmd_supersede`, `fail_supersede`, `supersede_pipeline`, and `format_operation` history rendering. Generates new $E_2$ `ElementId` and $R_1$ `RelationshipId` in CLI adapter. Evaluates replacement type against base ontology. Outputs explicit multi-object breakdown ($E_1$, $V_1$, $V_{1,\text{next}}$, $E_2$, $V_2$, $R_1$, $R_{1,\text{initial}}$, $S_{\text{next}}$, $C_{\text{next}}$). Added 6 integration test cases in `tests/cli.rs`. `cargo test` 267 pass, fmt/clippy clean. End-to-end CLI integration tests in `tests/cli.rs`.
 
 ### Step 4.8 — Acceptance Verification & Phase 4 Closure
-- [ ] **4.8 — Acceptance verification & Phase 4 closure.**
-      Add `phase4_acceptance_cli_flow_end_to_end` in `tests/cli.rs`. Verify `init` -> `create` -> `supersede` -> fresh process reopen -> `accepted` ref $\{S_2, C_2\}$ -> `show E1` resolves $V_{1,\text{next}}$ (`lifecycle: superseded`) -> `show E2` resolves $V_{2,\text{initial}}$ (`lifecycle: active`) -> `history` lists $C_2 \to C_1$ with `Operation::Supersede` -> $V_{1,\text{initial}}$ byte immutability in `ObjectStore`. Update `docs/cli.md` and freeze Phase 4.
+- [x] **4.8 — Acceptance verification & Phase 4 closure.**
+      Notes: `tests/cli.rs` — added `phase4_acceptance_cli_flow_end_to_end`. Verified physical object count progression (init=2 $\to$ create=5 $\to$ supersede=10), fresh reopen accepted ref $\{S_2, C_2\}$, $S_2$ mapping $E_1 \to V_{1,\text{next}}$ (`Superseded`), $E_2 \to V_2$ (`Active`), $R_1 \to R_{1}V$ (`kat.core/supersedes` $E_2 \to E_1$), $C_2$ operations == `[Operation::Supersede]`, history $C_2 \to C_1$, `show E1` (`superseded`), `show E2` (`active`), `update E1` failure (`ElementNotActive`), `update E2` success, $V_{1,\text{initial}}$ byte immutability. Updated `docs/cli.md` and froze Phase 4. All 268 tests pass (`cargo test`), fmt/clippy clean.
 
 ---
 

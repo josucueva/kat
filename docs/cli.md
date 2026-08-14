@@ -60,9 +60,9 @@ Initial syntax sketch:
 kat init
 
 kat create requirement --title "..." [--description "..."]
-kat update <element-id> --property <key>=<value> ...
-kat deprecate <element-id> --reason "..."
-kat supersede <element-id> --replacement <element-id> --reason "..."
+kat update <element-id> [--title "..."] [--description "..."]
+kat deprecate <element-id>
+kat supersede <existing-id> <replacement-type> --title "..." [--description "..."]
 kat link <source-id> --type <relationship-type> <target-id>
 kat unlink <source-id> --type <relationship-type> <target-id>
 
