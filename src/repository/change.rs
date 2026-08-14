@@ -1812,6 +1812,60 @@ pub fn prepare_link_change_revision(
     })
 }
 
+/// A logically-prepared Unlink ChangeRevision: the derived candidate-state
+/// ObjectId, the full `ChangeRevision`, and its content identity.
+#[derive(Debug)]
+pub struct PreparedUnlinkChangeRevision {
+    /// The prepared element unlink this change wraps.
+    pub unlink: PreparedElementUnlinked,
+    /// ObjectId of the candidate SemanticState (`Sn+1`).
+    pub state_id: ObjectId,
+    /// The ChangeRevision (`Cn+1`).
+    pub change: ChangeRevision,
+    /// ObjectId of `change`.
+    pub change_revision_id: ObjectId,
+}
+
+/// Constructs the `ChangeRevision` for a validated `UnlinkElement`, deriving
+/// all content identities. Step 6.3 remains **purely preparatory**: it
+/// computes `Sn+1` and `Cn+1` ObjectIds but persists and publishes nothing.
+pub fn prepare_unlink_change_revision(
+    validated: ValidatedElementUnlinked,
+    change_id: ChangeId,
+    description: Option<String>,
+) -> Result<PreparedUnlinkChangeRevision, ChangeError> {
+    let unlink = validated.prepared;
+
+    let state_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(unlink.candidate_state.clone()),
+    })?;
+
+    let dependencies: Vec<ObjectId> = unlink.context.accepted.change.into_iter().collect();
+
+    let change = ChangeRevision {
+        change_id,
+        base_states: vec![unlink.context.base_state_id],
+        result_state: state_id,
+        operations: vec![Operation::Unlink {
+            relationship_id: unlink.relationship_id,
+            expected_version: unlink.expected_version,
+        }],
+        dependencies,
+        description,
+    };
+
+    let change_revision_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(change.clone()),
+    })?;
+
+    Ok(PreparedUnlinkChangeRevision {
+        unlink,
+        state_id,
+        change,
+        change_revision_id,
+    })
+}
+
 /// A prepared change whose immutable objects have been materialized into the
 /// ObjectStore (V1, S1, C1), but which has **not** been published.
 ///

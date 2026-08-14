@@ -34,15 +34,15 @@ use kat::repository::change::{
     persist_prepared_change, persist_prepared_deprecate_change, persist_prepared_link_change,
     persist_prepared_supersede_change, persist_prepared_update_change, prepare_change,
     prepare_change_revision, prepare_deprecate_change_revision, prepare_link_change_revision,
-    prepare_supersede_change_revision, prepare_update_change_revision, publish_persisted_change,
-    publish_persisted_deprecate_change, publish_persisted_link_change,
-    publish_persisted_supersede_change, publish_persisted_update_change,
-    validate_create_element_invariants, validate_create_element_ontology,
-    validate_deprecate_element_invariants, validate_deprecate_element_ontology,
-    validate_link_element_invariants, validate_link_element_ontology,
-    validate_supersede_element_invariants, validate_supersede_element_ontology,
-    validate_unlink_element_invariants, validate_update_element_invariants,
-    validate_update_element_ontology,
+    prepare_supersede_change_revision, prepare_unlink_change_revision,
+    prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
+    publish_persisted_link_change, publish_persisted_supersede_change,
+    publish_persisted_update_change, validate_create_element_invariants,
+    validate_create_element_ontology, validate_deprecate_element_invariants,
+    validate_deprecate_element_ontology, validate_link_element_invariants,
+    validate_link_element_ontology, validate_supersede_element_invariants,
+    validate_supersede_element_ontology, validate_unlink_element_invariants,
+    validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -4561,4 +4561,77 @@ fn unlink_invariants_tampering_checks() {
         err4,
         ChangeError::Invariant(InvariantError::UnlinkRelationshipVersionIdentityMismatch { .. })
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Step 6.3 — prepare_unlink_change_revision tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn prepare_unlink_change_revision_end_to_end_is_preparatory_only() {
+    let setup = repo_with_linked_elements();
+    let repo = &setup.repo;
+    let objects_before = object_ids(setup.dir.path());
+    let refs_before =
+        fs::read_to_string(kat_dir(setup.dir.path()).join("refs").join("accepted")).unwrap();
+
+    let ctx = prepare_change(repo).unwrap();
+    let prepared = apply_unlink_element(
+        repo,
+        ctx,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+
+    let validated = validate_unlink_element_invariants(prepared).unwrap();
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(9093));
+    let revision =
+        prepare_unlink_change_revision(validated, change_id, Some("unlinking relationship".into()))
+            .unwrap();
+
+    assert_eq!(revision.change.change_id, change_id);
+    assert_eq!(
+        revision.change.description.as_deref(),
+        Some("unlinking relationship")
+    );
+    assert_eq!(
+        revision.change.operations,
+        vec![kat::domain::operation::Operation::Unlink {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        }]
+    );
+
+    // Verify object store and accepted ref are untouched
+    let objects_after = object_ids(setup.dir.path());
+    let refs_after =
+        fs::read_to_string(kat_dir(setup.dir.path()).join("refs").join("accepted")).unwrap();
+    assert_eq!(objects_before, objects_after);
+    assert_eq!(refs_before, refs_after);
+}
+
+#[test]
+fn prepare_unlink_change_revision_preserves_none_description() {
+    let setup = repo_with_linked_elements();
+    let repo = &setup.repo;
+    let ctx = prepare_change(repo).unwrap();
+
+    let prepared = apply_unlink_element(
+        repo,
+        ctx,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+
+    let validated = validate_unlink_element_invariants(prepared).unwrap();
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(9094));
+    let revision = prepare_unlink_change_revision(validated, change_id, None).unwrap();
+
+    assert_eq!(revision.change.description, None);
 }
