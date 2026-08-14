@@ -1657,3 +1657,55 @@ fn phase5_acceptance_cli_flow_end_to_end() {
     assert!(!ok_rev, "reversed direction link should fail:\n{rev_out}");
     assert!(rev_err.contains("does not allow source element type"));
 }
+
+// ---------------------------------------------------------------------------
+// Step 6.6 — kat unlink CLI tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kat_unlink_outside_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let missing_rel = "00000000-0000-0000-0000-000000000001";
+    let (_out, err, ok) = run_kat(root, &["unlink", missing_rel]);
+    assert!(!ok);
+    assert!(err.contains("no KAT repository found"));
+}
+
+#[test]
+fn kat_unlink_malformed_arguments_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+
+    let (_out1, err1, ok1) = run_kat(root, &["unlink"]);
+    assert!(!ok1);
+    assert!(err1.contains("expected relationship ID"));
+
+    let (_out2, err2, ok2) = run_kat(root, &["unlink", "not-a-uuid"]);
+    assert!(!ok2);
+    assert!(err2.contains("invalid relationship ID"));
+
+    let (_out3, err3, ok3) = run_kat(
+        root,
+        &[
+            "unlink",
+            "00000000-0000-0000-0000-000000000001",
+            "--unknown",
+        ],
+    );
+    assert!(!ok3);
+    assert!(err3.contains("unexpected option"));
+}
+
+#[test]
+fn kat_unlink_unknown_relationship_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+
+    let missing_rel = "00000000-0000-0000-0000-000000000001";
+    let (_out, err, ok) = run_kat(root, &["unlink", missing_rel]);
+    assert!(!ok);
+    assert!(err.contains("not found in the accepted state"));
+}

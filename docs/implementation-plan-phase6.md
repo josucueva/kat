@@ -49,8 +49,8 @@ publish_persisted_unlink_change          (atomic CAS on refs/accepted -> { S_n+1
       Notes: `src/repository/change.rs` — defined `PublishedUnlinkChange` and implemented `publish_persisted_unlink_change(repository: &Repository, persisted: PersistedUnlinkChange) -> Result<PublishedUnlinkChange, ChangeError>`. Enforces defensive `change.result_state == state_id` check before single atomic CAS on `refs/accepted`. Re-exported in `repository/mod.rs`. 2 unit tests in `tests/change.rs` (advances accepted head & survives reopen, conflict handling). `cargo test` 300 pass, fmt/clippy clean.
 
 ### Step 6.6 — CLI `kat unlink` Wiring
-- [ ] **6.6 — CLI `kat unlink` wiring.**
-      Wire `kat unlink <relationship-id> [--description "..."]` in `src/main.rs`. Resolves `expected_version` ($R_1V$) from base accepted state `S_n.relationships`. Integration tests in `tests/cli.rs`.
+- [x] **6.6 — CLI `kat unlink` wiring.**
+      Notes: `src/main.rs` (`cmd_unlink`, `parse_unlink_args`, `fail_unlink`). Adapts `kat unlink <relationship-id> [--description "..."]`. Resolves `expected_version` ($R_1V$) from base state $S_n$. 3 CLI integration tests in `tests/cli.rs` (outside repository failure, argument parsing rejections, relationship not found in accepted state rejection). Updated `docs/cli.md`. `cargo test` 303 pass, fmt/clippy clean.
 
 ### Step 6.7 — Acceptance Verification & Phase 6 Closure
 - [ ] **6.7 — Acceptance verification & Phase 6 closure.**

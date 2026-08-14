@@ -64,7 +64,7 @@ kat update <element-id> [--title "..."] [--description "..."]
 kat deprecate <element-id>
 kat supersede <existing-id> <replacement-type> --title "..." [--description "..."]
 kat link <relationship-type> <source-element-id> <target-element-id> [--description "..."]
-kat unlink <source-id> --type <relationship-type> <target-id>
+kat unlink <relationship-id> [--description "..."]
 
 kat trace <element-id> [--direction backward] [--type <relationship-type>]
 kat impact <element-id>

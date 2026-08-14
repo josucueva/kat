@@ -16,19 +16,22 @@ use kat::domain::property::PropertyValue;
 use kat::repository::change::{
     ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, LinkElementInput,
     PublishedChange, PublishedDeprecateChange, PublishedSupersedeChange, PublishedUpdateChange,
-    SupersedeElementInput, UpdateElementInput, apply_create_element, apply_deprecate_element,
-    apply_link_element, apply_supersede_element, apply_update_element, persist_prepared_change,
-    persist_prepared_deprecate_change, persist_prepared_link_change,
-    persist_prepared_supersede_change, persist_prepared_update_change, prepare_change,
+    SupersedeElementInput, UnlinkElementInput, UpdateElementInput, apply_create_element,
+    apply_deprecate_element, apply_link_element, apply_supersede_element, apply_unlink_element,
+    apply_update_element, persist_prepared_change, persist_prepared_deprecate_change,
+    persist_prepared_link_change, persist_prepared_supersede_change,
+    persist_prepared_unlink_change, persist_prepared_update_change, prepare_change,
     prepare_change_revision, prepare_deprecate_change_revision, prepare_link_change_revision,
-    prepare_supersede_change_revision, prepare_update_change_revision, publish_persisted_change,
-    publish_persisted_deprecate_change, publish_persisted_link_change,
-    publish_persisted_supersede_change, publish_persisted_update_change,
+    prepare_supersede_change_revision, prepare_unlink_change_revision,
+    prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
+    publish_persisted_link_change, publish_persisted_supersede_change,
+    publish_persisted_unlink_change, publish_persisted_update_change,
     validate_create_element_invariants, validate_create_element_ontology,
     validate_deprecate_element_invariants, validate_deprecate_element_ontology,
     validate_link_element_invariants, validate_link_element_ontology,
     validate_supersede_element_invariants, validate_supersede_element_ontology,
-    validate_update_element_invariants, validate_update_element_ontology,
+    validate_unlink_element_invariants, validate_update_element_invariants,
+    validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -43,19 +46,20 @@ fn main() -> ExitCode {
         Some("deprecate") => cmd_deprecate(&args[1..]),
         Some("supersede") => cmd_supersede(&args[1..]),
         Some("link") => cmd_link(&args[1..]),
+        Some("unlink") => cmd_unlink(&args[1..]),
         Some("show") => cmd_show(&args[1..]),
         Some("history") => cmd_history(&args[1..]),
         Some(other) => {
             eprintln!("kat: unknown command '{other}'");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat show <element-id> | kat history"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history"
             );
             ExitCode::FAILURE
         }
         None => {
             eprintln!("kat: missing command");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat show <element-id> | kat history"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history"
             );
             ExitCode::FAILURE
         }
@@ -898,6 +902,148 @@ fn fail_link(error: ChangeError) -> ExitCode {
             );
         }
         other => eprintln!("kat link: {other}"),
+    }
+    ExitCode::FAILURE
+}
+
+struct UnlinkArgs {
+    relationship_id: RelationshipId,
+    description: Option<String>,
+}
+
+fn parse_unlink_args(args: &[String]) -> Result<UnlinkArgs, String> {
+    if args.is_empty() {
+        return Err(
+            "expected relationship ID\nusage: kat unlink <relationship-id> [--description \"...\"]"
+                .into(),
+        );
+    }
+
+    let relationship_id = RelationshipId::from_str(&args[0])
+        .map_err(|_| format!("invalid relationship ID: {}", args[0]))?;
+
+    let mut description = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--description" => {
+                if i + 1 >= args.len() {
+                    return Err(
+                        "--description flag requires a value\nusage: kat unlink <relationship-id> [--description \"...\"]"
+                            .into(),
+                    );
+                }
+                description = Some(args[i + 1].clone());
+                i += 2;
+            }
+            other => {
+                return Err(format!(
+                    "unexpected option '{other}'\nusage: kat unlink <relationship-id> [--description \"...\"]"
+                ));
+            }
+        }
+    }
+
+    Ok(UnlinkArgs {
+        relationship_id,
+        description,
+    })
+}
+
+fn cmd_unlink(args: &[String]) -> ExitCode {
+    let parsed = match parse_unlink_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("kat unlink: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat unlink: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let context = match prepare_change(&repository) {
+        Ok(context) => context,
+        Err(error) => return fail_unlink(error),
+    };
+
+    let expected_version = match context
+        .base_state
+        .relationships
+        .iter()
+        .find(|r| r.relationship_id == parsed.relationship_id)
+    {
+        Some(entry) => entry.version,
+        None => {
+            eprintln!(
+                "kat unlink: relationship {} not found in the accepted state",
+                parsed.relationship_id
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let change_id = ChangeId::new();
+
+    let prepared = match apply_unlink_element(
+        &repository,
+        context,
+        UnlinkElementInput {
+            relationship_id: parsed.relationship_id,
+            expected_version,
+        },
+    ) {
+        Ok(prepared) => prepared,
+        Err(error) => return fail_unlink(error),
+    };
+
+    let validated = match validate_unlink_element_invariants(prepared) {
+        Ok(validated) => validated,
+        Err(error) => return fail_unlink(error),
+    };
+
+    let prepared_revision =
+        match prepare_unlink_change_revision(validated, change_id, parsed.description) {
+            Ok(revision) => revision,
+            Err(error) => return fail_unlink(error),
+        };
+
+    let persisted = match persist_prepared_unlink_change(&repository, prepared_revision) {
+        Ok(persisted) => persisted,
+        Err(error) => return fail_unlink(error),
+    };
+
+    let published = match publish_persisted_unlink_change(&repository, persisted) {
+        Ok(published) => published,
+        Err(error) => return fail_unlink(error),
+    };
+
+    let prepared = &published.persisted.prepared;
+    println!("relationship_id: {}", prepared.unlink.relationship_id);
+    println!("state_id: {}", prepared.state_id);
+    println!("change_id: {}", prepared.change.change_id);
+    println!("change_revision_id: {}", prepared.change_revision_id);
+    ExitCode::SUCCESS
+}
+
+fn fail_unlink(error: ChangeError) -> ExitCode {
+    match error {
+        ChangeError::Precondition(
+            kat::repository::change::PreconditionError::RelationshipNotFound(id),
+        ) => {
+            eprintln!("kat unlink: relationship {id} not found in the accepted state");
+        }
+        ChangeError::Conflict => {
+            eprintln!(
+                "kat unlink: the accepted repository state changed while unlinking; nothing was published. Re-run kat unlink."
+            );
+        }
+        other => eprintln!("kat unlink: {other}"),
     }
     ExitCode::FAILURE
 }
