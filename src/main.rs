@@ -9,19 +9,23 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::str::FromStr;
 
-use kat::domain::identity::{ChangeId, ElementId, ObjectId};
+use kat::domain::identity::{ChangeId, ElementId, ObjectId, RelationshipId};
 use kat::domain::ontology::OntologyVersion;
 use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
 use kat::repository::change::{
     ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, PublishedChange,
-    PublishedDeprecateChange, PublishedUpdateChange, UpdateElementInput, apply_create_element,
-    apply_deprecate_element, apply_update_element, persist_prepared_change,
-    persist_prepared_deprecate_change, persist_prepared_update_change, prepare_change,
-    prepare_change_revision, prepare_deprecate_change_revision, prepare_update_change_revision,
-    publish_persisted_change, publish_persisted_deprecate_change, publish_persisted_update_change,
+    PublishedDeprecateChange, PublishedSupersedeChange, PublishedUpdateChange,
+    SupersedeElementInput, UpdateElementInput, apply_create_element, apply_deprecate_element,
+    apply_supersede_element, apply_update_element, persist_prepared_change,
+    persist_prepared_deprecate_change, persist_prepared_supersede_change,
+    persist_prepared_update_change, prepare_change, prepare_change_revision,
+    prepare_deprecate_change_revision, prepare_supersede_change_revision,
+    prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
+    publish_persisted_supersede_change, publish_persisted_update_change,
     validate_create_element_invariants, validate_create_element_ontology,
     validate_deprecate_element_invariants, validate_deprecate_element_ontology,
+    validate_supersede_element_invariants, validate_supersede_element_ontology,
     validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
@@ -35,19 +39,20 @@ fn main() -> ExitCode {
         Some("create") => cmd_create(&args[1..]),
         Some("update") => cmd_update(&args[1..]),
         Some("deprecate") => cmd_deprecate(&args[1..]),
+        Some("supersede") => cmd_supersede(&args[1..]),
         Some("show") => cmd_show(&args[1..]),
         Some("history") => cmd_history(&args[1..]),
         Some(other) => {
             eprintln!("kat: unknown command '{other}'");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat show <element-id> | kat history"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat show <element-id> | kat history"
             );
             ExitCode::FAILURE
         }
         None => {
             eprintln!("kat: missing command");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat show <element-id> | kat history"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat show <element-id> | kat history"
             );
             ExitCode::FAILURE
         }
@@ -356,6 +361,11 @@ fn cmd_update(args: &[String]) -> ExitCode {
 
 fn fail_update(error: ChangeError) -> ExitCode {
     match error {
+        ChangeError::Precondition(
+            kat::repository::change::PreconditionError::ElementNotActive(id),
+        ) => {
+            eprintln!("kat update: element {id} is not active in the base state");
+        }
         ChangeError::Conflict => {
             eprintln!(
                 "kat update: the accepted repository state changed while updating; nothing was published. Re-run kat update."
@@ -503,6 +513,210 @@ fn deprecate_pipeline(
     let revision = prepare_deprecate_change_revision(validated, ChangeId::new(), None)?;
     let persisted = persist_prepared_deprecate_change(repository, revision)?;
     publish_persisted_deprecate_change(repository, persisted)
+}
+
+/// Parsed `kat supersede` arguments.
+struct SupersedeArgs {
+    existing_element_id: ElementId,
+    replacement_type_arg: String,
+    title: String,
+    description: Option<String>,
+}
+
+/// Parses `kat supersede <existing-id> <replacement-type> --title "..." [--description "..."]`.
+fn parse_supersede_args(args: &[String]) -> Result<SupersedeArgs, String> {
+    if args.len() < 2 {
+        return Err("expected <existing-id> <replacement-type> --title \"...\"".to_string());
+    }
+    let existing_element_id_arg = &args[0];
+    let replacement_type_arg = &args[1];
+
+    let existing_element_id = ElementId::from_str(existing_element_id_arg)
+        .map_err(|_| format!("invalid element ID: {existing_element_id_arg}"))?;
+
+    let rest = &args[2..];
+    let mut title: Option<String> = None;
+    let mut description: Option<String> = None;
+    let mut i = 0;
+    while i < rest.len() {
+        let flag = rest[i].as_str();
+        let value = rest
+            .get(i + 1)
+            .ok_or_else(|| format!("missing value for {flag}"))?;
+        match flag {
+            "--title" => {
+                if title.is_some() {
+                    return Err("duplicate --title".to_string());
+                }
+                title = Some(value.clone());
+            }
+            "--description" => {
+                if description.is_some() {
+                    return Err("duplicate --description".to_string());
+                }
+                description = Some(value.clone());
+            }
+            other => return Err(format!("unknown option '{other}'")),
+        }
+        i += 2;
+    }
+
+    let title = title.ok_or_else(|| "--title is required".to_string())?;
+
+    Ok(SupersedeArgs {
+        existing_element_id,
+        replacement_type_arg: replacement_type_arg.clone(),
+        title,
+        description,
+    })
+}
+
+/// `kat supersede <existing-id> <replacement-type> --title "..." [--description "..."]` — run a
+/// `SupersedeElement` change end to end through the Change Engine and publish it.
+fn cmd_supersede(args: &[String]) -> ExitCode {
+    let parsed = match parse_supersede_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("kat supersede: {message}");
+            eprintln!(
+                "usage: kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"]"
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat supersede: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let context = match prepare_change(&repository) {
+        Ok(context) => context,
+        Err(error) => return fail_supersede(error),
+    };
+
+    let previous_version_id = match context
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == parsed.existing_element_id)
+    {
+        Some(entry) => entry.version,
+        None => {
+            eprintln!(
+                "kat supersede: element {} not found in the base state",
+                parsed.existing_element_id
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let replacement_type_id =
+        match resolve_element_type(&context.ontology, &parsed.replacement_type_arg) {
+            Ok(type_id) => type_id,
+            Err(message) => {
+                eprintln!("kat supersede: {message}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+    let published = match supersede_pipeline(
+        &repository,
+        context,
+        previous_version_id,
+        replacement_type_id,
+        &parsed,
+    ) {
+        Ok(published) => published,
+        Err(error) => return fail_supersede(error),
+    };
+
+    let prepared = &published.persisted.prepared;
+    println!(
+        "existing_element_id: {}",
+        prepared.supersede.existing_element_id
+    );
+    println!(
+        "previous_version_id: {}",
+        prepared.supersede.previous_existing_version_id
+    );
+    println!(
+        "superseded_version_id: {}",
+        prepared.supersede.new_existing_version_id
+    );
+    println!();
+    println!(
+        "replacement_element_id: {}",
+        prepared.supersede.replacement_element_id
+    );
+    println!(
+        "replacement_version_id: {}",
+        prepared.supersede.replacement_version_id
+    );
+    println!();
+    println!("relationship_id: {}", prepared.supersede.relationship_id);
+    println!(
+        "relationship_version_id: {}",
+        prepared.supersede.relationship_version_id
+    );
+    println!();
+    println!("state_id: {}", prepared.state_id);
+    println!("change_id: {}", prepared.change.change_id);
+    println!("change_revision_id: {}", prepared.change_revision_id);
+    ExitCode::SUCCESS
+}
+
+fn fail_supersede(error: ChangeError) -> ExitCode {
+    match error {
+        ChangeError::Precondition(
+            kat::repository::change::PreconditionError::ElementNotActive(id),
+        ) => {
+            eprintln!("kat supersede: element {id} is not active in the base state");
+        }
+        ChangeError::Conflict => {
+            eprintln!(
+                "kat supersede: the accepted repository state changed while superseding; nothing was published. Re-run kat supersede."
+            );
+        }
+        other => eprintln!("kat supersede: {other}"),
+    }
+    ExitCode::FAILURE
+}
+
+fn supersede_pipeline(
+    repository: &Repository,
+    context: ChangeContext,
+    expected_existing_version: ObjectId,
+    replacement_type_id: String,
+    parsed: &SupersedeArgs,
+) -> Result<PublishedSupersedeChange, ChangeError> {
+    let mut replacement_properties = vec![(
+        "title".to_string(),
+        PropertyValue::Text(parsed.title.clone()),
+    )];
+    if let Some(description) = &parsed.description {
+        replacement_properties.push((
+            "description".to_string(),
+            PropertyValue::Text(description.clone()),
+        ));
+    }
+    let input = SupersedeElementInput {
+        existing_element_id: parsed.existing_element_id,
+        expected_existing_version,
+        replacement_element_id: ElementId::new(),
+        replacement_type_id,
+        replacement_properties,
+        relationship_id: RelationshipId::new(),
+    };
+    let prepared = apply_supersede_element(repository, context, input)?;
+    let validated = validate_supersede_element_ontology(prepared)?;
+    let validated = validate_supersede_element_invariants(validated)?;
+    let revision = prepare_supersede_change_revision(validated, ChangeId::new(), None)?;
+    let persisted = persist_prepared_supersede_change(repository, revision)?;
+    publish_persisted_supersede_change(repository, persisted)
 }
 
 /// `kat show <element-id>` — display the currently accepted version of an

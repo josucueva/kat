@@ -869,3 +869,188 @@ fn phase3_acceptance_cli_flow_end_to_end() {
     // 9. V1 still present in objects/ byte-for-byte unchanged
     assert_eq!(reopened.object_store().get(v1_id).unwrap(), v1_bytes);
 }
+
+// ---------------------------------------------------------------------------
+// kat supersede CLI tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kat_supersede_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init
+    let (out, err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {err}\n{out}");
+
+    // 2. kat create design-decision --title "Old Decision"
+    let (create_out, create_err, ok) = run_kat(
+        root,
+        &["create", "design-decision", "--title", "Old Decision"],
+    );
+    assert!(ok, "kat create failed: {create_err}\n{create_out}");
+    let e1 = id_line(&create_out, "element_id");
+    let v1 = id_line(&create_out, "version_id");
+
+    // 3. kat supersede <E1> design-decision --title "New Decision" --description "Replaces old"
+    let (sup_out, sup_err, ok) = run_kat(
+        root,
+        &[
+            "supersede",
+            e1,
+            "design-decision",
+            "--title",
+            "New Decision",
+            "--description",
+            "Replaces old",
+        ],
+    );
+    assert!(ok, "kat supersede failed: {sup_err}\n{sup_out}");
+
+    assert!(sup_out.contains(&format!("existing_element_id: {e1}")));
+    assert!(sup_out.contains(&format!("previous_version_id: {v1}")));
+
+    let v1_next = id_line(&sup_out, "superseded_version_id");
+    let e2 = id_line(&sup_out, "replacement_element_id");
+    let v2 = id_line(&sup_out, "replacement_version_id");
+    let r1 = id_line(&sup_out, "relationship_id");
+    let r1v = id_line(&sup_out, "relationship_version_id");
+    let snext = id_line(&sup_out, "state_id");
+    let cnext = id_line(&sup_out, "change_revision_id");
+
+    assert_ne!(v1, v1_next);
+    assert_ne!(e1, e2);
+    assert!(!r1.is_empty());
+    assert!(!r1v.is_empty());
+    assert!(!snext.is_empty());
+    assert!(!cnext.is_empty());
+
+    // 4. kat show E1 -> lifecycle: superseded
+    let (show1_out, show1_err, ok) = run_kat(root, &["show", e1]);
+    assert!(ok, "kat show E1 failed: {show1_err}");
+    assert!(show1_out.contains(&format!("version_id: {v1_next}")));
+    assert!(show1_out.contains("lifecycle: superseded"));
+
+    // 5. kat show E2 -> lifecycle: active
+    let (show2_out, show2_err, ok) = run_kat(root, &["show", e2]);
+    assert!(ok, "kat show E2 failed: {show2_err}");
+    assert!(show2_out.contains(&format!("version_id: {v2}")));
+    assert!(show2_out.contains("lifecycle: active"));
+    assert!(show2_out.contains("title: New Decision"));
+
+    // 6. kat history -> contains supersede operation
+    let (hist_out, hist_err, ok) = run_kat(root, &["history"]);
+    assert!(ok, "kat history failed: {hist_err}");
+    assert!(hist_out.contains(&format!("supersede {e1} {v1} {e2} {v2} {r1v}")));
+
+    // 7. kat update E1 -> fails (not active)
+    let (up1_out, up1_err, ok) = run_kat(root, &["update", e1, "--title", "Tampered E1"]);
+    assert!(!ok, "kat update E1 should fail but succeeded:\n{up1_out}");
+    assert!(up1_err.contains("is not active in the base state"));
+
+    // 8. kat update E2 -> succeeds
+    let (up2_out, up2_err, ok) = run_kat(root, &["update", e2, "--title", "Updated Replacement"]);
+    assert!(ok, "kat update E2 failed: {up2_err}\n{up2_out}");
+}
+
+#[test]
+fn kat_supersede_outside_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_out, err, ok) = run_kat(
+        dir.path(),
+        &[
+            "supersede",
+            "00000000-0000-0000-0000-000000000001",
+            "design-decision",
+            "--title",
+            "New",
+        ],
+    );
+    assert!(!ok);
+    assert!(err.contains("no KAT repository found"));
+}
+
+#[test]
+fn kat_supersede_unknown_existing_element_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+    let (_out, err, ok) = run_kat(
+        root,
+        &[
+            "supersede",
+            "00000000-0000-0000-0000-000000000099",
+            "design-decision",
+            "--title",
+            "New",
+        ],
+    );
+    assert!(!ok);
+    assert!(err.contains("not found in the base state"));
+}
+
+#[test]
+fn kat_supersede_invalid_element_id_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+    let (_out, err, ok) = run_kat(
+        root,
+        &[
+            "supersede",
+            "not-a-uuid",
+            "design-decision",
+            "--title",
+            "New",
+        ],
+    );
+    assert!(!ok);
+    assert!(err.contains("invalid element ID"));
+}
+
+#[test]
+fn kat_supersede_unknown_replacement_type_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+    let (create_out, _, _) = run_kat(root, &["create", "design-decision", "--title", "Old"]);
+    let e1 = id_line(&create_out, "element_id");
+
+    let (_out, err, ok) = run_kat(root, &["supersede", e1, "unknown-type", "--title", "New"]);
+    assert!(!ok);
+    assert!(err.contains("unknown element type"));
+}
+
+#[test]
+fn kat_supersede_forbidden_ontology_type_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+    let (create_out, _, _) = run_kat(root, &["create", "requirement", "--title", "Req Old"]);
+    let e1 = id_line(&create_out, "element_id");
+
+    // Attempting to supersede a requirement fails ontology validation
+    let (_out, err, ok) = run_kat(
+        root,
+        &["supersede", e1, "requirement", "--title", "Req New"],
+    );
+    assert!(!ok);
+    assert!(err.contains("does not allow source element type"));
+}
+
+#[test]
+fn kat_supersede_missing_title_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+    let (_out, err, ok) = run_kat(
+        root,
+        &[
+            "supersede",
+            "00000000-0000-0000-0000-000000000001",
+            "design-decision",
+        ],
+    );
+    assert!(!ok);
+    assert!(err.contains("--title is required"));
+}

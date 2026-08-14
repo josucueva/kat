@@ -73,8 +73,8 @@ PublishedSupersedeChange
       Notes: `src/repository/change.rs` — `PublishedSupersedeChange` and `publish_persisted_supersede_change(repository: &Repository, persisted: PersistedSupersedeChange) -> Result<PublishedSupersedeChange, ChangeError>`. Pre-CAS defensive check (`prepared.change.result_state == prepared.state_id`). Performs single CAS on `refs/accepted` from $\{S_n, C_n\}$ to $\{S_{n+1}, C_{n+1}\}$. Re-exported in `repository/mod.rs`. 3 new integration tests in `tests/change.rs`. Verified: zero new objects created during publication, fresh reopen resolves $E_1 \to V_{1,\text{next}}$ (`Superseded`) and $E_2 \to V_{2,\text{initial}}$ (`Active`), $R_1$ decodes as $E_2 \xrightarrow{\text{supersedes}} E_1$, post-supersession lifecycle enforcement (updating $E_1$ fails with `ElementNotActive`, updating $E_2$ succeeds), concurrent CAS conflict detection (`ChangeError::Conflict`), and publication-state mismatch defense. `cargo test` 260 pass, fmt/clippy clean.
 
 ### Step 4.7 — CLI `kat supersede` Wiring
-- [ ] **4.7 — CLI `kat supersede` wiring.**
-      Wire `kat supersede <existing-element-id> <replacement-type> --title "..." [--description "..."]` in `src/main.rs`. Thin CLI parse + dispatch printing stable IDs. End-to-end CLI integration tests in `tests/cli.rs`.
+- [x] **4.7 — CLI `kat supersede` wiring.**
+      Notes: `src/main.rs` — wired `kat supersede <existing-id> <replacement-type> --title "..." [--description "..."]` command with `parse_supersede_args`, `cmd_supersede`, `fail_supersede`, `supersede_pipeline`, and `format_operation` history rendering. Generates new $E_2$ `ElementId` and $R_1$ `RelationshipId` in CLI adapter. Evaluates replacement type against base ontology. Outputs explicit multi-object breakdown ($E_1$, $V_1$, $V_{1,\text{next}}$, $E_2$, $V_2$, $R_1$, $R_{1,\text{initial}}$, $S_{\text{next}}$, $C_{\text{next}}$). Added 6 integration test cases in `tests/cli.rs`. `cargo test` 267 pass, fmt/clippy clean. End-to-end CLI integration tests in `tests/cli.rs`.
 
 ### Step 4.8 — Acceptance Verification & Phase 4 Closure
 - [ ] **4.8 — Acceptance verification & Phase 4 closure.**
