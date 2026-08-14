@@ -49,12 +49,12 @@ PublishedSupersedeChange
 ## Step-by-Step Implementation Roadmap
 
 ### Step 4.1 — Engine `SupersedeElementInput` & Apply Logic
-- [ ] **4.1 — Engine `SupersedeElementInput` & apply logic.**
-      Define `SupersedeElementInput`, `PreparedElementSuperseded`, and `apply_supersede_element(&Repository, ChangeContext, SupersedeElementInput) -> Result<PreparedElementSuperseded, ChangeError>`. Preconditions: $E_1$ exists, $V_1 == \text{expected}$, $V_1.\text{lifecycle} == \text{Active}$, $E_2 \notin S_n$, $R_1 \notin S_n$. Builds candidate $V_{1,\text{next}}$ (`Superseded`), $V_{2,\text{initial}}$ (`Active`), $R_{1,\text{initial}}$ ($E_2 \xrightarrow{\text{supersedes}} E_1$), and candidate $S_{n+1}$. Purely preparatory. Re-export in `repository/mod.rs`. Unit tests in `tests/change.rs`.
+- [x] **4.1 — Engine `SupersedeElementInput` & apply logic.**
+      Notes: `src/repository/change.rs` — `SupersedeElementInput`, `PreparedElementSuperseded`, and `apply_supersede_element(&Repository, ChangeContext, SupersedeElementInput) -> Result<PreparedElementSuperseded, ChangeError>`. Enforces preconditions: $E_1$ exists, $V_1 == \text{expected}$, $V_1.\text{lifecycle} == \text{Active}$, $E_2 \notin S_n$, $R_1 \notin S_n$. Constructs candidate $V_{1,\text{next}}$ (`Superseded`), $V_{2,\text{initial}}$ (`Active`), $R_{1,\text{initial}}$ ($E_2 \xrightarrow{\text{supersedes}} E_1$), and candidate $S_{n+1}$. Added `PreconditionError::RelationshipAlreadyExists(RelationshipId)`. Purely preparatory: nothing persisted to `ObjectStore` and accepted ref unchanged. Re-exported in `repository/mod.rs`. 2 new unit tests (`tests/change.rs`). `cargo test` 245 pass, fmt/clippy clean.
 
 ### Step 4.2 — `SupersedeElement` Ontology Validation
-- [ ] **4.2 — `SupersedeElement` ontology validation.**
-      Implement `validate_supersede_element_ontology(prepared: PreparedElementSuperseded) -> Result<PreparedElementSuperseded, ChangeError>`. Verifies `replacement_type_id` against `context.ontology.element_types` and `"kat.core/supersedes"` against `context.ontology.relationship_types`. Purely preparatory. Re-export in `repository/mod.rs`. Unit test in `tests/change.rs`.
+- [x] **4.2 — `SupersedeElement` ontology validation.**
+      Notes: `src/repository/validation/ontology.rs` (`validate_relationship`) and `src/repository/change.rs` (`validate_supersede_element_ontology(&PreparedElementSuperseded) -> Result<PreparedElementSuperseded, ChangeError>`). Validates: (1) `replacement_element.type_id` exists in base ontology; (2) `relationship.relationship_type` exists in base ontology; (3) replacement type is allowed as source type; (4) existing element type is allowed as target type. Evaluates strictly against `context.ontology`. Added `OntologyError::UnknownRelationshipType`, `RelationshipSourceTypeNotAllowed`, `RelationshipTargetTypeNotAllowed`. Purely preparatory: leaves `ObjectStore` and accepted ref untouched. Re-exported in `repository/mod.rs`. 10 new unit tests (`tests/change.rs` and `ontology.rs`). `cargo test` 251 pass, fmt/clippy clean.
 
 ### Step 4.3 — `SupersedeElement` Invariant Validation
 - [ ] **4.3 — `SupersedeElement` invariant validation.**

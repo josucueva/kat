@@ -32,11 +32,12 @@ use std::cmp::Ordering;
 
 use crate::domain::change::ChangeRevision;
 use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
-use crate::domain::identity::{ChangeId, ElementId, ObjectId};
+use crate::domain::identity::{ChangeId, ElementId, ObjectId, RelationshipId};
 use crate::domain::ontology::OntologyVersion;
 use crate::domain::operation::Operation;
 use crate::domain::property::PropertyValue;
-use crate::domain::state::{ElementStateEntry, SemanticState};
+use crate::domain::relationship::RelationshipVersion;
+use crate::domain::state::{ElementStateEntry, RelationshipStateEntry, SemanticState};
 use crate::encoding::cbor::cmp_encoded_text;
 use crate::encoding::decode::DecodingError;
 use crate::encoding::decode_canonical;
@@ -50,7 +51,9 @@ use crate::repository::validation::invariant::{
     InvariantError, validate_create_element_invariants as validate_candidate_invariants,
     validate_update_element_invariants as validate_update_candidate_invariants,
 };
-use crate::repository::validation::ontology::{OntologyError, validate_element_type};
+use crate::repository::validation::ontology::{
+    OntologyError, validate_element_type, validate_relationship,
+};
 
 /// A failing operation-level precondition (operation *application* condition,
 /// near the Change Engine rather than in `repository::validation`).
@@ -84,12 +87,15 @@ pub enum PreconditionError {
     /// The update patch contains no properties to change.
     #[error("update contains no properties to change")]
     EmptyUpdate,
-    /// The (non-empty) update patch produces a content-identical version
+    /// The update patch produces a content-identical version
     /// (`Vn+1` ObjectId == `Vn`); the change would not evolve the state.
     #[error(
         "update produces no effective change (the new version is identical to the current version)"
     )]
     NoEffectiveChange,
+    /// The RelationshipId already appears in the base state.
+    #[error("relationship {0} already exists in the base state")]
+    RelationshipAlreadyExists(RelationshipId),
 }
 
 /// Error produced by the Change Engine.
@@ -663,6 +669,227 @@ pub fn apply_deprecate_element(
     })
 }
 
+/// Application-level input for a `SupersedeElement` operation (step 4.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SupersedeElementInput {
+    /// Stable identity of the existing element to supersede.
+    pub existing_element_id: ElementId,
+    /// Expected current version ObjectId (`Vn`) of `existing_element_id` for
+    /// element-level optimistic concurrency.
+    pub expected_existing_version: ObjectId,
+    /// Stable identity of the new replacement element.
+    pub replacement_element_id: ElementId,
+    /// Ontology type identifier for the new replacement element.
+    pub replacement_type_id: String,
+    /// Initial properties for the new replacement element.
+    pub replacement_properties: Vec<(String, PropertyValue)>,
+    /// Stable identity of the superseding relationship.
+    pub relationship_id: RelationshipId,
+}
+
+/// A logically-prepared `SupersedeElement` operation: candidate versions
+/// for superseded element (`V1'`, `lifecycle: Superseded`), replacement element
+/// (`V2`, `lifecycle: Active`), relationship (`R1Version`), and candidate `SemanticState`.
+#[derive(Debug)]
+pub struct PreparedElementSuperseded {
+    /// The change context the operation was prepared against.
+    pub context: ChangeContext,
+    /// The superseded element's ID (`E1`).
+    pub existing_element_id: ElementId,
+    /// The previous version ID of `E1` (`V1`).
+    pub previous_existing_version_id: ObjectId,
+    /// Expected version ID of `E1` (`V1`).
+    pub expected_existing_version: ObjectId,
+    /// The new version of `E1` (`V1'`, `lifecycle: Superseded`).
+    pub existing_element: KnowledgeElementVersion,
+    /// Content identity of `existing_element` (`V1'`).
+    pub new_existing_version_id: ObjectId,
+    /// The replacement element's ID (`E2`).
+    pub replacement_element_id: ElementId,
+    /// The new replacement element version (`V2`, `lifecycle: Active`).
+    pub replacement_element: KnowledgeElementVersion,
+    /// Content identity of `replacement_element` (`V2`).
+    pub replacement_version_id: ObjectId,
+    /// The relationship's ID (`R1`).
+    pub relationship_id: RelationshipId,
+    /// The new relationship version (`R1Version`).
+    pub relationship: RelationshipVersion,
+    /// Content identity of `relationship` (`R1Version ID`).
+    pub relationship_version_id: ObjectId,
+    /// Candidate `SemanticState` containing `E1 -> V1'`, `E2 -> V2`, `R1 -> R1Version`.
+    pub candidate_state: SemanticState,
+}
+
+/// Applies a single `SupersedeElement` to `context`, producing a candidate only.
+///
+/// Preconditions (in order):
+/// ```text
+/// existing element E1 exists in base state
+/// current version of E1 == expected_existing_version
+/// replacement element E2 does NOT exist in base state
+/// relationship R1 does NOT exist in base state
+/// current version of E1 decodes as KnowledgeElementVersion
+/// current lifecycle of E1 == Active
+/// ```
+///
+/// Constructs:
+/// - `V1'`: `E1` with `lifecycle: Superseded` (identity, type, properties preserved).
+/// - `V2`: `E2` with `lifecycle: Active`, canonicalized replacement properties.
+/// - `R1Version`: `source: E2`, `type: "kat.core/supersedes"`, `target: E1`.
+/// - Candidate `SemanticState`: replaces `E1 -> V1` with `E1 -> V1'`, inserts `E2 -> V2`, inserts `R1 -> R1Version`.
+pub fn apply_supersede_element(
+    repository: &Repository,
+    context: ChangeContext,
+    input: SupersedeElementInput,
+) -> Result<PreparedElementSuperseded, ChangeError> {
+    let base_state = &context.base_state;
+
+    // 1. Precondition: existing element E1 must exist in the base state.
+    let entry = base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == input.existing_element_id)
+        .ok_or(ChangeError::Precondition(
+            PreconditionError::ElementNotFound(input.existing_element_id),
+        ))?;
+
+    // 2. Precondition: current version of E1 == expected_existing_version.
+    let previous_existing_version_id = entry.version;
+    if previous_existing_version_id != input.expected_existing_version {
+        return Err(ChangeError::Precondition(
+            PreconditionError::VersionMismatch {
+                element_id: input.existing_element_id,
+                expected: input.expected_existing_version,
+                actual: previous_existing_version_id,
+            },
+        ));
+    }
+
+    // 3. Precondition: replacement element E2 must NOT exist in the base state.
+    if base_state
+        .elements
+        .iter()
+        .any(|e| e.element_id == input.replacement_element_id)
+    {
+        return Err(ChangeError::Precondition(
+            PreconditionError::ElementAlreadyExists(input.replacement_element_id),
+        ));
+    }
+
+    // 4. Precondition: relationship R1 must NOT exist in the base state.
+    if base_state
+        .relationships
+        .iter()
+        .any(|r| r.relationship_id == input.relationship_id)
+    {
+        return Err(ChangeError::Precondition(
+            PreconditionError::RelationshipAlreadyExists(input.relationship_id),
+        ));
+    }
+
+    // 5. Precondition: load and decode E1's current version V1.
+    let previous_existing_element = match load_typed(
+        repository.object_store(),
+        previous_existing_version_id,
+        ObjectKind::KnowledgeElementVersion,
+    )?
+    .payload
+    {
+        CanonicalPayload::KnowledgeElementVersion(element) => element,
+        _ => unreachable!("kind verified by load_typed"),
+    };
+
+    // 6. Precondition: E1's current lifecycle must be Active.
+    if previous_existing_element.lifecycle != Lifecycle::Active {
+        return Err(ChangeError::Precondition(
+            PreconditionError::ElementNotActive(input.existing_element_id),
+        ));
+    }
+
+    // Canonicalize replacement properties
+    let replacement_properties = normalize_properties(input.replacement_properties)?;
+
+    // Construct V1' (E1 with lifecycle: Superseded)
+    let existing_element = KnowledgeElementVersion {
+        element_id: input.existing_element_id,
+        type_id: previous_existing_element.type_id.clone(),
+        lifecycle: Lifecycle::Superseded,
+        properties: previous_existing_element.properties.clone(),
+    };
+    let new_existing_version_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(existing_element.clone()),
+    })?;
+
+    // Construct V2 (E2 with lifecycle: Active)
+    let replacement_element = KnowledgeElementVersion {
+        element_id: input.replacement_element_id,
+        type_id: input.replacement_type_id,
+        lifecycle: Lifecycle::Active,
+        properties: replacement_properties,
+    };
+    let replacement_version_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(replacement_element.clone()),
+    })?;
+
+    // Construct R1Version (source: E2, type: "kat.core/supersedes", target: E1)
+    let relationship = RelationshipVersion {
+        relationship_id: input.relationship_id,
+        source_element_id: input.replacement_element_id,
+        relationship_type: "kat.core/supersedes".to_string(),
+        target_element_id: input.existing_element_id,
+        properties: vec![],
+    };
+    let relationship_version_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::RelationshipVersion(relationship.clone()),
+    })?;
+
+    // Construct candidate SemanticState:
+    // - Replace E1 -> V1 with E1 -> V1'
+    // - Insert E2 -> V2
+    // - Insert R1 -> R1Version
+    // Sort canonical elements & relationships.
+    let mut elements = base_state.elements.clone();
+    let index = elements
+        .iter()
+        .position(|e| e.element_id == input.existing_element_id)
+        .expect("presence checked above");
+    elements[index].version = new_existing_version_id;
+    elements.push(ElementStateEntry {
+        element_id: input.replacement_element_id,
+        version: replacement_version_id,
+    });
+    elements.sort_by_key(|e| e.element_id);
+
+    let mut relationships = base_state.relationships.clone();
+    relationships.push(RelationshipStateEntry {
+        relationship_id: input.relationship_id,
+        version: relationship_version_id,
+    });
+    relationships.sort_by_key(|r| r.relationship_id);
+
+    let candidate_state = SemanticState {
+        ontology_version: base_state.ontology_version,
+        elements,
+        relationships,
+    };
+
+    Ok(PreparedElementSuperseded {
+        context,
+        existing_element_id: input.existing_element_id,
+        previous_existing_version_id,
+        expected_existing_version: input.expected_existing_version,
+        existing_element,
+        new_existing_version_id,
+        replacement_element_id: input.replacement_element_id,
+        replacement_element,
+        replacement_version_id,
+        relationship_id: input.relationship_id,
+        relationship,
+        relationship_version_id,
+        candidate_state,
+    })
+}
+
 /// Applies the step 2.2 ontology-conformance stage to a prepared element
 /// update: the newly constructed `Vn+1.type_id` must exist in the base
 /// `OntologyVersion`.
@@ -695,6 +922,33 @@ pub fn validate_deprecate_element_ontology(
     prepared: PreparedElementDeprecation,
 ) -> Result<PreparedElementDeprecation, ChangeError> {
     validate_element_type(&prepared.context.ontology, &prepared.element.type_id)?;
+    Ok(prepared)
+}
+
+/// Applies the step 4.2 ontology-conformance stage to a prepared element
+/// supersession.
+///
+/// Validates:
+/// 1. `replacement_element.type_id` exists in the base `OntologyVersion`.
+/// 2. `relationship.relationship_type` exists in the base `OntologyVersion`.
+/// 3. `relationship.source_element_id`'s type (`replacement_element.type_id`) is an allowed source type.
+/// 4. `relationship.target_element_id`'s type (`existing_element.type_id`) is an allowed target type.
+///
+/// Uses ONLY `prepared.context.ontology`. Purely preparatory: returns `Ok(prepared)`,
+/// leaving ObjectStore and accepted ref untouched.
+pub fn validate_supersede_element_ontology(
+    prepared: PreparedElementSuperseded,
+) -> Result<PreparedElementSuperseded, ChangeError> {
+    validate_element_type(
+        &prepared.context.ontology,
+        &prepared.replacement_element.type_id,
+    )?;
+    validate_relationship(
+        &prepared.context.ontology,
+        &prepared.relationship.relationship_type,
+        &prepared.replacement_element.type_id,
+        &prepared.existing_element.type_id,
+    )?;
     Ok(prepared)
 }
 

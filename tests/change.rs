@@ -28,13 +28,14 @@ use kat::encoding::canonical_object_id;
 use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
     ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, PreconditionError,
-    PreparedElementUpdate, UpdateElementInput, apply_create_element, apply_deprecate_element,
-    apply_update_element, persist_prepared_change, persist_prepared_deprecate_change,
-    persist_prepared_update_change, prepare_change, prepare_change_revision,
-    prepare_deprecate_change_revision, prepare_update_change_revision, publish_persisted_change,
-    publish_persisted_deprecate_change, publish_persisted_update_change,
-    validate_create_element_invariants, validate_create_element_ontology,
-    validate_deprecate_element_invariants, validate_deprecate_element_ontology,
+    PreparedElementUpdate, SupersedeElementInput, UpdateElementInput, apply_create_element,
+    apply_deprecate_element, apply_supersede_element, apply_update_element,
+    persist_prepared_change, persist_prepared_deprecate_change, persist_prepared_update_change,
+    prepare_change, prepare_change_revision, prepare_deprecate_change_revision,
+    prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
+    publish_persisted_update_change, validate_create_element_invariants,
+    validate_create_element_ontology, validate_deprecate_element_invariants,
+    validate_deprecate_element_ontology, validate_supersede_element_ontology,
     validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
@@ -42,7 +43,7 @@ use kat::repository::open::{Repository, open_repository};
 use kat::repository::ref_store::{AcceptedRef, RefStore};
 use kat::repository::validation::invariant::InvariantError;
 use kat::repository::validation::invariant::validate_update_element_invariants as validate_update_candidate_invariants;
-use kat::repository::validation::ontology::OntologyError;
+use kat::repository::validation::ontology::{OntologyError, validate_relationship};
 use uuid::Uuid;
 
 fn kat_dir(root: &Path) -> PathBuf {
@@ -2179,4 +2180,388 @@ fn publish_persisted_deprecate_change_advances_accepted_head_and_survives_reopen
         update_err,
         ChangeError::Precondition(PreconditionError::ElementNotActive(id)) if id == setup.element_id
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Step 4.1 — apply_supersede_element
+// ---------------------------------------------------------------------------
+
+#[test]
+fn apply_supersede_element_valid_candidate_is_preparatory_only() {
+    let setup = repo_with_element(150, 250);
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(950));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(951));
+
+    let prepared = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/requirement".into(),
+            replacement_properties: vec![(
+                "title".into(),
+                PropertyValue::Text("Replacement".into()),
+            )],
+            relationship_id,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(prepared.existing_element.element_id, setup.element_id);
+    assert_eq!(prepared.existing_element.lifecycle, Lifecycle::Superseded);
+    assert_eq!(prepared.replacement_element.element_id, replacement_id);
+    assert_eq!(prepared.replacement_element.lifecycle, Lifecycle::Active);
+    assert_eq!(prepared.relationship.relationship_id, relationship_id);
+    assert_eq!(prepared.relationship.source_element_id, replacement_id);
+    assert_eq!(prepared.relationship.target_element_id, setup.element_id);
+    assert_eq!(
+        prepared.relationship.relationship_type,
+        "kat.core/supersedes"
+    );
+
+    // Candidate state maps E1 -> V1', E2 -> V2, R1 -> R1Version
+    assert_eq!(prepared.candidate_state.elements.len(), 2);
+    assert_eq!(prepared.candidate_state.relationships.len(), 1);
+
+    // Purely preparatory: accepted ref and object store untouched
+    assert_eq!(
+        repo.ref_store().read_accepted().unwrap().state,
+        setup.state_id
+    );
+}
+
+#[test]
+fn apply_supersede_element_precondition_failures() {
+    let setup = repo_with_element(151, 251);
+    let repo = &setup.repo;
+
+    let missing_id = ElementId::from_uuid(Uuid::from_u128(999));
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(952));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(953));
+
+    // 1. ElementNotFound
+    let context = prepare_change(repo).unwrap();
+    let err = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: missing_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/requirement".into(),
+            replacement_properties: vec![],
+            relationship_id,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::ElementNotFound(id)) if id == missing_id
+    ));
+
+    // 2. VersionMismatch
+    let wrong_version = object_id(0xEE);
+    let context = prepare_change(repo).unwrap();
+    let err = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: wrong_version,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/requirement".into(),
+            replacement_properties: vec![],
+            relationship_id,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::VersionMismatch { .. })
+    ));
+
+    // 3. ElementAlreadyExists (replacement E2 already exists in base state)
+    let context = prepare_change(repo).unwrap();
+    let err = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: setup.element_id, // reusing E1 as replacement
+            replacement_type_id: "kat.core/requirement".into(),
+            replacement_properties: vec![],
+            relationship_id,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::ElementAlreadyExists(id)) if id == setup.element_id
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Step 4.2 — validate_supersede_element_ontology
+// ---------------------------------------------------------------------------
+
+fn repo_with_typed_element(n: u128, change_n: u128, type_id: &str) -> RepoWithElement {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    init_repository(&root).unwrap();
+
+    let element_id = ElementId::from_uuid(Uuid::from_u128(n));
+    let (version_id, state_id) = {
+        let repo = open_repository(&root).unwrap();
+        let context = prepare_change(&repo).unwrap();
+        let prepared = apply_create_element(
+            context,
+            CreateElementInput {
+                element_id,
+                type_id: type_id.into(),
+                properties: vec![("title".into(), PropertyValue::Text("Original".into()))],
+            },
+        )
+        .unwrap();
+        let validated =
+            validate_create_element_invariants(validate_create_element_ontology(prepared).unwrap())
+                .unwrap();
+        let revision = prepare_change_revision(
+            validated,
+            ChangeId::from_uuid(Uuid::from_u128(change_n)),
+            None,
+        )
+        .unwrap();
+        let persisted = persist_prepared_change(&repo, revision).unwrap();
+        let published = publish_persisted_change(&repo, persisted).unwrap();
+        (
+            published.persisted.prepared.creation.element_version_id,
+            published.accepted.state,
+        )
+    };
+
+    let repo = open_repository(&root).unwrap();
+    RepoWithElement {
+        _dir: dir,
+        root,
+        repo,
+        element_id,
+        version_id,
+        state_id,
+    }
+}
+
+#[test]
+fn supersede_ontology_valid_design_decision_passes() {
+    let setup = repo_with_typed_element(300, 400, "kat.core/design-decision");
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(960));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(961));
+
+    let prepared = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/design-decision".into(),
+            replacement_properties: vec![(
+                "title".into(),
+                PropertyValue::Text("Replacement Decision".into()),
+            )],
+            relationship_id,
+        },
+    )
+    .unwrap();
+
+    let validated = validate_supersede_element_ontology(prepared).unwrap();
+    assert_eq!(validated.existing_element_id, setup.element_id);
+    assert_eq!(validated.replacement_element_id, replacement_id);
+}
+
+#[test]
+fn supersede_ontology_unknown_replacement_type_rejected() {
+    let setup = repo_with_typed_element(301, 401, "kat.core/design-decision");
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(962));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(963));
+
+    let prepared = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/unknown-element".into(),
+            replacement_properties: vec![],
+            relationship_id,
+        },
+    )
+    .unwrap();
+
+    let err = validate_supersede_element_ontology(prepared).unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Ontology(OntologyError::UnknownElementType(t)) if t == "kat.core/unknown-element"
+    ));
+}
+
+#[test]
+fn supersede_ontology_unknown_relationship_type_rejected() {
+    let setup = repo_with_typed_element(302, 402, "kat.core/design-decision");
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(964));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(965));
+
+    let mut prepared = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/design-decision".into(),
+            replacement_properties: vec![],
+            relationship_id,
+        },
+    )
+    .unwrap();
+
+    // Tamper relationship_type to an unknown relationship type
+    prepared.relationship.relationship_type = "kat.core/bogus-rel".into();
+
+    let err = validate_supersede_element_ontology(prepared).unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Ontology(OntologyError::UnknownRelationshipType(r)) if r == "kat.core/bogus-rel"
+    ));
+}
+
+#[test]
+fn supersede_ontology_forbidden_source_type_rejected() {
+    // Superseding a requirement with a requirement fails because kat.core/supersedes only allows Design Decision source
+    let setup = repo_with_typed_element(303, 403, "kat.core/requirement");
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(966));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(967));
+
+    let prepared = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/requirement".into(),
+            replacement_properties: vec![],
+            relationship_id,
+        },
+    )
+    .unwrap();
+
+    let err = validate_supersede_element_ontology(prepared).unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Ontology(OntologyError::RelationshipSourceTypeNotAllowed { relationship_type, source_type })
+            if relationship_type == "kat.core/supersedes" && source_type == "kat.core/requirement"
+    ));
+}
+
+#[test]
+fn supersede_ontology_forbidden_target_type_rejected() {
+    // Existing element is requirement (forbidden target for kat.core/supersedes), replacement is design-decision
+    let setup = repo_with_typed_element(304, 404, "kat.core/requirement");
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(968));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(969));
+
+    let prepared = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/design-decision".into(),
+            replacement_properties: vec![],
+            relationship_id,
+        },
+    )
+    .unwrap();
+
+    let err = validate_supersede_element_ontology(prepared).unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Ontology(OntologyError::RelationshipTargetTypeNotAllowed { relationship_type, target_type })
+            if relationship_type == "kat.core/supersedes" && target_type == "kat.core/requirement"
+    ));
+}
+
+#[test]
+fn supersede_ontology_obeys_custom_ontology_and_direction() {
+    use kat::domain::ontology::{ElementTypeDefinition, RelationshipTypeDefinition};
+
+    // Construct a custom ontology where:
+    // supersedes allows source = "custom/type-a" and target = "custom/type-b"
+    let custom_ontology = OntologyVersion {
+        ontology_id: OntologyId::from_uuid(Uuid::from_u128(9999)),
+        element_types: vec![
+            ElementTypeDefinition {
+                type_id: "custom/type-a".into(),
+                name: "Type A".into(),
+            },
+            ElementTypeDefinition {
+                type_id: "custom/type-b".into(),
+                name: "Type B".into(),
+            },
+        ],
+        relationship_types: vec![RelationshipTypeDefinition {
+            type_id: "kat.core/supersedes".into(),
+            name: "Supersedes".into(),
+            allowed_source_types: vec!["custom/type-a".into()],
+            allowed_target_types: vec!["custom/type-b".into()],
+        }],
+    };
+
+    // Direction 1: source = type-a, target = type-b -> PASSES
+    validate_relationship(
+        &custom_ontology,
+        "kat.core/supersedes",
+        "custom/type-a",
+        "custom/type-b",
+    )
+    .unwrap();
+
+    // Inverted Direction: source = type-b, target = type-a -> FAILS
+    let err = validate_relationship(
+        &custom_ontology,
+        "kat.core/supersedes",
+        "custom/type-b",
+        "custom/type-a",
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        OntologyError::RelationshipSourceTypeNotAllowed {
+            relationship_type: "kat.core/supersedes".into(),
+            source_type: "custom/type-b".into(),
+        }
+    );
 }
