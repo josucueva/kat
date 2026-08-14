@@ -29,9 +29,10 @@ use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
     ChangeContext, ChangeError, CreateElementInput, PreconditionError, PreparedElementUpdate,
     UpdateElementInput, apply_create_element, apply_update_element, persist_prepared_change,
-    prepare_change, prepare_change_revision, prepare_update_change_revision,
-    publish_persisted_change, validate_create_element_invariants, validate_create_element_ontology,
-    validate_update_element_invariants, validate_update_element_ontology,
+    persist_prepared_update_change, prepare_change, prepare_change_revision,
+    prepare_update_change_revision, publish_persisted_change, validate_create_element_invariants,
+    validate_create_element_ontology, validate_update_element_invariants,
+    validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -1584,4 +1585,135 @@ fn prepare_update_change_revision_with_no_accepted_change_head() {
     // When accepted.change is None, dependencies is empty [].
     assert_eq!(revision.change.dependencies, vec![]);
     assert_eq!(revision.change.base_states, vec![setup.state_id]);
+}
+
+#[test]
+fn persist_prepared_update_change_materializes_v2_s2_c2_and_leaves_accepted_unchanged() {
+    let setup = repo_with_element(130, 230);
+    let repo = &setup.repo;
+    let objects_before = object_ids(&setup.root);
+    let count_before = objects_before.len();
+    let v1_bytes_before = repo.object_store().get(setup.version_id).unwrap();
+    let refs_before =
+        fs::read_to_string(kat_dir(&setup.root).join("refs").join("accepted")).unwrap();
+
+    let prepared = valid_update(&setup);
+    let validated =
+        validate_update_element_invariants(validate_update_element_ontology(prepared).unwrap())
+            .unwrap();
+    let change_id_2 = ChangeId::from_uuid(Uuid::from_u128(303));
+    let revision =
+        prepare_update_change_revision(validated, change_id_2, Some("update title".into()))
+            .unwrap();
+
+    let expected_v2_id = revision.update.element_version_id;
+    let expected_s2_id = revision.state_id;
+    let expected_c2_id = revision.change_revision_id;
+    let expected_v2 = revision.update.element.clone();
+    let expected_s2 = revision.update.candidate_state.clone();
+    let expected_c2 = revision.change.clone();
+
+    let persisted = persist_prepared_update_change(repo, revision).unwrap();
+
+    assert_eq!(persisted.prepared.update.element_version_id, expected_v2_id);
+    assert_eq!(persisted.prepared.state_id, expected_s2_id);
+    assert_eq!(persisted.prepared.change_revision_id, expected_c2_id);
+
+    let v2_bytes = repo.object_store().get(expected_v2_id).unwrap();
+    let s2_bytes = repo.object_store().get(expected_s2_id).unwrap();
+    let c2_bytes = repo.object_store().get(expected_c2_id).unwrap();
+
+    let decoded_v2 = match kat::encoding::decode_canonical(&v2_bytes).unwrap().payload {
+        CanonicalPayload::KnowledgeElementVersion(v) => v,
+        other => panic!("expected KnowledgeElementVersion, got {other:?}"),
+    };
+    let decoded_s2 = match kat::encoding::decode_canonical(&s2_bytes).unwrap().payload {
+        CanonicalPayload::SemanticState(s) => s,
+        other => panic!("expected SemanticState, got {other:?}"),
+    };
+    let decoded_c2 = match kat::encoding::decode_canonical(&c2_bytes).unwrap().payload {
+        CanonicalPayload::ChangeRevision(c) => c,
+        other => panic!("expected ChangeRevision, got {other:?}"),
+    };
+
+    assert_eq!(decoded_v2, expected_v2);
+    assert_eq!(decoded_s2, expected_s2);
+    assert_eq!(decoded_c2, expected_c2);
+
+    // V1 still exists and is byte-for-byte unchanged
+    let v1_bytes_after = repo.object_store().get(setup.version_id).unwrap();
+    assert_eq!(v1_bytes_after, v1_bytes_before);
+
+    // Accepted ref is untouched
+    assert_eq!(
+        fs::read_to_string(kat_dir(&setup.root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
+
+    // Object count increases by exactly 3
+    let objects_after = object_ids(&setup.root);
+    assert_eq!(objects_after.len(), count_before + 3);
+    assert!(objects_after.contains(&expected_v2_id.to_string()));
+    assert!(objects_after.contains(&expected_s2_id.to_string()));
+    assert!(objects_after.contains(&expected_c2_id.to_string()));
+}
+
+#[test]
+fn repository_reopen_and_query_after_persist_update_before_publish_still_resolves_v1() {
+    let setup = repo_with_element(131, 231);
+    let repo = &setup.repo;
+
+    let prepared = valid_update(&setup);
+    let validated =
+        validate_update_element_invariants(validate_update_element_ontology(prepared).unwrap())
+            .unwrap();
+    let change_id_2 = ChangeId::from_uuid(Uuid::from_u128(304));
+    let revision =
+        prepare_update_change_revision(validated, change_id_2, Some("update title".into()))
+            .unwrap();
+
+    let expected_v2_id = revision.update.element_version_id;
+    let _persisted = persist_prepared_update_change(repo, revision).unwrap();
+
+    // Reopen repository before publication
+    let reopened = open_repository(&setup.root).unwrap();
+    assert_eq!(reopened.accepted.state, setup.state_id);
+    assert_eq!(reopened.accepted.change, repo.accepted.change);
+
+    // Query show_element still resolves V1, not V2
+    let view = kat::repository::show_element(&reopened, setup.element_id).unwrap();
+    assert_eq!(view.version_id, setup.version_id);
+    assert_ne!(view.version_id, expected_v2_id);
+}
+
+#[test]
+fn persist_prepared_update_change_is_idempotent() {
+    let setup = repo_with_element(132, 232);
+    let repo = &setup.repo;
+    let prepared = valid_update(&setup);
+    let validated =
+        validate_update_element_invariants(validate_update_element_ontology(prepared).unwrap())
+            .unwrap();
+    let change_id_2 = ChangeId::from_uuid(Uuid::from_u128(305));
+    let revision =
+        prepare_update_change_revision(validated, change_id_2, Some("update title".into()))
+            .unwrap();
+
+    let expected_v2_id = revision.update.element_version_id;
+    let expected_s2_id = revision.state_id;
+    let expected_c2_id = revision.change_revision_id;
+
+    let count_before = object_ids(&setup.root).len();
+
+    let first = persist_prepared_update_change(repo, revision).unwrap();
+    let count_after_first = object_ids(&setup.root).len();
+    assert_eq!(count_after_first, count_before + 3);
+
+    let second = persist_prepared_update_change(repo, first.prepared).unwrap();
+    let count_after_second = object_ids(&setup.root).len();
+    assert_eq!(count_after_second, count_after_first);
+
+    assert_eq!(second.prepared.update.element_version_id, expected_v2_id);
+    assert_eq!(second.prepared.state_id, expected_s2_id);
+    assert_eq!(second.prepared.change_revision_id, expected_c2_id);
 }

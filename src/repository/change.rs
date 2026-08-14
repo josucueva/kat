@@ -869,6 +869,80 @@ pub fn persist_prepared_change(
     Ok(PersistedChange { prepared })
 }
 
+/// A prepared update change whose immutable objects have been materialized into
+/// the ObjectStore (Vn+1, Sn+1, Cn+1), but which has **not** been published.
+///
+/// The accepted ref is untouched — the new objects are unreferenced (an
+/// intentionally-valid, harmless state). Step 2.6 publication will require
+/// this type so an Update Change cannot be published before its objects are
+/// persisted.
+#[derive(Debug)]
+pub struct PersistedUpdateChange {
+    /// The prepared update change whose objects were just persisted.
+    pub prepared: PreparedUpdateChangeRevision,
+}
+
+/// Materializes a prepared, validated update change's immutable objects into
+/// the ObjectStore in reference order — `Vn+1`, `Sn+1`, then `Cn+1`:
+///
+/// ```text
+/// Cn+1 -> Sn+1 -> Vn+1
+/// ```
+///
+/// Each `ObjectStore::put` returns the content-derived ObjectId (the store
+/// hashes the bytes itself), which is verified against the identity derived at
+/// preparation time. A mismatch is an integrity/programming failure and is
+/// rejected. Step 2.5 does **not** publish: `refs/accepted` is left exactly as
+/// it was. No rollback/GC — objects persisted before a failure remain as
+/// unreachable immutable objects (harmless; reclaimable by a future GC).
+pub fn persist_prepared_update_change(
+    repository: &Repository,
+    prepared: PreparedUpdateChangeRevision,
+) -> Result<PersistedUpdateChange, ChangeError> {
+    let store = repository.object_store();
+
+    // Vn+1
+    let v_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(prepared.update.element.clone()),
+    })?;
+    let v_next_id = store.put(&v_next_bytes)?;
+    if v_next_id != prepared.update.element_version_id {
+        return Err(identity_mismatch(
+            ObjectKind::KnowledgeElementVersion,
+            prepared.update.element_version_id,
+            v_next_id,
+        ));
+    }
+
+    // Sn+1
+    let s_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(prepared.update.candidate_state.clone()),
+    })?;
+    let s_next_id = store.put(&s_next_bytes)?;
+    if s_next_id != prepared.state_id {
+        return Err(identity_mismatch(
+            ObjectKind::SemanticState,
+            prepared.state_id,
+            s_next_id,
+        ));
+    }
+
+    // Cn+1
+    let c_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
+    })?;
+    let c_next_id = store.put(&c_next_bytes)?;
+    if c_next_id != prepared.change_revision_id {
+        return Err(identity_mismatch(
+            ObjectKind::ChangeRevision,
+            prepared.change_revision_id,
+            c_next_id,
+        ));
+    }
+
+    Ok(PersistedUpdateChange { prepared })
+}
+
 /// A persisted change that has been atomically published as the repository's
 /// accepted head (step 1.7).
 ///
