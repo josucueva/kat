@@ -37,8 +37,9 @@ use kat::repository::change::{
     publish_persisted_supersede_change, publish_persisted_update_change,
     validate_create_element_invariants, validate_create_element_ontology,
     validate_deprecate_element_invariants, validate_deprecate_element_ontology,
-    validate_supersede_element_invariants, validate_supersede_element_ontology,
-    validate_update_element_invariants, validate_update_element_ontology,
+    validate_link_element_ontology, validate_supersede_element_invariants,
+    validate_supersede_element_ontology, validate_update_element_invariants,
+    validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -3519,5 +3520,165 @@ fn apply_link_element_precondition_failures() {
             source_element_id,
             target_element_id,
         }) if relationship_type == "kat.core/supersedes" && source_element_id == replacement_id && target_element_id == setup_sup.element_id
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Step 5.2 — validate_link_element_ontology tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn link_ontology_valid_combination_passes() {
+    let setup1 = repo_with_typed_element(601, 701, "kat.core/design-decision");
+    let repo = &setup1.repo;
+
+    // Publish a requirement (e2)
+    let ctx_req = prepare_change(repo).unwrap();
+    let prep_req = apply_create_element(
+        ctx_req,
+        CreateElementInput {
+            element_id: ElementId::from_uuid(Uuid::from_u128(602)),
+            type_id: "kat.core/requirement".into(),
+            properties: vec![],
+        },
+    )
+    .unwrap();
+    let val_req =
+        validate_create_element_invariants(validate_create_element_ontology(prep_req).unwrap())
+            .unwrap();
+    let rev_req =
+        prepare_change_revision(val_req, ChangeId::from_uuid(Uuid::from_u128(702)), None).unwrap();
+    let pers_req = persist_prepared_change(repo, rev_req).unwrap();
+    publish_persisted_change(repo, pers_req).unwrap();
+
+    let reopened = open_repository(setup1._dir.path()).unwrap();
+    let initial_objects = std::fs::read_dir(setup1._dir.path().join(".kat/objects"))
+        .unwrap()
+        .count();
+
+    // Link design-decision (e1) --addresses--> requirement (e2)
+    let ctx = prepare_change(&reopened).unwrap();
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(9005));
+    let prepared = apply_link_element(
+        &reopened,
+        ctx,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: setup1.element_id,
+            target_element_id: ElementId::from_uuid(Uuid::from_u128(602)),
+            properties: vec![],
+        },
+    )
+    .unwrap();
+
+    let validated = validate_link_element_ontology(prepared).unwrap();
+    assert_eq!(validated.relationship_id, rel_id);
+
+    // Physical store and ref unchanged
+    let after_objects = std::fs::read_dir(setup1._dir.path().join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(after_objects, initial_objects);
+    assert_eq!(
+        reopened.ref_store().read_accepted().unwrap().state,
+        reopened.accepted.state
+    );
+}
+
+#[test]
+fn link_ontology_rejections() {
+    let setup = repo_with_typed_element(610, 710, "kat.core/design-decision");
+    let repo = &setup.repo;
+
+    // Publish a requirement (e2)
+    let ctx_req = prepare_change(repo).unwrap();
+    let prep_req = apply_create_element(
+        ctx_req,
+        CreateElementInput {
+            element_id: ElementId::from_uuid(Uuid::from_u128(611)),
+            type_id: "kat.core/requirement".into(),
+            properties: vec![],
+        },
+    )
+    .unwrap();
+    let val_req =
+        validate_create_element_invariants(validate_create_element_ontology(prep_req).unwrap())
+            .unwrap();
+    let rev_req =
+        prepare_change_revision(val_req, ChangeId::from_uuid(Uuid::from_u128(711)), None).unwrap();
+    let pers_req = persist_prepared_change(repo, rev_req).unwrap();
+    publish_persisted_change(repo, pers_req).unwrap();
+
+    let reopened = open_repository(setup._dir.path()).unwrap();
+
+    let decision_id = setup.element_id;
+    let req_id = ElementId::from_uuid(Uuid::from_u128(611));
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(9006));
+
+    // 1. Unknown relationship type -> UnknownRelationshipType
+    let ctx1 = prepare_change(&reopened).unwrap();
+    let prep1 = apply_link_element(
+        &reopened,
+        ctx1,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/unknown-type".into(),
+            source_element_id: decision_id,
+            target_element_id: req_id,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+    let err1 = validate_link_element_ontology(prep1).unwrap_err();
+    assert!(matches!(
+        err1,
+        ChangeError::Ontology(OntologyError::UnknownRelationshipType(ref t)) if t == "kat.core/unknown-type"
+    ));
+
+    // 2. Forbidden source type (requirement cannot originate 'addresses') -> RelationshipSourceTypeNotAllowed
+    let ctx2 = prepare_change(&reopened).unwrap();
+    let prep2 = apply_link_element(
+        &reopened,
+        ctx2,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: req_id, // Requirement --addresses--> Decision is invalid!
+            target_element_id: decision_id,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+    let err2 = validate_link_element_ontology(prep2).unwrap_err();
+    assert!(matches!(
+        err2,
+        ChangeError::Ontology(OntologyError::RelationshipSourceTypeNotAllowed {
+            ref relationship_type,
+            ref source_type,
+        }) if relationship_type == "kat.core/addresses" && source_type == "kat.core/requirement"
+    ));
+
+    // 3. Forbidden target type (decision --addresses--> decision is invalid; addresses targets requirement) -> RelationshipTargetTypeNotAllowed
+    let ctx3 = prepare_change(&reopened).unwrap();
+    let prep3 = apply_link_element(
+        &reopened,
+        ctx3,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: decision_id,
+            target_element_id: decision_id,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+    let err3 = validate_link_element_ontology(prep3).unwrap_err();
+    assert!(matches!(
+        err3,
+        ChangeError::Ontology(OntologyError::RelationshipTargetTypeNotAllowed {
+            ref relationship_type,
+            ref target_type,
+        }) if relationship_type == "kat.core/addresses" && target_type == "kat.core/design-decision"
     ));
 }

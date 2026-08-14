@@ -918,6 +918,8 @@ pub struct LinkElementInput {
 #[derive(Debug)]
 pub struct PreparedElementLinked {
     pub context: ChangeContext,
+    pub source_element: KnowledgeElementVersion,
+    pub target_element: KnowledgeElementVersion,
     pub relationship_id: RelationshipId,
     pub relationship: RelationshipVersion,
     pub relationship_version_id: ObjectId,
@@ -954,7 +956,7 @@ pub fn apply_link_element(
         ))?;
 
     // 2. Precondition: target element Et must exist in base state.
-    let _target_entry = base_state
+    let target_entry = base_state
         .elements
         .iter()
         .find(|e| e.element_id == input.target_element_id)
@@ -980,7 +982,17 @@ pub fn apply_link_element(
         ));
     }
 
-    // Target element lifecycle may be Active, Deprecated, or Superseded (allowed).
+    // Load target element (target lifecycle may be Active, Deprecated, or Superseded).
+    let target_element = match load_typed(
+        repository.object_store(),
+        target_entry.version,
+        ObjectKind::KnowledgeElementVersion,
+    )?
+    .payload
+    {
+        CanonicalPayload::KnowledgeElementVersion(element) => element,
+        _ => unreachable!("kind verified by load_typed"),
+    };
 
     // 4. Precondition: relationship R1 does NOT already exist in base state.
     if base_state
@@ -1061,12 +1073,29 @@ pub fn apply_link_element(
 
     Ok(PreparedElementLinked {
         context,
+        source_element,
+        target_element,
         relationship_id: input.relationship_id,
         relationship,
         relationship_version_id,
         candidate_state,
         candidate_state_id,
     })
+}
+
+/// Applies the step 5.2 ontology-conformance stage to a prepared element link:
+/// the newly constructed relationship type must exist in the base `OntologyVersion`,
+/// and the source and target element types must be allowed for that relationship type.
+pub fn validate_link_element_ontology(
+    prepared: PreparedElementLinked,
+) -> Result<PreparedElementLinked, ChangeError> {
+    validate_relationship(
+        &prepared.context.ontology,
+        &prepared.relationship.relationship_type,
+        &prepared.source_element.type_id,
+        &prepared.target_element.type_id,
+    )?;
+    Ok(prepared)
 }
 
 /// Applies the step 2.2 ontology-conformance stage to a prepared element

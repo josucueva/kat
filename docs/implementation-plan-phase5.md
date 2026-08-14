@@ -69,8 +69,8 @@ Phase 5 introduces explicit relationship mutation into KAT. Up until Phase 4, re
       Notes: `src/repository/change.rs` — defined `LinkElementInput`, `PreparedElementLinked`, `apply_link_element(repository: &Repository, context: ChangeContext, input: LinkElementInput) -> Result<PreparedElementLinked, ChangeError>`. Enforces preconditions: $E_s$ exists & `Active`, $E_t$ exists (`Active`, `Deprecated`, or `Superseded`), $R_1$ identity unique (`PreconditionError::RelationshipAlreadyExists`), `(type, source, target)` semantic triple unique in $S_n$ (`PreconditionError::DuplicateRelationshipTriple`). Constructs candidate state with inserted $R_1 \to R_1V$ at canonical sorted position. Re-exported in `repository/mod.rs`. 2 unit tests in `tests/change.rs`. `cargo test` 270 pass, fmt/clippy clean.
 
 ### Step 5.2 — Ontology Validation (`validate_link_element_ontology`)
-- [ ] **5.2 — Ontology validation.**
-      Implement `validate_link_element_ontology(prepared: PreparedElementLinked) -> Result<PreparedElementLinked, ChangeError>` in `src/repository/validation/ontology.rs` and `src/repository/change.rs`. Validate relationship type existence, allowed source element type, allowed target element type, and exact direction. Re-export in `repository/mod.rs`. Unit tests in `tests/change.rs`.
+- [x] **5.2 — Ontology validation.**
+      Notes: `src/repository/change.rs` — defined `validate_link_element_ontology(prepared: PreparedElementLinked) -> Result<PreparedElementLinked, ChangeError>`. Updated `PreparedElementLinked` to carry loaded endpoint versions `source_element` and `target_element`. Reuses generic `validate_relationship(&prepared.context.ontology, relationship_type, source_type, target_type)`. Re-exported in `repository/mod.rs`. Unit tests in `tests/change.rs` (valid combination, unknown relationship type, forbidden source type, forbidden target type, exact directionality, custom base ontology). `cargo test` 272 pass, fmt/clippy clean.
 
 ### Step 5.3 — Invariant Validation (`validate_link_element_invariants`)
 - [ ] **5.3 — Invariant validation.**

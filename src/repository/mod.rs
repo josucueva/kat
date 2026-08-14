@@ -29,8 +29,9 @@ pub use change::{
     publish_persisted_supersede_change, publish_persisted_update_change,
     validate_create_element_invariants, validate_create_element_ontology,
     validate_deprecate_element_invariants, validate_deprecate_element_ontology,
-    validate_supersede_element_invariants, validate_supersede_element_ontology,
-    validate_update_element_invariants, validate_update_element_ontology,
+    validate_link_element_ontology, validate_supersede_element_invariants,
+    validate_supersede_element_ontology, validate_update_element_invariants,
+    validate_update_element_ontology,
 };
 pub use open::{Repository, open_repository};
 pub use query::{ElementView, HistoryEntry, QueryError, history, show_element};
