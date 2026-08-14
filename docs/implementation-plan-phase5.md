@@ -89,8 +89,8 @@ Phase 5 introduces explicit relationship mutation into KAT. Up until Phase 4, re
       Notes: `src/repository/change.rs` — defined `PublishedLinkChange` struct and implemented `publish_persisted_link_change(repository: &Repository, persisted: PersistedLinkChange) -> Result<PublishedLinkChange, ChangeError>`. Enforces pre-CAS state check (`change.result_state == state_id`), atomic CAS update on `refs/accepted`. Zero extra objects created. Re-exported in `repository/mod.rs`. 3 integration tests in `tests/change.rs` (advances accepted head & survives reopen, conflict on stale expected head, publication state mismatch). `cargo test` 280 pass, fmt/clippy clean.
 
 ### Step 5.7 — CLI `kat link` Wiring
-- [ ] **5.7 — CLI `kat link` wiring.**
-      Wire `kat link <relationship-type> <source-element-id> <target-element-id> [--description "..."]` in `src/main.rs`. Implemented `resolve_relationship_type` for short-name resolution against base ontology. Generate $R_1$ `RelationshipId` in CLI adapter. Integration tests in `tests/cli.rs`.
+- [x] **5.7 — CLI `kat link` wiring.**
+      Notes: `src/main.rs` — implemented `kat link <relationship-type> <source-element-id> <target-element-id> [--description "..."]`. Implemented `resolve_relationship_type` for short-name lookup (`addresses` $\to$ `kat.core/addresses`) against base ontology. CLI generates `RelationshipId` and `ChangeId`. Added 8 CLI integration tests in `tests/cli.rs` (valid link end-to-end, short and qualified relationship type resolution, unknown relationship type error, forbidden ontology direction error, missing endpoints errors, non-active source error, link to deprecated target success, duplicate relationship triple CLI error, malformed flags, outside repository). `cargo test` 288 pass, fmt/clippy clean.
 
 ### Step 5.8 — Acceptance Verification & Phase 5 Closure
 - [ ] **5.8 — Acceptance verification & Phase 5 closure.**

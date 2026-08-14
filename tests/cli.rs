@@ -1227,3 +1227,230 @@ fn phase4_acceptance_cli_flow_end_to_end() {
     // 9. V1 preserved in ObjectStore byte-for-byte unchanged
     assert_eq!(reopened.object_store().get(v1_id).unwrap(), v1_bytes);
 }
+
+// ---------------------------------------------------------------------------
+// Step 5.7 — CLI `kat link` tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kat_link_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init
+    let (out, err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {err}\n{out}");
+
+    // 2. kat create design-decision --title "Decision 1"
+    let (c1_out, c1_err, ok) = run_kat(
+        root,
+        &["create", "design-decision", "--title", "Decision 1"],
+    );
+    assert!(ok, "kat create E1 failed: {c1_err}\n{c1_out}");
+    let e1 = id_line(&c1_out, "element_id");
+
+    // 3. kat create requirement --title "Requirement 1"
+    let (c2_out, c2_err, ok) =
+        run_kat(root, &["create", "requirement", "--title", "Requirement 1"]);
+    assert!(ok, "kat create E2 failed: {c2_err}\n{c2_out}");
+    let e2 = id_line(&c2_out, "element_id");
+
+    // 4. kat link addresses <E1> <E2> --description "Link decision to requirement"
+    let (link_out, link_err, ok) = run_kat(
+        root,
+        &[
+            "link",
+            "addresses",
+            e1,
+            e2,
+            "--description",
+            "Link decision to requirement",
+        ],
+    );
+    assert!(ok, "kat link failed: {link_err}\n{link_out}");
+
+    let r1 = id_line(&link_out, "relationship_id");
+    let r1v = id_line(&link_out, "relationship_version_id");
+    let snext = id_line(&link_out, "state_id");
+    let cnext = id_line(&link_out, "change_revision_id");
+
+    assert!(!r1.is_empty());
+    assert!(!r1v.is_empty());
+    assert!(!snext.is_empty());
+    assert!(!cnext.is_empty());
+    assert!(link_out.contains(&format!("source_element_id: {e1}")));
+    assert!(link_out.contains(&format!("target_element_id: {e2}")));
+
+    // 5. kat show E1 and kat show E2 remain active & unchanged
+    let (show1_out, _, ok1) = run_kat(root, &["show", e1]);
+    assert!(ok1);
+    assert!(show1_out.contains("lifecycle: active"));
+
+    let (show2_out, _, ok2) = run_kat(root, &["show", e2]);
+    assert!(ok2);
+    assert!(show2_out.contains("lifecycle: active"));
+
+    // 6. kat history contains exactly one `link <R1V>` operation
+    let (hist_out, hist_err, ok) = run_kat(root, &["history"]);
+    assert!(ok, "kat history failed: {hist_err}");
+    assert!(hist_out.contains(&format!("link {r1v}")));
+
+    // 7. Duplicate link fails
+    let (dup_out, dup_err, ok) = run_kat(root, &["link", "addresses", e1, e2]);
+    assert!(!ok, "duplicate link should fail but passed:\n{dup_out}");
+    assert!(dup_err.contains("already exists between source element"));
+}
+
+#[test]
+fn kat_link_short_and_qualified_relationship_types() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+    let (c1_out, _, _) = run_kat(root, &["create", "design-decision", "--title", "D1"]);
+    let (c2_out, _, _) = run_kat(root, &["create", "requirement", "--title", "R1"]);
+    let e1 = id_line(&c1_out, "element_id");
+    let e2 = id_line(&c2_out, "element_id");
+
+    // Qualified relationship type
+    let (out, err, ok) = run_kat(root, &["link", "kat.core/addresses", e1, e2]);
+    assert!(ok, "qualified link failed: {err}\n{out}");
+}
+
+#[test]
+fn kat_link_unknown_relationship_type_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+    let (c1_out, _, _) = run_kat(root, &["create", "design-decision", "--title", "D1"]);
+    let (c2_out, _, _) = run_kat(root, &["create", "requirement", "--title", "R1"]);
+    let e1 = id_line(&c1_out, "element_id");
+    let e2 = id_line(&c2_out, "element_id");
+
+    let (out, err, ok) = run_kat(root, &["link", "nonexistent", e1, e2]);
+    assert!(!ok, "unknown link type should fail:\n{out}");
+    assert!(err.contains("unknown relationship type 'nonexistent'"));
+}
+
+#[test]
+fn kat_link_forbidden_ontology_types_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+    let (c1_out, _, _) = run_kat(root, &["create", "design-decision", "--title", "D1"]);
+    let (c2_out, _, _) = run_kat(root, &["create", "requirement", "--title", "R1"]);
+    let e1 = id_line(&c1_out, "element_id");
+    let e2 = id_line(&c2_out, "element_id");
+
+    // addresses expects source: design-decision, target: requirement.
+    // Reversing endpoints should fail ontology validation.
+    let (out, err, ok) = run_kat(root, &["link", "addresses", e2, e1]);
+    assert!(!ok, "forbidden direction should fail:\n{out}");
+    assert!(err.contains("does not allow source element type"));
+}
+
+#[test]
+fn kat_link_missing_endpoints_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+    let (c1_out, _, _) = run_kat(root, &["create", "design-decision", "--title", "D1"]);
+    let e1 = id_line(&c1_out, "element_id");
+    let missing_id = "00000000-0000-0000-0000-000000000000";
+
+    let (_out1, err1, ok1) = run_kat(root, &["link", "addresses", missing_id, e1]);
+    assert!(!ok1);
+    assert!(err1.contains("not found in the base state"));
+
+    let (_out2, err2, ok2) = run_kat(root, &["link", "addresses", e1, missing_id]);
+    assert!(!ok2);
+    assert!(err2.contains("not found in the base state"));
+}
+
+#[test]
+fn kat_link_non_active_source_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+    let (c1_out, _, _) = run_kat(root, &["create", "design-decision", "--title", "D1"]);
+    let (c2_out, _, _) = run_kat(root, &["create", "requirement", "--title", "R1"]);
+    let e1 = id_line(&c1_out, "element_id");
+    let e2 = id_line(&c2_out, "element_id");
+
+    run_kat(root, &["deprecate", e1]);
+
+    let (out, err, ok) = run_kat(root, &["link", "addresses", e1, e2]);
+    assert!(!ok, "deprecated source link should fail:\n{out}");
+    assert!(err.contains("is not active in the base state"));
+}
+
+#[test]
+fn kat_link_to_deprecated_target_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+    let (c1_out, _, _) = run_kat(root, &["create", "design-decision", "--title", "D1"]);
+    let (c2_out, _, _) = run_kat(root, &["create", "requirement", "--title", "R1"]);
+    let e1 = id_line(&c1_out, "element_id");
+    let e2 = id_line(&c2_out, "element_id");
+
+    // Deprecate target requirement
+    run_kat(root, &["deprecate", e2]);
+
+    // Linking active source to deprecated target succeeds!
+    let (out, err, ok) = run_kat(root, &["link", "addresses", e1, e2]);
+    assert!(ok, "link to deprecated target failed: {err}\n{out}");
+}
+
+#[test]
+fn kat_link_malformed_arguments_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+
+    let (_out1, err1, ok1) = run_kat(root, &["link", "addresses", "not-a-uuid", "not-a-uuid"]);
+    assert!(!ok1);
+    assert!(err1.contains("invalid element ID"));
+
+    let (_out2, err2, ok2) = run_kat(root, &["link", "addresses"]);
+    assert!(!ok2);
+    assert!(err2.contains("expected <relationship-type>"));
+
+    let (_out3, err3, ok3) = run_kat(
+        root,
+        &[
+            "link",
+            "addresses",
+            "00000000-0000-0000-0000-000000000001",
+            "00000000-0000-0000-0000-000000000002",
+            "--unknown",
+            "val",
+        ],
+    );
+    assert!(!ok3);
+    assert!(err3.contains("unknown option"));
+}
+
+#[test]
+fn kat_link_outside_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    let (_out, err, ok) = run_kat(
+        root,
+        &[
+            "link",
+            "addresses",
+            "00000000-0000-0000-0000-000000000001",
+            "00000000-0000-0000-0000-000000000002",
+        ],
+    );
+    assert!(!ok);
+    assert!(err.contains("no KAT repository found"));
+}

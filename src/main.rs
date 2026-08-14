@@ -14,17 +14,19 @@ use kat::domain::ontology::OntologyVersion;
 use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
 use kat::repository::change::{
-    ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, PublishedChange,
-    PublishedDeprecateChange, PublishedSupersedeChange, PublishedUpdateChange,
+    ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, LinkElementInput,
+    PublishedChange, PublishedDeprecateChange, PublishedSupersedeChange, PublishedUpdateChange,
     SupersedeElementInput, UpdateElementInput, apply_create_element, apply_deprecate_element,
-    apply_supersede_element, apply_update_element, persist_prepared_change,
-    persist_prepared_deprecate_change, persist_prepared_supersede_change,
-    persist_prepared_update_change, prepare_change, prepare_change_revision,
-    prepare_deprecate_change_revision, prepare_supersede_change_revision,
-    prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
+    apply_link_element, apply_supersede_element, apply_update_element, persist_prepared_change,
+    persist_prepared_deprecate_change, persist_prepared_link_change,
+    persist_prepared_supersede_change, persist_prepared_update_change, prepare_change,
+    prepare_change_revision, prepare_deprecate_change_revision, prepare_link_change_revision,
+    prepare_supersede_change_revision, prepare_update_change_revision, publish_persisted_change,
+    publish_persisted_deprecate_change, publish_persisted_link_change,
     publish_persisted_supersede_change, publish_persisted_update_change,
     validate_create_element_invariants, validate_create_element_ontology,
     validate_deprecate_element_invariants, validate_deprecate_element_ontology,
+    validate_link_element_invariants, validate_link_element_ontology,
     validate_supersede_element_invariants, validate_supersede_element_ontology,
     validate_update_element_invariants, validate_update_element_ontology,
 };
@@ -40,19 +42,20 @@ fn main() -> ExitCode {
         Some("update") => cmd_update(&args[1..]),
         Some("deprecate") => cmd_deprecate(&args[1..]),
         Some("supersede") => cmd_supersede(&args[1..]),
+        Some("link") => cmd_link(&args[1..]),
         Some("show") => cmd_show(&args[1..]),
         Some("history") => cmd_history(&args[1..]),
         Some(other) => {
             eprintln!("kat: unknown command '{other}'");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat show <element-id> | kat history"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat show <element-id> | kat history"
             );
             ExitCode::FAILURE
         }
         None => {
             eprintln!("kat: missing command");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat show <element-id> | kat history"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat show <element-id> | kat history"
             );
             ExitCode::FAILURE
         }
@@ -142,6 +145,26 @@ fn resolve_element_type(ontology: &OntologyVersion, arg: &str) -> Result<String,
         (Some(only), None) => Ok(only.type_id.clone()),
         (None, _) => Err(format!("unknown element type '{arg}'")),
         (Some(_), Some(_)) => Err(format!("ambiguous element type '{arg}'")),
+    }
+}
+
+/// Resolves a CLI relationship-type argument: if it contains `/` it's returned
+/// as-is (e.g. `kat.core/addresses`); otherwise it is looked up as a short name for a
+/// relationship type in the base ontology whose ID ends in `/short-name`
+/// (e.g. `addresses` -> `kat.core/addresses`), so the authoritative base
+/// ontology is the only source of relationship type names — never a hardcoded CLI table.
+fn resolve_relationship_type(ontology: &OntologyVersion, arg: &str) -> Result<String, String> {
+    if arg.contains('/') {
+        return Ok(arg.to_string());
+    }
+    let mut matches = ontology
+        .relationship_types
+        .iter()
+        .filter(|definition| definition.type_id.rsplit('/').next() == Some(arg));
+    match (matches.next(), matches.next()) {
+        (Some(only), None) => Ok(only.type_id.clone()),
+        (None, _) => Err(format!("unknown relationship type '{arg}'")),
+        (Some(_), Some(_)) => Err(format!("ambiguous relationship type '{arg}'")),
     }
 }
 
@@ -717,6 +740,166 @@ fn supersede_pipeline(
     let revision = prepare_supersede_change_revision(validated, ChangeId::new(), None)?;
     let persisted = persist_prepared_supersede_change(repository, revision)?;
     publish_persisted_supersede_change(repository, persisted)
+}
+
+/// Parsed `kat link` arguments.
+struct LinkArgs {
+    relationship_type_arg: String,
+    source_element_id: ElementId,
+    target_element_id: ElementId,
+    description: Option<String>,
+}
+
+fn parse_link_args(args: &[String]) -> Result<LinkArgs, String> {
+    if args.len() < 3 {
+        return Err("expected <relationship-type> <source-element-id> <target-element-id> [--description \"...\"]".to_string());
+    }
+    let relationship_type_arg = args[0].clone();
+    let source_element_id =
+        ElementId::from_str(&args[1]).map_err(|_| format!("invalid element ID: {}", args[1]))?;
+    let target_element_id =
+        ElementId::from_str(&args[2]).map_err(|_| format!("invalid element ID: {}", args[2]))?;
+
+    let rest = &args[3..];
+    let mut description: Option<String> = None;
+    let mut i = 0;
+    while i < rest.len() {
+        let flag = rest[i].as_str();
+        let value = rest
+            .get(i + 1)
+            .ok_or_else(|| format!("missing value for {flag}"))?;
+        match flag {
+            "--description" => {
+                if description.is_some() {
+                    return Err("duplicate --description".to_string());
+                }
+                description = Some(value.clone());
+            }
+            other => return Err(format!("unknown option '{other}'")),
+        }
+        i += 2;
+    }
+
+    Ok(LinkArgs {
+        relationship_type_arg,
+        source_element_id,
+        target_element_id,
+        description,
+    })
+}
+
+/// `kat link <relationship-type> <source-element-id> <target-element-id> [--description "..."]` —
+/// run a `LinkElement` change end to end through the Change Engine and publish it.
+fn cmd_link(args: &[String]) -> ExitCode {
+    let parsed = match parse_link_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("kat link: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat link: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let context = match prepare_change(&repository) {
+        Ok(context) => context,
+        Err(error) => return fail_link(error),
+    };
+
+    let relationship_type_id =
+        match resolve_relationship_type(&context.ontology, &parsed.relationship_type_arg) {
+            Ok(type_id) => type_id,
+            Err(message) => {
+                eprintln!("kat link: {message}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+    let relationship_id = RelationshipId::new();
+    let change_id = ChangeId::new();
+
+    let prepared = match apply_link_element(
+        &repository,
+        context,
+        LinkElementInput {
+            relationship_id,
+            relationship_type_id,
+            source_element_id: parsed.source_element_id,
+            target_element_id: parsed.target_element_id,
+            properties: vec![],
+        },
+    ) {
+        Ok(prepared) => prepared,
+        Err(error) => return fail_link(error),
+    };
+
+    let ont_validated = match validate_link_element_ontology(prepared) {
+        Ok(validated) => validated,
+        Err(error) => return fail_link(error),
+    };
+
+    let inv_validated = match validate_link_element_invariants(ont_validated) {
+        Ok(validated) => validated,
+        Err(error) => return fail_link(error),
+    };
+
+    let prepared_revision =
+        match prepare_link_change_revision(inv_validated, change_id, parsed.description) {
+            Ok(revision) => revision,
+            Err(error) => return fail_link(error),
+        };
+
+    let persisted = match persist_prepared_link_change(&repository, prepared_revision) {
+        Ok(persisted) => persisted,
+        Err(error) => return fail_link(error),
+    };
+
+    let published = match publish_persisted_link_change(&repository, persisted) {
+        Ok(published) => published,
+        Err(error) => return fail_link(error),
+    };
+
+    let prepared = &published.persisted.prepared;
+    println!("relationship_id: {}", prepared.link.relationship_id);
+    println!(
+        "relationship_version_id: {}",
+        prepared.link.relationship_version_id
+    );
+    println!(
+        "source_element_id: {}",
+        prepared.link.relationship.source_element_id
+    );
+    println!(
+        "target_element_id: {}",
+        prepared.link.relationship.target_element_id
+    );
+    println!("state_id: {}", prepared.state_id);
+    println!("change_id: {}", prepared.change.change_id);
+    println!("change_revision_id: {}", prepared.change_revision_id);
+    ExitCode::SUCCESS
+}
+
+fn fail_link(error: ChangeError) -> ExitCode {
+    match error {
+        ChangeError::Precondition(
+            kat::repository::change::PreconditionError::ElementNotActive(id),
+        ) => {
+            eprintln!("kat link: element {id} is not active in the base state");
+        }
+        ChangeError::Conflict => {
+            eprintln!(
+                "kat link: the accepted repository state changed while linking; nothing was published. Re-run kat link."
+            );
+        }
+        other => eprintln!("kat link: {other}"),
+    }
+    ExitCode::FAILURE
 }
 
 /// `kat show <element-id>` — display the currently accepted version of an
