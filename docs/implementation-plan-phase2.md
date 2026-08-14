@@ -79,7 +79,7 @@ expected_version` before constructing `Vn+1`:
 
 ### Work items (ordered sub-steps, mirroring Phase 1)
 
-- [ ] **2.1 — `UpdateElement` application.** `apply_update_element(context,
+- [x] **2.1 — `UpdateElement` application.** `apply_update_element(context,
 UpdateElementInput { element_id, expected_version, properties })`:
       preconditions — E exists in base (else precondition failure); resolve
       `Vactual = base.elements[E].version` and require `Vactual ==
@@ -89,6 +89,7 @@ UpdateElementInput { element_id, expected_version, properties })`:
       onto `Vn.properties` (canonical order, duplicates rejected); derive
       `Vn+1` ObjectId (encode-then-hash, not persisted); build the candidate
       state with E's entry version = `Vn+1`. No persistence/publication.
+      Notes: `repository/change.rs` — `apply_update_element(&Repository, ChangeContext, UpdateElementInput { element_id, expected_version, properties }) -> PreparedElementUpdate { context, previous_element, previous_version_id, element, element_version_id, candidate_state }`. `PreconditionError` gains `ElementNotFound`, `VersionMismatch{element_id, expected, actual}`, `ElementNotActive`, `EmptyUpdate`, `NoEffectiveChange`. Preconditions (in order): element exists → `ElementNotFound`; `Vactual = base.elements[E].version` must equal `expected_version` → `VersionMismatch`; current version loads + decodes + kind-checks as `KnowledgeElementVersion` (wrong kind → `UnexpectedObjectKind` — defense-in-depth, the repository-open layer rejects such states first); lifecycle Active → `ElementNotActive`; patch non-empty → `EmptyUpdate`. The patch is merged onto the current full property set (`merge_property_patch`: preserves unspecified properties, rejects duplicate patch keys, re-canonicalizes encoded-text order); `Vn+1` is built with `element_id`/`type_id`/lifecycle preserved; content identity derived (encode-then-hash, not persisted); `NoEffectiveChange` rejected when `Vn+1` ObjectId == `Vn`. Candidate = base with exactly `E -> Vn+1`. No ontology (2.2), no invariants (2.3), no ChangeRevision, no persistence, no CAS. 9 new integration tests (`tests/change.rs`). `cargo test` 195 pass, fmt/clippy clean.
 - [ ] **2.2 — Ontology validation.** Reuse `validate_element_type` (`Vn+1`'s
       type is preserved, so this is defense-in-depth and keeps the pipeline
       uniform).

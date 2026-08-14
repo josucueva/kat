@@ -61,6 +61,34 @@ pub enum PreconditionError {
     /// explicit operation's concern, not `CreateElement`'s.
     #[error("element {0} already exists in the base state")]
     ElementAlreadyExists(ElementId),
+    /// The ElementId is not present in the base state (an update targets an
+    /// existing element).
+    #[error("element {0} not found in the base state")]
+    ElementNotFound(ElementId),
+    /// The base state maps the element to a different version than the
+    /// operation's `expected_version` (element-level optimistic concurrency).
+    #[error("element {element_id} is at version {actual}, but the operation expected {expected}")]
+    VersionMismatch {
+        /// Stable identity of the element being updated.
+        element_id: ElementId,
+        /// The version the operation was prepared against (`expected_version`).
+        expected: ObjectId,
+        /// The version the base state actually maps the element to.
+        actual: ObjectId,
+    },
+    /// The element's current version is not `Active`; update does not perform
+    /// lifecycle transitions (deprecation/supersession are explicit operations).
+    #[error("element {0} is not active and cannot be updated")]
+    ElementNotActive(ElementId),
+    /// The update patch contains no properties to change.
+    #[error("update contains no properties to change")]
+    EmptyUpdate,
+    /// The (non-empty) update patch produces a content-identical version
+    /// (`Vn+1` ObjectId == `Vn`); the change would not evolve the state.
+    #[error(
+        "update produces no effective change (the new version is identical to the current version)"
+    )]
+    NoEffectiveChange,
 }
 
 /// Error produced by the Change Engine.
@@ -313,6 +341,187 @@ pub fn apply_create_element(
 
     Ok(PreparedElementCreation {
         context,
+        element,
+        element_version_id,
+        candidate_state,
+    })
+}
+
+/// Application-level input for an `UpdateElement` operation.
+///
+/// The user/application representation, not yet a canonical object. The patch
+/// is the **subset of properties to change** (`operations.md`: "Properties to
+/// change"); the engine merges it onto the element's current full property set
+/// to construct the immutable `Vn+1`.
+///
+/// `expected_version` is an explicit input with element-level optimistic
+/// concurrency semantics: the engine requires the base state to still map
+/// `element_id` to exactly `expected_version` before applying. This is distinct
+/// from (and complements) the publication CAS, which protects the
+/// repository-level base state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateElementInput {
+    /// Stable identity of the element being updated.
+    pub element_id: ElementId,
+    /// The version the caller observed/expects to be current (`Vn`); the engine
+    /// rejects the update if the base state maps the element elsewhere.
+    pub expected_version: ObjectId,
+    /// The properties to change, as an unordered application key/value list.
+    /// Keys are normalized into canonical order; duplicates are rejected;
+    /// unspecified properties are preserved.
+    pub properties: Vec<(String, PropertyValue)>,
+}
+
+/// A logically-prepared element update: the previous version, the new Active
+/// knowledge element version, its content identity, and the candidate
+/// SemanticState it maps to.
+///
+/// Distinct from a full [`ChangeRevision`](crate::domain::change::ChangeRevision):
+/// nothing here is persisted and no accepted ref is published. `Sn+1` exists
+/// only because `Vn+1`'s ObjectId could be derived from its canonical bytes
+/// (hashing is not persistence). The prepared value carries the decoded
+/// previous version so step 2.3 can verify identity/type/lifecycle preservation
+/// and the single-state-delta invariant without reloading anything.
+#[derive(Debug)]
+pub struct PreparedElementUpdate {
+    /// The change context the update was applied against (unchanged).
+    pub context: ChangeContext,
+    /// The decoded current version `Vn` (base state's mapping for `E`).
+    pub previous_element: KnowledgeElementVersion,
+    /// ObjectId of the current version `Vn`.
+    pub previous_version_id: ObjectId,
+    /// The constructed Active `KnowledgeElementVersion` `Vn+1` (identity, type,
+    /// and lifecycle preserved; patch merged onto the current properties).
+    pub element: KnowledgeElementVersion,
+    /// The content identity of `element` (SHA-256 of its canonical bytes).
+    pub element_version_id: ObjectId,
+    /// The candidate SemanticState: base with exactly `E -> Vn` replaced by
+    /// `E -> Vn+1` (nothing else changed).
+    pub candidate_state: SemanticState,
+}
+
+/// Applies a single `UpdateElement` to `context`, producing a candidate only.
+///
+/// Step 2.1 is confined to **operation application**: preconditions, loading
+/// the current version `Vn`, merging the property patch, constructing `Vn+1`,
+/// deriving its content identity, and building the candidate SemanticState. It
+/// deliberately does **not** perform ontology conformance (2.2) or invariant
+/// validation (2.3), and it never persists or publishes.
+///
+/// Preconditions (in order):
+///
+/// ```text
+/// element exists in base state
+/// current version == expected_version
+/// current version decodes as KnowledgeElementVersion
+/// current lifecycle == Active
+/// patch is not empty
+/// ```
+///
+/// The patch is merged onto the current full property set (unspecified
+/// properties preserved), the result is canonicalized, `Vn+1` is built, and a
+/// `NoEffectiveChange` is rejected when `Vn+1`'s ObjectId equals `Vn`.
+///
+/// Requires `repository` to load and decode the current version `Vn` from the
+/// ObjectStore (the context carries only its ObjectId).
+pub fn apply_update_element(
+    repository: &Repository,
+    context: ChangeContext,
+    input: UpdateElementInput,
+) -> Result<PreparedElementUpdate, ChangeError> {
+    let base_state = &context.base_state;
+
+    // Precondition: the element must exist in the base state.
+    let entry = base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == input.element_id)
+        .ok_or(ChangeError::Precondition(
+            PreconditionError::ElementNotFound(input.element_id),
+        ))?;
+
+    // Precondition: current version == expected_version (element-level
+    // optimistic concurrency).
+    let previous_version_id = entry.version;
+    if previous_version_id != input.expected_version {
+        return Err(ChangeError::Precondition(
+            PreconditionError::VersionMismatch {
+                element_id: input.element_id,
+                expected: input.expected_version,
+                actual: previous_version_id,
+            },
+        ));
+    }
+
+    // Precondition: the current version loads, decodes canonically, and is a
+    // KnowledgeElementVersion (missing -> NotFound; wrong kind -> rejected).
+    let previous_element = match load_typed(
+        repository.object_store(),
+        previous_version_id,
+        ObjectKind::KnowledgeElementVersion,
+    )?
+    .payload
+    {
+        CanonicalPayload::KnowledgeElementVersion(element) => element,
+        _ => unreachable!("kind verified by load_typed"),
+    };
+
+    // Precondition: the current lifecycle is Active.
+    if previous_element.lifecycle != Lifecycle::Active {
+        return Err(ChangeError::Precondition(
+            PreconditionError::ElementNotActive(input.element_id),
+        ));
+    }
+
+    // Precondition: the patch is not empty.
+    if input.properties.is_empty() {
+        return Err(ChangeError::Precondition(PreconditionError::EmptyUpdate));
+    }
+
+    // Merge the patch onto the current full property set (preserving
+    // unspecified properties), canonicalizing the result. Duplicate patch keys
+    // are rejected inside the merge.
+    let properties = merge_property_patch(&previous_element.properties, input.properties)?;
+
+    // Construct Vn+1: identity, type, and lifecycle are preserved (the current
+    // version is Active by precondition).
+    let element = KnowledgeElementVersion {
+        element_id: input.element_id,
+        type_id: previous_element.type_id.clone(),
+        lifecycle: Lifecycle::Active,
+        properties,
+    };
+
+    // Derive Vn+1's content identity (encode + SHA-256). No persistence occurs.
+    let element_version_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(element.clone()),
+    })?;
+
+    // Reject a no-op: if Vn+1 is content-identical to Vn, nothing changed.
+    if element_version_id == previous_version_id {
+        return Err(ChangeError::Precondition(
+            PreconditionError::NoEffectiveChange,
+        ));
+    }
+
+    // Candidate state: replace exactly `E -> Vn` with `E -> Vn+1`, nothing else.
+    let mut elements = base_state.elements.clone();
+    let index = elements
+        .iter()
+        .position(|e| e.element_id == input.element_id)
+        .expect("element presence precondition checked above");
+    elements[index].version = element_version_id;
+
+    let candidate_state = SemanticState {
+        ontology_version: base_state.ontology_version,
+        elements,
+        relationships: base_state.relationships.clone(),
+    };
+
+    Ok(PreparedElementUpdate {
+        context,
+        previous_element,
+        previous_version_id,
         element,
         element_version_id,
         candidate_state,
@@ -630,6 +839,30 @@ fn normalize_properties(
         }
     }
     Ok(props)
+}
+
+/// Overlays an update **patch** onto a base property set.
+///
+/// The patch is the subset of properties to change (`operations.md`): keys
+/// present in the patch replace the base value, new keys are added, and all
+/// other (unspecified) base properties are preserved. The patch is normalized
+/// first (canonical order + duplicate-key rejection, via [`normalize_properties`]),
+/// then the merged result is re-canonicalized by encoded-key order.
+fn merge_property_patch(
+    base: &[(String, PropertyValue)],
+    patch: Vec<(String, PropertyValue)>,
+) -> Result<Vec<(String, PropertyValue)>, ChangeError> {
+    let patch = normalize_properties(patch)?;
+    let mut merged = base.to_vec();
+    for (key, value) in patch {
+        if let Some(slot) = merged.iter_mut().find(|(k, _)| *k == key) {
+            slot.1 = value;
+        } else {
+            merged.push((key, value));
+        }
+    }
+    merged.sort_by(|a, b| cmp_encoded_text(&a.0, &b.0));
+    Ok(merged)
 }
 
 #[cfg(test)]

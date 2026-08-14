@@ -18,14 +18,21 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use kat::domain::identity::ObjectId;
+use kat::domain::element::{KnowledgeElementVersion, Lifecycle};
+use kat::domain::identity::{ChangeId, ElementId, ObjectId};
 use kat::domain::property::PropertyValue;
+use kat::domain::state::{ElementStateEntry, SemanticState};
+use kat::encoding::canonical_bytes;
+use kat::encoding::canonical_object_id;
+use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
-    apply_create_element, persist_prepared_change, prepare_change, prepare_change_revision,
-    publish_persisted_change, validate_create_element_invariants, validate_create_element_ontology,
+    ChangeContext, ChangeError, CreateElementInput, PreconditionError, UpdateElementInput,
+    apply_create_element, apply_update_element, persist_prepared_change, prepare_change,
+    prepare_change_revision, publish_persisted_change, validate_create_element_invariants,
+    validate_create_element_ontology,
 };
 use kat::repository::init::init_repository;
-use kat::repository::open::open_repository;
+use kat::repository::open::{Repository, open_repository};
 use kat::repository::ref_store::{AcceptedRef, RefStore};
 use uuid::Uuid;
 
@@ -683,4 +690,411 @@ fn publish_rejects_internally_inconsistent_prepared_change() {
             change: None,
         }
     );
+}
+
+// ---------------------------------------------------------------------------
+// Step 2.1 — apply_update_element
+// ---------------------------------------------------------------------------
+
+/// A fresh repository with one published Active element (properties `title`
+/// "Original" and `priority` "medium") at the accepted head, plus a fresh
+/// open handle (so `prepare_change` sees the published head).
+struct RepoWithElement {
+    _dir: tempfile::TempDir,
+    root: PathBuf,
+    repo: Repository,
+    element_id: ElementId,
+    version_id: ObjectId,
+    state_id: ObjectId,
+}
+
+fn repo_with_element(n: u128, change_n: u128) -> RepoWithElement {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    init_repository(&root).unwrap();
+
+    let element_id = ElementId::from_uuid(Uuid::from_u128(n));
+    let (version_id, state_id) = {
+        let repo = open_repository(&root).unwrap();
+        let context = prepare_change(&repo).unwrap();
+        let prepared = apply_create_element(
+            context,
+            CreateElementInput {
+                element_id,
+                type_id: "kat.core/requirement".into(),
+                properties: vec![
+                    ("title".into(), PropertyValue::Text("Original".into())),
+                    ("priority".into(), PropertyValue::Text("medium".into())),
+                ],
+            },
+        )
+        .unwrap();
+        let validated =
+            validate_create_element_invariants(validate_create_element_ontology(prepared).unwrap())
+                .unwrap();
+        let revision = prepare_change_revision(
+            validated,
+            ChangeId::from_uuid(Uuid::from_u128(change_n)),
+            None,
+        )
+        .unwrap();
+        let version_id = revision.creation.element_version_id;
+        let state_id = revision.state_id;
+        let persisted = persist_prepared_change(&repo, revision).unwrap();
+        publish_persisted_change(&repo, persisted).unwrap();
+        (version_id, state_id)
+    };
+
+    // Reopen so the handle's accepted snapshot reflects the published head.
+    let repo = open_repository(&root).unwrap();
+    RepoWithElement {
+        _dir: dir,
+        root,
+        repo,
+        element_id,
+        version_id,
+        state_id,
+    }
+}
+
+/// Prepares a fresh change against `repo`'s accepted head and applies an
+/// `UpdateElement` for the given element/patch.
+fn prepare_update(
+    repo: &Repository,
+    element_id: ElementId,
+    expected_version: ObjectId,
+    properties: Vec<(&str, PropertyValue)>,
+) -> Result<kat::repository::change::PreparedElementUpdate, ChangeError> {
+    let context = prepare_change(repo).unwrap();
+    apply_update_element(
+        repo,
+        context,
+        UpdateElementInput {
+            element_id,
+            expected_version,
+            properties: properties
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        },
+    )
+}
+
+/// Persists an arbitrary KnowledgeElementVersion into the repo's store.
+fn store_element(repo: &Repository, element: KnowledgeElementVersion) -> ObjectId {
+    let bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(element),
+    })
+    .unwrap();
+    repo.object_store().put(&bytes).unwrap()
+}
+
+/// Replaces the accepted head with `{ state, change: None }` (CAS from the
+/// current head) and returns a freshly-opened handle.
+fn adopt_state(root: &Path, state_id: ObjectId) -> Repository {
+    let repo = open_repository(root).unwrap();
+    let current = repo.ref_store().read_accepted().unwrap();
+    repo.ref_store()
+        .compare_and_swap_accepted(
+            &current,
+            &AcceptedRef {
+                state: state_id,
+                change: None,
+            },
+        )
+        .unwrap();
+    open_repository(root).unwrap()
+}
+
+#[test]
+fn update_applies_patch_preserving_unspecified_properties() {
+    let setup = repo_with_element(101, 201);
+    let repo = &setup.repo;
+
+    let prepared = prepare_update(
+        repo,
+        setup.element_id,
+        setup.version_id,
+        vec![("title", PropertyValue::Text("Changed".into()))],
+    )
+    .unwrap();
+
+    // Previous version loaded and carried (canonical property order is by the
+    // full encoded text form, so "title" (len 5) sorts before "priority" (len 8)).
+    assert_eq!(prepared.previous_version_id, setup.version_id);
+    assert_eq!(prepared.previous_element.element_id, setup.element_id);
+    assert_eq!(prepared.previous_element.type_id, "kat.core/requirement");
+    assert_eq!(prepared.previous_element.lifecycle, Lifecycle::Active);
+    assert_eq!(
+        prepared.previous_element.properties,
+        vec![
+            ("title".to_string(), PropertyValue::Text("Original".into())),
+            ("priority".to_string(), PropertyValue::Text("medium".into())),
+        ]
+    );
+
+    // Vn+1: identity/type/lifecycle preserved; title replaced; priority kept.
+    assert_eq!(prepared.element.element_id, setup.element_id);
+    assert_eq!(prepared.element.type_id, "kat.core/requirement");
+    assert_eq!(prepared.element.lifecycle, Lifecycle::Active);
+    assert_eq!(
+        prepared.element.properties,
+        vec![
+            ("title".to_string(), PropertyValue::Text("Changed".into())),
+            ("priority".to_string(), PropertyValue::Text("medium".into())),
+        ]
+    );
+
+    // New content identity, distinct from Vn and equal to encode-then-hash.
+    assert_ne!(prepared.element_version_id, setup.version_id);
+    let expected_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(prepared.element.clone()),
+    })
+    .unwrap();
+    assert_eq!(prepared.element_version_id, expected_id);
+
+    // Candidate: exactly E -> Vn+1; ontology/relationships unchanged.
+    assert_eq!(
+        prepared.candidate_state.ontology_version,
+        prepared.context.base_state.ontology_version
+    );
+    assert_eq!(
+        prepared.candidate_state.relationships,
+        prepared.context.base_state.relationships
+    );
+    assert_eq!(prepared.candidate_state.elements.len(), 1);
+    assert_eq!(
+        prepared.candidate_state.elements[0].element_id,
+        setup.element_id
+    );
+    assert_eq!(
+        prepared.candidate_state.elements[0].version,
+        prepared.element_version_id
+    );
+
+    // Base state untouched; nothing persisted (O1, S0 + V1, S1, C1 = 5 objects);
+    // the accepted head is the published one and is unchanged.
+    assert_eq!(
+        prepared.context.base_state.elements[0].version,
+        setup.version_id
+    );
+    assert_eq!(object_ids(&setup.root).len(), 5);
+    assert_eq!(prepared.context.accepted.state, setup.state_id);
+    assert!(prepared.context.accepted.change.is_some());
+}
+
+#[test]
+fn update_adds_new_property_preserving_existing() {
+    let setup = repo_with_element(102, 202);
+    let repo = &setup.repo;
+
+    let prepared = prepare_update(
+        repo,
+        setup.element_id,
+        setup.version_id,
+        vec![("status", PropertyValue::Text("new".into()))],
+    )
+    .unwrap();
+
+    // Canonical encoded-text order: "title" (0x65), "status" (0x66), "priority" (0x68).
+    assert_eq!(
+        prepared.element.properties,
+        vec![
+            ("title".to_string(), PropertyValue::Text("Original".into())),
+            ("status".to_string(), PropertyValue::Text("new".into())),
+            ("priority".to_string(), PropertyValue::Text("medium".into())),
+        ]
+    );
+}
+
+#[test]
+fn update_rejects_missing_element() {
+    let setup = repo_with_element(103, 203);
+    let repo = &setup.repo;
+    let missing = ElementId::from_uuid(Uuid::from_u128(999));
+
+    let err = prepare_update(
+        repo,
+        missing,
+        setup.version_id,
+        vec![("title", PropertyValue::Text("x".into()))],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::ElementNotFound(id)) if id == missing
+    ));
+}
+
+#[test]
+fn update_rejects_version_mismatch() {
+    let setup = repo_with_element(104, 204);
+    let repo = &setup.repo;
+    let wrong_expected = object_id(0xAB);
+
+    let err = prepare_update(
+        repo,
+        setup.element_id,
+        wrong_expected,
+        vec![("title", PropertyValue::Text("x".into()))],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::VersionMismatch {
+            element_id,
+            expected,
+            actual,
+        }) if element_id == setup.element_id
+            && expected == wrong_expected
+            && actual == setup.version_id
+    ));
+}
+
+#[test]
+fn update_rejects_non_active_element() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = init_repository(root).unwrap();
+
+    let element_id = ElementId::from_uuid(Uuid::from_u128(105));
+    let deprecated = {
+        let repo = open_repository(root).unwrap();
+        store_element(
+            &repo,
+            KnowledgeElementVersion {
+                element_id,
+                type_id: "kat.core/requirement".into(),
+                lifecycle: Lifecycle::Deprecated,
+                properties: vec![],
+            },
+        )
+    };
+    let state = {
+        let repo = open_repository(root).unwrap();
+        let bytes = canonical_bytes(&CanonicalObject {
+            payload: CanonicalPayload::SemanticState(SemanticState {
+                ontology_version: init.ontology,
+                elements: vec![ElementStateEntry {
+                    element_id,
+                    version: deprecated,
+                }],
+                relationships: vec![],
+            }),
+        })
+        .unwrap();
+        repo.object_store().put(&bytes).unwrap()
+    };
+    let repo = adopt_state(root, state);
+
+    let context = prepare_change(&repo).unwrap();
+    let err = apply_update_element(
+        &repo,
+        context,
+        UpdateElementInput {
+            element_id,
+            expected_version: deprecated,
+            properties: vec![("title".into(), PropertyValue::Text("x".into()))],
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::ElementNotActive(id)) if id == element_id
+    ));
+}
+
+#[test]
+fn update_rejects_empty_patch() {
+    let setup = repo_with_element(106, 206);
+    let repo = &setup.repo;
+
+    let err = prepare_update(repo, setup.element_id, setup.version_id, vec![]).unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::EmptyUpdate)
+    ));
+}
+
+#[test]
+fn update_rejects_no_effective_change() {
+    let setup = repo_with_element(107, 207);
+    let repo = &setup.repo;
+
+    // Setting a property to its current value yields an identical Vn+1.
+    let err = prepare_update(
+        repo,
+        setup.element_id,
+        setup.version_id,
+        vec![("title", PropertyValue::Text("Original".into()))],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::NoEffectiveChange)
+    ));
+}
+
+#[test]
+fn update_rejects_duplicate_patch_key() {
+    let setup = repo_with_element(108, 208);
+    let repo = &setup.repo;
+
+    let err = prepare_update(
+        repo,
+        setup.element_id,
+        setup.version_id,
+        vec![
+            ("title", PropertyValue::Text("a".into())),
+            ("title", PropertyValue::Text("b".into())),
+        ],
+    )
+    .unwrap_err();
+    assert!(matches!(err, ChangeError::DuplicatePropertyKey(k) if k == "title"));
+}
+
+#[test]
+fn update_rejects_wrong_kind_current_version() {
+    // A base state mapping E to an OntologyVersion can never be *opened* (the
+    // repository-open layer rejects wrong-kind element versions first, as
+    // tested in tests/open.rs). The engine's own kind check is therefore
+    // defense-in-depth; this test reaches it directly with a manual context
+    // whose element slot references the OntologyVersion (O1) in the store.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = init_repository(root).unwrap();
+    let repo = open_repository(root).unwrap();
+
+    let element_id = ElementId::from_uuid(Uuid::from_u128(109));
+    let wrong_kind = init.ontology;
+    let base = prepare_change(&repo).unwrap();
+    let context = ChangeContext {
+        base_state: SemanticState {
+            ontology_version: init.ontology,
+            elements: vec![ElementStateEntry {
+                element_id,
+                version: wrong_kind,
+            }],
+            relationships: vec![],
+        },
+        ..base
+    };
+
+    let err = apply_update_element(
+        &repo,
+        context,
+        UpdateElementInput {
+            element_id,
+            expected_version: wrong_kind,
+            properties: vec![("title".into(), PropertyValue::Text("x".into()))],
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::UnexpectedObjectKind {
+            expected: ObjectKind::KnowledgeElementVersion,
+            actual: ObjectKind::OntologyVersion,
+        }
+    ));
 }
