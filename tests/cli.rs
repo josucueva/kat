@@ -402,6 +402,96 @@ fn kat_create_twice_produces_linear_history() {
 // kat update — Phase 2 closure
 // ---------------------------------------------------------------------------
 
+/// The Phase 2 acceptance scenario end to end as a black-box CLI flow (per
+/// `docs/implementation-plan-phase2.md`): init -> create requirement --title "A"
+/// -> update <E1> --title "B" -> fresh reopen -> verify accepted {S2, C2} ->
+/// C2 operations = [UpdateElement(E1, V1, V2)], base_states = [S1], result_state = S2 ->
+/// kat show E1 -> title "B" (resolves V2) -> kat history -> [C2, C1] -> V1 still present in objects/.
+#[test]
+fn phase2_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    // 2. kat create requirement --title "A" -> E1, V1, S1, C1
+    let (create_out, create_err, ok) = run_kat(root, &["create", "requirement", "--title", "A"]);
+    assert!(ok, "kat create failed: {create_err}\n{create_out}");
+    let element_id = ElementId::from_str(id_line(&create_out, "element_id")).unwrap();
+    let v1_id = ObjectId::from_str(id_line(&create_out, "version_id")).unwrap();
+    let s1_id = ObjectId::from_str(id_line(&create_out, "state_id")).unwrap();
+    let c1_change_id = ChangeId::from_str(id_line(&create_out, "change_id")).unwrap();
+    let c1_rev_id = ObjectId::from_str(id_line(&create_out, "change_revision_id")).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let v1_bytes = repo.object_store().get(v1_id).unwrap();
+
+    // 3. kat update <E1> --title "B" -> V2, S2, C2
+    let (update_out, update_err, ok) =
+        run_kat(root, &["update", &element_id.to_string(), "--title", "B"]);
+    assert!(ok, "kat update failed: {update_err}\n{update_out}");
+    let out_prev_v = ObjectId::from_str(id_line(&update_out, "previous_version_id")).unwrap();
+    let v2_id = ObjectId::from_str(id_line(&update_out, "version_id")).unwrap();
+    let s2_id = ObjectId::from_str(id_line(&update_out, "state_id")).unwrap();
+    let c2_change_id = ChangeId::from_str(id_line(&update_out, "change_id")).unwrap();
+    let c2_rev_id = ObjectId::from_str(id_line(&update_out, "change_revision_id")).unwrap();
+
+    assert_eq!(out_prev_v, v1_id);
+    assert_ne!(v2_id, v1_id);
+
+    // 4. Reopen (fresh process) -> accepted.state == S2, accepted.change == C2
+    let reopened = open_repository(root).unwrap();
+    assert_eq!(reopened.accepted.state, s2_id);
+    assert_eq!(reopened.accepted.change, Some(c2_rev_id));
+
+    // 5. S2 maps E1 -> V2
+    let context = prepare_change(&reopened).unwrap();
+    assert_eq!(context.base_state_id, s2_id);
+    assert_eq!(context.base_state.elements.len(), 1);
+    assert_eq!(context.base_state.elements[0].element_id, element_id);
+    assert_eq!(context.base_state.elements[0].version, v2_id);
+
+    // 6. C2: base_states == [S1], result_state == S2, operations = [UpdateElement(E1, V1, V2)]
+    let entries = history(&reopened).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].revision_id, c2_rev_id);
+    assert_eq!(entries[0].change.change_id, c2_change_id);
+    assert_eq!(entries[0].change.result_state, s2_id);
+    assert_eq!(entries[0].change.base_states, vec![s1_id]);
+    assert_eq!(entries[0].change.dependencies, vec![c1_rev_id]);
+    assert_eq!(
+        entries[0].change.operations,
+        vec![Operation::UpdateElement {
+            element_id,
+            expected_version: v1_id,
+            new_version: v2_id,
+        }]
+    );
+
+    // 7. C1: result_state == S1
+    assert_eq!(entries[1].revision_id, c1_rev_id);
+    assert_eq!(entries[1].change.change_id, c1_change_id);
+    assert_eq!(entries[1].change.result_state, s1_id);
+
+    // 8. kat show E1 -> title "B" (resolves V2)
+    let (show_out, show_err, ok) = run_kat(root, &["show", &element_id.to_string()]);
+    assert!(ok, "kat show failed: {show_err}");
+    assert!(show_out.contains(&format!("version_id: {v2_id}")));
+    assert!(show_out.contains("title: B"));
+
+    // 9. kat history -> [C2, C1] (newest first)
+    let (hist_out, hist_err, ok) = run_kat(root, &["history"]);
+    assert!(ok, "kat history failed: {hist_err}");
+    let c2_pos = hist_out.find(&c2_rev_id.to_string()).unwrap();
+    let c1_pos = hist_out.find(&c1_rev_id.to_string()).unwrap();
+    assert!(c2_pos < c1_pos, "history must list C2 before C1");
+
+    // 10. V1 still present in objects/ (previous state traceable)
+    assert_eq!(reopened.object_store().get(v1_id).unwrap(), v1_bytes);
+}
+
 #[test]
 fn kat_update_cli_flow_end_to_end() {
     let dir = tempfile::tempdir().unwrap();

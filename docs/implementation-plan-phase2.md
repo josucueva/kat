@@ -116,9 +116,10 @@ head]` (same rule as 1.5), caller-supplied `change_id`/`description`.
       Notes: `repository/change.rs` — `publish_persisted_update_change(&Repository, PersistedUpdateChange) -> Result<PublishedUpdateChange, ChangeError>`: single CAS `expected = persisted.prepared.update.context.accepted` → `new = { state: Sn+1, change: Some(Cn+1) }`, returning new head in `PublishedUpdateChange { persisted, accepted }`. Pre-CAS defensive check `prepared.change.result_state == prepared.state_id` (`ChangeError::PublicationStateMismatch`); `RefStoreError::Conflict` surfaced as domain `ChangeError::Conflict`. Pipeline typestate enforced (`PersistedUpdateChange` required). Exported `PublishedUpdateChange` and `publish_persisted_update_change` in `repository/mod.rs`. 3 new integration tests (`tests/change.rs`): publication advances head to `{S2, C2}`, zero new objects created during publication, fresh reopen + `show_element` resolves V2, V1 remains in store, CAS conflict on stale head leaves losing objects unaccepted, and tampered `result_state` rejection. `cargo test` 224 pass, fmt/clippy clean.
 - [x] **2.7 — CLI `kat update <element-id> ...`.** Thin CLI parse + dispatch (`kat update <element-id> [--title "..."] [--description "..."]`).
       Notes: `src/main.rs` — `cmd_update`, `parse_update_args`, and `update_pipeline` parse CLI arguments, open repository, prepare change context, resolve current version $V_n$ of target element from base state, execute full engine pipeline (`apply_update_element` -> `validate_update_element_ontology` -> `validate_update_element_invariants` -> `prepare_update_change_revision` -> `persist_prepared_update_change` -> `publish_persisted_update_change`), and print stable IDs (`element_id`, `previous_version_id`, `version_id`, `state_id`, `change_id`, `change_revision_id`). Preserves unspecified properties, handles errors cleanly (`ElementNotFound`, `NoEffectiveChange`, `Conflict`, malformed CLI arguments). 5 new integration tests (`tests/cli.rs`): end-to-end update flow + ID output + `kat show` + `kat history` + $V_1$ byte immutability, optional description patch, outside repository failure, unknown element failure, malformed CLI flags / no effective change failure. `cargo test` 229 pass, fmt/clippy clean.
-- [ ] **2.8 — Verification.** `kat show E` resolves `Vn+1`; `kat history` shows
+- [x] **2.8 — Verification.** `kat show E` resolves `Vn+1`; `kat history` shows
       `Cn+1` (newest first) with `UpdateElement`; `Vn` remains in the object
       store (previous state traceable, per `operations.md`).
+      Notes: End-to-end Phase 2 verification covered by `phase2_acceptance_cli_flow_end_to_end` in `tests/cli.rs` (asserting `kat init` -> `kat create` -> `kat update` -> fresh reopen -> accepted state $S_2$ and change $C_2$ -> `kat show` -> `kat history` -> $V_1$ byte immutability in `ObjectStore`). All 230 tests pass cleanly, clippy/fmt clean.
 
 ### Phase 2 acceptance test
 
@@ -141,12 +142,12 @@ V1 still present in objects/ (previous state traceable)
 
 ### Definition of done for Phase 2
 
-- [ ] `kat update <element-id> --title "..."` performs an `UpdateElement` change end to end.
-- [ ] Patch semantics: only the named properties change; others are preserved.
-- [ ] Preconditions enforced: element exists, Active, current version == `expected_version` (else `VersionMismatch`), `EmptyUpdate` / `NoEffectiveChange` rejected.
-- [ ] Invariants enforced: identity/type/lifecycle preserved; exact single-entry replacement.
-- [ ] Accepted State and Change head published atomically via CAS; a conflict leaves objects unreferenced.
-- [ ] Fresh reopen verifies the new head; `kat show` resolves `Vn+1`; `kat history` shows `Cn+1`; `Vn` traceable.
-- [ ] The repository persists across executions.
+- [x] `kat update <element-id> --title "..."` performs an `UpdateElement` change end to end.
+- [x] Patch semantics: only the named properties change; others are preserved.
+- [x] Preconditions enforced: element exists, Active, current version == `expected_version` (else `VersionMismatch`), `EmptyUpdate` / `NoEffectiveChange` rejected.
+- [x] Invariants enforced: identity/type/lifecycle preserved; exact single-entry replacement.
+- [x] Accepted State and Change head published atomically via CAS; a conflict leaves objects unreferenced.
+- [x] Fresh reopen verifies the new head; `kat show` resolves `Vn+1`; `kat history` shows `Cn+1`; `Vn` traceable.
+- [x] The repository persists across executions.
 
 ---
