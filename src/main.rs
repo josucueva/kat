@@ -39,6 +39,7 @@ use kat::repository::query::{
     HistoryEntry, ImpactResult, QueryError, TraceResult, TraversalDirection, analyze_impact,
     history, show_element, trace_origin,
 };
+use kat::repository::validation::repository::{ValidationReport, validate_repository};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -54,10 +55,11 @@ fn main() -> ExitCode {
         Some("history") => cmd_history(&args[1..]),
         Some("trace") => cmd_trace(&args[1..]),
         Some("impact") => cmd_impact(&args[1..]),
+        Some("validate") => cmd_validate(),
         Some(other) => {
             eprintln!("kat: unknown command '{other}'");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history | kat trace <element-id> | kat impact <element-id>"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history | kat trace <element-id> | kat impact <element-id> | kat validate"
             );
             ExitCode::FAILURE
         }
@@ -1420,6 +1422,93 @@ fn format_operation(operation: &Operation) -> String {
         } => format!(
             "supersede {existing_element} {expected_existing_version} {replacement_element} {replacement_version} {superseding_relationship}"
         ),
+    }
+}
+
+/// `kat validate` — evaluate current repository state against ontology rules,
+/// state invariants, and relationship constraints (read-only; thin dispatch over [`validate_repository`]).
+fn cmd_validate() -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat validate: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match validate_repository(&repository) {
+        Ok(report) => {
+            print_validation_report(&repository, &report);
+            if report.violations.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("kat validate: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn print_validation_report(repository: &Repository, report: &ValidationReport) {
+    if !report.violations.is_empty() {
+        println!("violations:");
+        for v in &report.violations {
+            print!("  - [{:?}] {}", v.kind, v.message);
+            if let Some(rel_id) = v.relationship_id {
+                print!(" (relationship: {rel_id})");
+            }
+            println!();
+        }
+        println!();
+    }
+
+    if !report.unverified_constraints.is_empty() {
+        println!("unverified_constraints:");
+        for c in &report.unverified_constraints {
+            print!("  {}", c.constraint_element_id);
+            if let Some(ref title) = c.title {
+                print!(" \"{title}\"");
+            }
+            println!(" [reason: no executable validation rule]");
+            if c.constrained_element_ids.is_empty() {
+                println!("    constrained_elements: none");
+            } else {
+                println!("    constrained_elements:");
+                for target_id in &c.constrained_element_ids {
+                    print!("      {target_id}");
+                    if let Ok(view) = show_element(repository, *target_id) {
+                        print!(" [{}]", view.element.type_id);
+                        print_title_property(&view.element.properties);
+                    }
+                    println!();
+                }
+            }
+        }
+        println!();
+    }
+
+    if report.violations.is_empty() {
+        println!("semantic consistency: no violations detected");
+        if !report.unverified_constraints.is_empty() {
+            println!(
+                "unverified constraints: {}",
+                report.unverified_constraints.len()
+            );
+        }
+    } else {
+        println!(
+            "semantic consistency: {} violation(s) detected",
+            report.violations.len()
+        );
+        if !report.unverified_constraints.is_empty() {
+            println!(
+                "unverified constraints: {}",
+                report.unverified_constraints.len()
+            );
+        }
     }
 }
 

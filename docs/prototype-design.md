@@ -1952,3 +1952,8 @@ The following implementation questions remain intentionally unresolved:
 * When should full object verification occur?
 * How should abbreviated Object IDs be resolved safely?
 * Which CLI syntax should be used for element properties and relationship creation?
+
+# Constraint Validation Semantics (v0.1 Clarification)
+
+For KAT v0.1, consistency rules encoded by KAT's ontology and semantic invariants are mechanically evaluated. Constraint knowledge elements that do not have executable semantics are reported as unverified rather than assumed satisfied or violated.
+

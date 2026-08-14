@@ -47,4 +47,11 @@ pub use query::{
     impact_propagation_direction, origin_traversal_direction, show_element, trace_origin,
 };
 pub use validation::invariant::InvariantError;
+pub mod validation_repository {
+    pub use crate::repository::validation::repository::*;
+}
 pub use validation::ontology::{OntologyError, validate_element_type, validate_relationship};
+pub use validation::repository::{
+    UnverifiedConstraint, ValidationReport, ValidationViolation, ValidationViolationKind,
+    validate_repository,
+};

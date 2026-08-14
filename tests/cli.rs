@@ -2159,3 +2159,77 @@ fn phase8_acceptance_cli_flow_end_to_end() {
     assert_eq!(objects_after, objects_before);
     assert_eq!(refs_after, refs_before);
 }
+
+#[test]
+fn kat_validate_outside_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    let (_out, err, ok) = run_kat(root, &["validate"]);
+    assert!(!ok);
+    assert!(err.contains("no KAT repository found"));
+}
+
+#[test]
+fn phase9_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init
+    let (_out, err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {err}");
+
+    // 2. Create Constraint C1
+    let (c1_out, c1_err, ok) = run_kat(
+        root,
+        &[
+            "create",
+            "constraint",
+            "--title",
+            "TLS 1.3 Encryption Required",
+        ],
+    );
+    assert!(ok, "create constraint failed: {c1_err}");
+    let e_con = id_line(&c1_out, "element_id");
+
+    // 3. Create Decision D1
+    let (d1_out, d1_err, ok) = run_kat(
+        root,
+        &["create", "design-decision", "--title", "Use PASETO Tokens"],
+    );
+    assert!(ok, "create decision failed: {d1_err}");
+    let e_dec = id_line(&d1_out, "element_id");
+
+    // 4. Link C1 (restricts) -> D1
+    let (_out, err, ok) = run_kat(root, &["link", "restricts", e_con, e_dec]);
+    assert!(ok, "link restricts failed: {err}");
+
+    // 5. kat validate
+    let (val_out, val_err, ok) = run_kat(root, &["validate"]);
+    assert!(ok, "kat validate failed: {val_err}\n{val_out}");
+
+    assert!(val_out.contains("semantic consistency: no violations detected"));
+    assert!(val_out.contains("unverified_constraints:"));
+    assert!(val_out.contains(e_con));
+    assert!(val_out.contains("TLS 1.3 Encryption Required"));
+    assert!(val_out.contains("[reason: no executable validation rule]"));
+    assert!(val_out.contains("constrained_elements:"));
+    assert!(val_out.contains(e_dec));
+
+    // 6. Non-mutation verification
+    let objects_before = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    let refs_before = std::fs::read_to_string(root.join(".kat/refs/accepted")).unwrap();
+
+    let (_out, _err, ok) = run_kat(root, &["validate"]);
+    assert!(ok);
+
+    let objects_after = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    let refs_after = std::fs::read_to_string(root.join(".kat/refs/accepted")).unwrap();
+
+    assert_eq!(objects_after, objects_before);
+    assert_eq!(refs_after, refs_before);
+}

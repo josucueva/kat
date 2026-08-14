@@ -17,3 +17,4 @@
 
 pub mod invariant;
 pub mod ontology;
+pub mod repository;

@@ -21,11 +21,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kat::domain::change::ChangeRevision;
-use kat::domain::element::Lifecycle;
+use kat::domain::element::{KnowledgeElementVersion, Lifecycle};
 use kat::domain::identity::{ChangeId, ElementId, ObjectId, RelationshipId};
 use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
-use kat::domain::state::{ElementStateEntry, SemanticState};
+use kat::domain::relationship::RelationshipVersion;
+use kat::domain::state::{ElementStateEntry, RelationshipStateEntry, SemanticState};
 use kat::encoding::canonical_bytes;
 use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
@@ -42,6 +43,7 @@ use kat::repository::query::{
     QueryError, TraversalDirection, analyze_impact, history, show_element, trace_origin,
 };
 use kat::repository::ref_store::{AcceptedRef, RefStore};
+use kat::repository::validation::repository::{ValidationViolationKind, validate_repository};
 use uuid::Uuid;
 
 fn kat_dir(root: &Path) -> PathBuf {
@@ -1333,4 +1335,359 @@ fn impact_does_not_mutate_repository() {
         fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
         refs_before
     );
+}
+
+// ---------------------------------------------------------------------------
+// validate_repository tests (Step 9.3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn validate_clean_repository_returns_no_violations() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let report = validate_repository(&repo).unwrap();
+    assert!(report.violations.is_empty());
+    assert!(report.unverified_constraints.is_empty());
+}
+
+#[test]
+fn validate_reports_unverified_constraints_with_restricts_targets() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    // Create Constraint C1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_con = ElementId::from_uuid(Uuid::from_u128(8001));
+    let prep_c1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_con,
+                    type_id: "kat.core/constraint".into(),
+                    properties: vec![(
+                        "title".into(),
+                        PropertyValue::Text("TLS 1.3 Encryption Required".into()),
+                    )],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_change(
+        &repo,
+        persist_prepared_change(
+            &repo,
+            prepare_change_revision(prep_c1, ChangeId::from_uuid(Uuid::from_u128(8101)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Create Design Decision D1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_dec = ElementId::from_uuid(Uuid::from_u128(8002));
+    let prep_d1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_dec,
+                    type_id: "kat.core/design-decision".into(),
+                    properties: vec![(
+                        "title".into(),
+                        PropertyValue::Text("Use PASETO Tokens".into()),
+                    )],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_change(
+        &repo,
+        persist_prepared_change(
+            &repo,
+            prepare_change_revision(prep_d1, ChangeId::from_uuid(Uuid::from_u128(8102)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Link C1 (restricts) -> D1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let r1_id = RelationshipId::from_uuid(Uuid::from_u128(8201));
+    let prep_l1 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: r1_id,
+                    relationship_type_id: "kat.core/restricts".into(),
+                    source_element_id: e_con,
+                    target_element_id: e_dec,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(
+            &repo,
+            prepare_link_change_revision(prep_l1, ChangeId::from_uuid(Uuid::from_u128(8103)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let reopened = open_repository(root).unwrap();
+    let report = validate_repository(&reopened).unwrap();
+    assert!(report.violations.is_empty());
+    assert_eq!(report.unverified_constraints.len(), 1);
+    assert_eq!(
+        report.unverified_constraints[0].constraint_element_id,
+        e_con
+    );
+    assert_eq!(
+        report.unverified_constraints[0].title.as_deref(),
+        Some("TLS 1.3 Encryption Required")
+    );
+    assert_eq!(
+        report.unverified_constraints[0].constrained_element_ids,
+        vec![e_dec]
+    );
+}
+
+#[test]
+fn validate_does_not_mutate_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let _ids = publish_first_change(root, 77, 177);
+    let objects_before = object_ids(root);
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    validate_repository(&repo).unwrap();
+
+    assert_eq!(object_ids(root), objects_before);
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
+}
+
+fn publish_custom_state_fixture(
+    root: &Path,
+    elements: Vec<(ElementId, &str, Lifecycle)>,
+    relationships: Vec<(RelationshipId, &str, ElementId, ElementId)>,
+) -> kat::repository::open::Repository {
+    let repo = open_repository(root).unwrap();
+    let store = repo.object_store();
+
+    let mut state_elements = Vec::new();
+    for (el_id, type_id, lifecycle) in elements {
+        let el_version = KnowledgeElementVersion {
+            element_id: el_id,
+            type_id: type_id.into(),
+            lifecycle,
+            properties: vec![(
+                "title".into(),
+                PropertyValue::Text(format!("Element {el_id}")),
+            )],
+        };
+        let bytes = canonical_bytes(&CanonicalObject {
+            payload: CanonicalPayload::KnowledgeElementVersion(el_version),
+        })
+        .unwrap();
+        let obj_id = store.put(&bytes).unwrap();
+        state_elements.push(ElementStateEntry {
+            element_id: el_id,
+            version: obj_id,
+        });
+    }
+    state_elements.sort_by_key(|e| e.element_id);
+
+    let mut state_rels = Vec::new();
+    for (rel_id, type_id, src_id, tgt_id) in relationships {
+        let rel_version = RelationshipVersion {
+            relationship_id: rel_id,
+            relationship_type: type_id.into(),
+            source_element_id: src_id,
+            target_element_id: tgt_id,
+            properties: vec![],
+        };
+        let bytes = canonical_bytes(&CanonicalObject {
+            payload: CanonicalPayload::RelationshipVersion(rel_version),
+        })
+        .unwrap();
+        let obj_id = store.put(&bytes).unwrap();
+        state_rels.push(RelationshipStateEntry {
+            relationship_id: rel_id,
+            version: obj_id,
+        });
+    }
+    state_rels.sort_by_key(|r| r.relationship_id);
+
+    let accepted = repo.ref_store().read_accepted().unwrap();
+    let state_0_bytes = store.get(accepted.state).unwrap();
+    let state_0_obj = kat::encoding::decode_canonical(&state_0_bytes).unwrap();
+    let state_0 = match state_0_obj.payload {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => unreachable!(),
+    };
+
+    let new_state = SemanticState {
+        ontology_version: state_0.ontology_version,
+        elements: state_elements,
+        relationships: state_rels,
+    };
+    let state_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(new_state),
+    })
+    .unwrap();
+    let new_state_id = store.put(&state_bytes).unwrap();
+
+    let refs = repo.ref_store();
+    refs.compare_and_swap_accepted(
+        &accepted,
+        &AcceptedRef {
+            state: new_state_id,
+            change: accepted.change,
+        },
+    )
+    .unwrap();
+
+    open_repository(root).unwrap()
+}
+
+#[test]
+fn validate_reports_invalid_relationship_type() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let e1 = ElementId::from_uuid(Uuid::from_u128(7001));
+    let e2 = ElementId::from_uuid(Uuid::from_u128(7002));
+    let r1 = RelationshipId::from_uuid(Uuid::from_u128(7101));
+
+    let repo = publish_custom_state_fixture(
+        root,
+        vec![
+            (e1, "kat.core/requirement", Lifecycle::Active),
+            (e2, "kat.core/design-decision", Lifecycle::Active),
+        ],
+        vec![(r1, "kat.core/unknown-rel-type", e1, e2)],
+    );
+
+    let report = validate_repository(&repo).unwrap();
+    assert_eq!(report.violations.len(), 1);
+    assert_eq!(
+        report.violations[0].kind,
+        ValidationViolationKind::UnknownRelationshipType
+    );
+    assert_eq!(report.violations[0].relationship_id, Some(r1));
+}
+
+#[test]
+fn validate_reports_disallowed_source_and_target_types() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let e_req = ElementId::from_uuid(Uuid::from_u128(7011));
+    let e_int = ElementId::from_uuid(Uuid::from_u128(7012));
+    let r1 = RelationshipId::from_uuid(Uuid::from_u128(7111));
+
+    // kat.core/addresses requires source to be design-decision and target requirement.
+    // Here source is requirement and target is intent.
+    let repo = publish_custom_state_fixture(
+        root,
+        vec![
+            (e_req, "kat.core/requirement", Lifecycle::Active),
+            (e_int, "kat.core/intent", Lifecycle::Active),
+        ],
+        vec![(r1, "kat.core/addresses", e_req, e_int)],
+    );
+
+    let report = validate_repository(&repo).unwrap();
+    assert_eq!(report.violations.len(), 2);
+    let kinds: Vec<ValidationViolationKind> = report.violations.iter().map(|v| v.kind).collect();
+    assert!(kinds.contains(&ValidationViolationKind::RelationshipSourceTypeNotAllowed));
+    assert!(kinds.contains(&ValidationViolationKind::RelationshipTargetTypeNotAllowed));
+}
+
+#[test]
+fn validate_reports_duplicate_relationship_triples() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let e_dec = ElementId::from_uuid(Uuid::from_u128(7021));
+    let e_req = ElementId::from_uuid(Uuid::from_u128(7022));
+    let r1 = RelationshipId::from_uuid(Uuid::from_u128(7121));
+    let r2 = RelationshipId::from_uuid(Uuid::from_u128(7122));
+
+    let repo = publish_custom_state_fixture(
+        root,
+        vec![
+            (e_dec, "kat.core/design-decision", Lifecycle::Active),
+            (e_req, "kat.core/requirement", Lifecycle::Active),
+        ],
+        vec![
+            (r1, "kat.core/addresses", e_dec, e_req),
+            (r2, "kat.core/addresses", e_dec, e_req),
+        ],
+    );
+
+    let report = validate_repository(&repo).unwrap();
+    assert_eq!(report.violations.len(), 1);
+    assert_eq!(
+        report.violations[0].kind,
+        ValidationViolationKind::DuplicateRelationshipTriple
+    );
+    assert_eq!(report.violations[0].relationship_id, Some(r2));
+}
+
+#[test]
+fn validate_permits_deprecated_source_on_existing_relationship() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let e_dec = ElementId::from_uuid(Uuid::from_u128(7031));
+    let e_req = ElementId::from_uuid(Uuid::from_u128(7032));
+    let r1 = RelationshipId::from_uuid(Uuid::from_u128(7131));
+
+    // Decision e_dec is Deprecated, but existing relationship is valid.
+    let repo = publish_custom_state_fixture(
+        root,
+        vec![
+            (e_dec, "kat.core/design-decision", Lifecycle::Deprecated),
+            (e_req, "kat.core/requirement", Lifecycle::Active),
+        ],
+        vec![(r1, "kat.core/addresses", e_dec, e_req)],
+    );
+
+    let report = validate_repository(&repo).unwrap();
+    assert!(report.violations.is_empty());
 }
