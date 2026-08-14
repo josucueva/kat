@@ -1171,6 +1171,66 @@ pub fn persist_prepared_update_change(
     Ok(PersistedUpdateChange { prepared })
 }
 
+/// A prepared deprecate change whose immutable objects have been materialized into
+/// the ObjectStore (`Vn+1`, `Sn+1`, `Cn+1`), but which has **not** been published.
+#[derive(Debug)]
+pub struct PersistedDeprecateChange {
+    /// The prepared deprecate change whose objects were just persisted.
+    pub prepared: PreparedDeprecateChangeRevision,
+}
+
+/// Materializes a prepared, validated deprecate change's immutable objects into
+/// the ObjectStore in reference order: `Vn+1`, `Sn+1`, then `Cn+1`.
+///
+/// Leaves `refs/accepted` untouched.
+pub fn persist_prepared_deprecate_change(
+    repository: &Repository,
+    prepared: PreparedDeprecateChangeRevision,
+) -> Result<PersistedDeprecateChange, ChangeError> {
+    let store = repository.object_store();
+
+    // Vn+1
+    let v_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(prepared.deprecation.element.clone()),
+    })?;
+    let v_next_id = store.put(&v_next_bytes)?;
+    if v_next_id != prepared.deprecation.element_version_id {
+        return Err(identity_mismatch(
+            ObjectKind::KnowledgeElementVersion,
+            prepared.deprecation.element_version_id,
+            v_next_id,
+        ));
+    }
+
+    // Sn+1
+    let s_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(prepared.deprecation.candidate_state.clone()),
+    })?;
+    let s_next_id = store.put(&s_next_bytes)?;
+    if s_next_id != prepared.state_id {
+        return Err(identity_mismatch(
+            ObjectKind::SemanticState,
+            prepared.state_id,
+            s_next_id,
+        ));
+    }
+
+    // Cn+1
+    let c_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
+    })?;
+    let c_next_id = store.put(&c_next_bytes)?;
+    if c_next_id != prepared.change_revision_id {
+        return Err(identity_mismatch(
+            ObjectKind::ChangeRevision,
+            prepared.change_revision_id,
+            c_next_id,
+        ));
+    }
+
+    Ok(PersistedDeprecateChange { prepared })
+}
+
 /// A persisted update change that has been atomically published as the
 /// repository's accepted head (step 2.6).
 ///

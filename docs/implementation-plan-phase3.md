@@ -53,9 +53,8 @@ $$\text{PersistedDeprecateChange} \xrightarrow{\text{publish (CAS)}} \text{Publi
       Notes: `src/repository/change.rs` — `PreparedDeprecateChangeRevision` and `prepare_deprecate_change_revision(ValidatedElementDeprecation, ChangeId, Option<String>) -> Result<PreparedDeprecateChangeRevision, ChangeError>`. Consumes `ValidatedElementDeprecation` (pipeline typestate guard), computes candidate `SemanticState` ObjectId `state_id`, dependencies from accepted head (`accepted.change.into_iter().collect()`), constructs `ChangeRevision` with single operation `DeprecateElement { element_id, expected_version: previous_version_id, new_version: element_version_id }`, derives `change_revision_id` via encode-then-hash. Returns `PreparedDeprecateChangeRevision`. Purely preparatory: nothing persisted to `ObjectStore` and accepted ref unchanged. Re-exported in `repository/mod.rs`. 1 new unit test (`tests/change.rs`). `cargo test` 236 pass, fmt/clippy clean.
 
 ### Step 3.5 — Persist Before Publication
-- **Goal**: Implement `persist_prepared_deprecate_change(repository: &Repository, prepared: PreparedDeprecateChangeRevision) -> Result<PersistedDeprecateChange, ChangeError>`.
-- **Logic**: Encodes and puts $V_{n+1}$, $S_{n+1}$, $C_{n+1}$ into `ObjectStore` in order. Verifies content-derived ObjectIds match precomputed IDs. Leaves `refs/accepted` untouched.
-- **Return**: `PersistedDeprecateChange { prepared }`.
+- [x] **3.5 — Persist before publication.**
+      Notes: `src/repository/change.rs` — `PersistedDeprecateChange` and `persist_prepared_deprecate_change(&Repository, PreparedDeprecateChangeRevision) -> Result<PersistedDeprecateChange, ChangeError>`. Materializes immutable objects into `ObjectStore` in reference order `Vn+1 -> Sn+1 -> Cn+1` and verifies store identity matches prepared identity (`element_version_id`, `state_id`, `change_revision_id`), failing closed on mismatch. `refs/accepted` remains unchanged (no CAS/publication). Re-exported in `repository/mod.rs`. 1 new unit test (`tests/change.rs`). `cargo test` 237 pass, fmt/clippy clean.
 
 ### Step 3.6 — CAS Publication
 - **Goal**: Implement `publish_persisted_deprecate_change(repository: &Repository, persisted: PersistedDeprecateChange) -> Result<PublishedDeprecateChange, ChangeError>`.

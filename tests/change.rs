@@ -29,9 +29,10 @@ use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
     ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, PreconditionError,
     PreparedElementUpdate, UpdateElementInput, apply_create_element, apply_deprecate_element,
-    apply_update_element, persist_prepared_change, persist_prepared_update_change, prepare_change,
-    prepare_change_revision, prepare_deprecate_change_revision, prepare_update_change_revision,
-    publish_persisted_change, publish_persisted_update_change, validate_create_element_invariants,
+    apply_update_element, persist_prepared_change, persist_prepared_deprecate_change,
+    persist_prepared_update_change, prepare_change, prepare_change_revision,
+    prepare_deprecate_change_revision, prepare_update_change_revision, publish_persisted_change,
+    publish_persisted_update_change, validate_create_element_invariants,
     validate_create_element_ontology, validate_deprecate_element_invariants,
     validate_deprecate_element_ontology, validate_update_element_invariants,
     validate_update_element_ontology,
@@ -2052,6 +2053,57 @@ fn prepare_deprecate_change_revision_end_to_end_is_preparatory_only() {
     );
 
     // Purely preparatory: nothing persisted to ObjectStore or refs/accepted
+    assert_eq!(
+        repo.ref_store().read_accepted().unwrap().state,
+        setup.state_id
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Step 3.5 — persist_prepared_deprecate_change
+// ---------------------------------------------------------------------------
+
+#[test]
+fn persist_prepared_deprecate_change_materializes_objects_and_leaves_accepted_unchanged() {
+    let setup = repo_with_element(146, 246);
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let prepared = apply_deprecate_element(
+        repo,
+        context,
+        DeprecateElementInput {
+            element_id: setup.element_id,
+            expected_version: setup.version_id,
+        },
+    )
+    .unwrap();
+
+    let ontology_validated = validate_deprecate_element_ontology(prepared).unwrap();
+    let validated = validate_deprecate_element_invariants(ontology_validated).unwrap();
+    let revision = prepare_deprecate_change_revision(
+        validated,
+        ChangeId::from_uuid(Uuid::from_u128(311)),
+        None,
+    )
+    .unwrap();
+
+    let v2_id = revision.deprecation.element_version_id;
+    let s2_id = revision.state_id;
+    let c2_id = revision.change_revision_id;
+
+    let persisted = persist_prepared_deprecate_change(repo, revision).unwrap();
+
+    assert_eq!(persisted.prepared.deprecation.element_version_id, v2_id);
+    assert_eq!(persisted.prepared.state_id, s2_id);
+    assert_eq!(persisted.prepared.change_revision_id, c2_id);
+
+    // V2, S2, C2 exist in ObjectStore
+    assert!(repo.object_store().get(v2_id).is_ok());
+    assert!(repo.object_store().get(s2_id).is_ok());
+    assert!(repo.object_store().get(c2_id).is_ok());
+
+    // Accepted ref remains unchanged
     assert_eq!(
         repo.ref_store().read_accepted().unwrap().state,
         setup.state_id
