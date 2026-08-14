@@ -397,3 +397,183 @@ fn kat_create_twice_produces_linear_history() {
     let context = prepare_change(&repo).unwrap();
     assert_eq!(context.base_state.elements.len(), 2);
 }
+
+// ---------------------------------------------------------------------------
+// kat update — Phase 2 closure
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kat_update_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    // 2. kat create
+    let (create_out, create_err, ok) = run_kat(
+        root,
+        &[
+            "create",
+            "requirement",
+            "--title",
+            "Initial title",
+            "--description",
+            "Initial desc",
+        ],
+    );
+    assert!(ok, "kat create failed: {create_err}\n{create_out}");
+    let element_id = ElementId::from_str(id_line(&create_out, "element_id")).unwrap();
+    let v1_id = ObjectId::from_str(id_line(&create_out, "version_id")).unwrap();
+    let _c1_rev_id = ObjectId::from_str(id_line(&create_out, "change_revision_id")).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let v1_bytes = repo.object_store().get(v1_id).unwrap();
+
+    // 3. kat update element_id --title "Updated title"
+    let (update_out, update_err, ok) = run_kat(
+        root,
+        &[
+            "update",
+            &element_id.to_string(),
+            "--title",
+            "Updated title",
+        ],
+    );
+    assert!(ok, "kat update failed: {update_err}\n{update_out}");
+
+    let out_element_id = ElementId::from_str(id_line(&update_out, "element_id")).unwrap();
+    let out_prev_v_id = ObjectId::from_str(id_line(&update_out, "previous_version_id")).unwrap();
+    let v2_id = ObjectId::from_str(id_line(&update_out, "version_id")).unwrap();
+    let _s2_id = ObjectId::from_str(id_line(&update_out, "state_id")).unwrap();
+    let _c2_change_id = ChangeId::from_str(id_line(&update_out, "change_id")).unwrap();
+    let c2_rev_id = ObjectId::from_str(id_line(&update_out, "change_revision_id")).unwrap();
+
+    assert_eq!(out_element_id, element_id);
+    assert_eq!(out_prev_v_id, v1_id);
+    assert_ne!(v2_id, v1_id);
+
+    // 4. kat show E1 resolves V2, updated title, preserved description
+    let (show_out, show_err, ok) = run_kat(root, &["show", &element_id.to_string()]);
+    assert!(ok, "kat show failed: {show_err}");
+    assert!(show_out.contains(&format!("version_id: {v2_id}")));
+    assert!(show_out.contains("title: Updated title"));
+    assert!(show_out.contains("description: Initial desc"));
+
+    // 5. kat history shows C2 before C1 with update_element E1 V1 V2
+    let (hist_out, hist_err, ok) = run_kat(root, &["history"]);
+    assert!(ok, "kat history failed: {hist_err}");
+    assert!(hist_out.contains(&c2_rev_id.to_string()));
+    assert!(hist_out.contains(&format!("update_element {element_id} {v1_id} {v2_id}")));
+
+    // 6. V1 still exists byte-for-byte in ObjectStore
+    let reopened = open_repository(root).unwrap();
+    assert_eq!(reopened.object_store().get(v1_id).unwrap(), v1_bytes);
+}
+
+#[test]
+fn kat_update_supports_optional_description_patch() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    let (create_out, create_err, ok) = run_kat(root, &["create", "requirement", "--title", "T"]);
+    assert!(ok, "kat create failed: {create_err}\n{create_out}");
+    let element_id = ElementId::from_str(id_line(&create_out, "element_id")).unwrap();
+
+    let (update_out, update_err, ok) = run_kat(
+        root,
+        &[
+            "update",
+            &element_id.to_string(),
+            "--description",
+            "Added desc",
+        ],
+    );
+    assert!(ok, "kat update failed: {update_err}\n{update_out}");
+
+    let (show_out, show_err, ok) = run_kat(root, &["show", &element_id.to_string()]);
+    assert!(ok, "kat show failed: {show_err}");
+    assert!(show_out.contains("title: T"));
+    assert!(show_out.contains("description: Added desc"));
+}
+
+#[test]
+fn kat_update_outside_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let missing_id = ElementId::from_uuid(Uuid::from_u128(991));
+
+    let (out, err, ok) = run_kat(root, &["update", &missing_id.to_string(), "--title", "x"]);
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("no KAT repository found"));
+}
+
+#[test]
+fn kat_update_unknown_element_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    let missing_id = ElementId::from_uuid(Uuid::from_u128(992));
+    let (out, err, ok) = run_kat(root, &["update", &missing_id.to_string(), "--title", "x"]);
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("not found in the base state"));
+}
+
+#[test]
+fn kat_update_malformed_arguments_and_no_effective_change_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    let (create_out, create_err, ok) = run_kat(root, &["create", "requirement", "--title", "T"]);
+    assert!(ok, "kat create failed: {create_err}\n{create_out}");
+    let element_id = ElementId::from_str(id_line(&create_out, "element_id")).unwrap();
+
+    // Invalid element ID
+    let (_out, err, ok) = run_kat(root, &["update", "not-a-uuid", "--title", "x"]);
+    assert!(!ok);
+    assert!(err.contains("invalid element ID"));
+
+    // No property flags
+    let (_out, err, ok) = run_kat(root, &["update", &element_id.to_string()]);
+    assert!(!ok);
+    assert!(err.contains("at least one property flag"));
+
+    // Duplicate flag
+    let (_out, err, ok) = run_kat(
+        root,
+        &[
+            "update",
+            &element_id.to_string(),
+            "--title",
+            "a",
+            "--title",
+            "b",
+        ],
+    );
+    assert!(!ok);
+    assert!(err.contains("duplicate --title"));
+
+    // Unknown option
+    let (_out, err, ok) = run_kat(root, &["update", &element_id.to_string(), "--bogus", "x"]);
+    assert!(!ok);
+    assert!(err.contains("unknown option '--bogus'"));
+
+    // Missing flag value
+    let (_out, err, ok) = run_kat(root, &["update", &element_id.to_string(), "--title"]);
+    assert!(!ok);
+    assert!(err.contains("missing value for --title"));
+
+    // No effective change (updating title to the exact same value "T")
+    let (_out, err, ok) = run_kat(root, &["update", &element_id.to_string(), "--title", "T"]);
+    assert!(!ok);
+    assert!(err.contains("no effective change"));
+}

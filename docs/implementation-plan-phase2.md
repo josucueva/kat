@@ -114,16 +114,8 @@ head]` (same rule as 1.5), caller-supplied `change_id`/`description`.
       the new objects unreferenced; `result_state == state_id` guard at the
       boundary (reuses 1.7).
       Notes: `repository/change.rs` — `publish_persisted_update_change(&Repository, PersistedUpdateChange) -> Result<PublishedUpdateChange, ChangeError>`: single CAS `expected = persisted.prepared.update.context.accepted` → `new = { state: Sn+1, change: Some(Cn+1) }`, returning new head in `PublishedUpdateChange { persisted, accepted }`. Pre-CAS defensive check `prepared.change.result_state == prepared.state_id` (`ChangeError::PublicationStateMismatch`); `RefStoreError::Conflict` surfaced as domain `ChangeError::Conflict`. Pipeline typestate enforced (`PersistedUpdateChange` required). Exported `PublishedUpdateChange` and `publish_persisted_update_change` in `repository/mod.rs`. 3 new integration tests (`tests/change.rs`): publication advances head to `{S2, C2}`, zero new objects created during publication, fresh reopen + `show_element` resolves V2, V1 remains in store, CAS conflict on stale head leaves losing objects unaccepted, and tampered `result_state` rejection. `cargo test` 224 pass, fmt/clippy clean.
-- [ ] **2.7 — CLI `kat update <element-id> ...`.** Per `cli.md` sketch
-      (`kat update <element-id> --property <key>=<value> ...`), thin parse +
-      dispatch. The CLI does **not** expose `--expected-version` yet: it reads
-      the accepted state, resolves `E -> Vn`, and passes `expected_version = Vn`
-      into the engine ("update the version I just observed"); lower-level
-      callers can explicitly carry `expected_version` across longer workflows.
-      Prints the new `version_id` / `state_id` / `change_id` /
-      `change_revision_id`. (Flag shape is a CLI-layer decision; `--title` /
-      `--description` convenience flags for parity with `kat create` are a
-      possible addition.)
+- [x] **2.7 — CLI `kat update <element-id> ...`.** Thin CLI parse + dispatch (`kat update <element-id> [--title "..."] [--description "..."]`).
+      Notes: `src/main.rs` — `cmd_update`, `parse_update_args`, and `update_pipeline` parse CLI arguments, open repository, prepare change context, resolve current version $V_n$ of target element from base state, execute full engine pipeline (`apply_update_element` -> `validate_update_element_ontology` -> `validate_update_element_invariants` -> `prepare_update_change_revision` -> `persist_prepared_update_change` -> `publish_persisted_update_change`), and print stable IDs (`element_id`, `previous_version_id`, `version_id`, `state_id`, `change_id`, `change_revision_id`). Preserves unspecified properties, handles errors cleanly (`ElementNotFound`, `NoEffectiveChange`, `Conflict`, malformed CLI arguments). 5 new integration tests (`tests/cli.rs`): end-to-end update flow + ID output + `kat show` + `kat history` + $V_1$ byte immutability, optional description patch, outside repository failure, unknown element failure, malformed CLI flags / no effective change failure. `cargo test` 229 pass, fmt/clippy clean.
 - [ ] **2.8 — Verification.** `kat show E` resolves `Vn+1`; `kat history` shows
       `Cn+1` (newest first) with `UpdateElement`; `Vn` remains in the object
       store (previous state traceable, per `operations.md`).

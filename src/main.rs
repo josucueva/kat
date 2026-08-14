@@ -14,9 +14,12 @@ use kat::domain::ontology::OntologyVersion;
 use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
 use kat::repository::change::{
-    ChangeContext, ChangeError, CreateElementInput, PublishedChange, apply_create_element,
-    persist_prepared_change, prepare_change, prepare_change_revision, publish_persisted_change,
+    ChangeContext, ChangeError, CreateElementInput, PublishedChange, PublishedUpdateChange,
+    UpdateElementInput, apply_create_element, apply_update_element, persist_prepared_change,
+    persist_prepared_update_change, prepare_change, prepare_change_revision,
+    prepare_update_change_revision, publish_persisted_change, publish_persisted_update_change,
     validate_create_element_invariants, validate_create_element_ontology,
+    validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -27,19 +30,20 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("init") => cmd_init(),
         Some("create") => cmd_create(&args[1..]),
+        Some("update") => cmd_update(&args[1..]),
         Some("show") => cmd_show(&args[1..]),
         Some("history") => cmd_history(&args[1..]),
         Some(other) => {
             eprintln!("kat: unknown command '{other}'");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat show <element-id> | kat history"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat show <element-id> | kat history"
             );
             ExitCode::FAILURE
         }
         None => {
             eprintln!("kat: missing command");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat show <element-id> | kat history"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat show <element-id> | kat history"
             );
             ExitCode::FAILURE
         }
@@ -230,6 +234,161 @@ fn create_pipeline(
     let revision = prepare_change_revision(validated, ChangeId::new(), None)?;
     let persisted = persist_prepared_change(repository, revision)?;
     publish_persisted_change(repository, persisted)
+}
+
+/// Parsed `kat update` arguments.
+struct UpdateArgs {
+    element_id: ElementId,
+    title: Option<String>,
+    description: Option<String>,
+}
+
+/// Parses `kat update <element-id> [--title "..."] [--description "..."]`.
+fn parse_update_args(args: &[String]) -> Result<UpdateArgs, String> {
+    let (element_id_arg, rest) = args.split_first().ok_or_else(|| {
+        "expected <element-id> [--title \"...\"] [--description \"...\"]".to_string()
+    })?;
+    let element_id = ElementId::from_str(element_id_arg)
+        .map_err(|_| format!("invalid element ID: {element_id_arg}"))?;
+
+    let mut title: Option<String> = None;
+    let mut description: Option<String> = None;
+    let mut i = 0;
+    while i < rest.len() {
+        let flag = rest[i].as_str();
+        let value = rest
+            .get(i + 1)
+            .ok_or_else(|| format!("missing value for {flag}"))?;
+        match flag {
+            "--title" => {
+                if title.is_some() {
+                    return Err("duplicate --title".to_string());
+                }
+                title = Some(value.clone());
+            }
+            "--description" => {
+                if description.is_some() {
+                    return Err("duplicate --description".to_string());
+                }
+                description = Some(value.clone());
+            }
+            other => return Err(format!("unknown option '{other}'")),
+        }
+        i += 2;
+    }
+
+    if title.is_none() && description.is_none() {
+        return Err(
+            "at least one property flag (--title, --description) must be supplied".to_string(),
+        );
+    }
+
+    Ok(UpdateArgs {
+        element_id,
+        title,
+        description,
+    })
+}
+
+/// `kat update <element-id> [--title "..."] [--description "..."]` — run an
+/// `UpdateElement` change end to end through the Change Engine and publish it
+/// (thin dispatch; all semantics live in the library).
+fn cmd_update(args: &[String]) -> ExitCode {
+    let parsed = match parse_update_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("kat update: {message}");
+            eprintln!("usage: kat update <element-id> [--title \"...\"] [--description \"...\"]");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat update: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let context = match prepare_change(&repository) {
+        Ok(context) => context,
+        Err(error) => return fail_update(error),
+    };
+
+    let previous_version_id = match context
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == parsed.element_id)
+    {
+        Some(entry) => entry.version,
+        None => {
+            eprintln!(
+                "kat update: element {} not found in the base state",
+                parsed.element_id
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let published = match update_pipeline(&repository, context, previous_version_id, &parsed) {
+        Ok(published) => published,
+        Err(error) => return fail_update(error),
+    };
+
+    let prepared = &published.persisted.prepared;
+    println!("element_id: {}", prepared.update.element.element_id);
+    println!(
+        "previous_version_id: {}",
+        prepared.update.previous_version_id
+    );
+    println!("version_id: {}", prepared.update.element_version_id);
+    println!("state_id: {}", prepared.state_id);
+    println!("change_id: {}", prepared.change.change_id);
+    println!("change_revision_id: {}", prepared.change_revision_id);
+    ExitCode::SUCCESS
+}
+
+fn fail_update(error: ChangeError) -> ExitCode {
+    match error {
+        ChangeError::Conflict => {
+            eprintln!(
+                "kat update: the accepted repository state changed while updating; nothing was published. Re-run kat update."
+            );
+        }
+        other => eprintln!("kat update: {other}"),
+    }
+    ExitCode::FAILURE
+}
+
+fn update_pipeline(
+    repository: &Repository,
+    context: ChangeContext,
+    expected_version: ObjectId,
+    parsed: &UpdateArgs,
+) -> Result<PublishedUpdateChange, ChangeError> {
+    let mut properties = Vec::new();
+    if let Some(title) = &parsed.title {
+        properties.push(("title".to_string(), PropertyValue::Text(title.clone())));
+    }
+    if let Some(description) = &parsed.description {
+        properties.push((
+            "description".to_string(),
+            PropertyValue::Text(description.clone()),
+        ));
+    }
+    let input = UpdateElementInput {
+        element_id: parsed.element_id,
+        expected_version,
+        properties,
+    };
+    let prepared = apply_update_element(repository, context, input)?;
+    let validated = validate_update_element_ontology(prepared)?;
+    let validated = validate_update_element_invariants(validated)?;
+    let revision = prepare_update_change_revision(validated, ChangeId::new(), None)?;
+    let persisted = persist_prepared_update_change(repository, revision)?;
+    publish_persisted_update_change(repository, persisted)
 }
 
 /// `kat show <element-id>` — display the currently accepted version of an
