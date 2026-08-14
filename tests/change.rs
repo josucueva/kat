@@ -32,12 +32,12 @@ use kat::repository::change::{
     apply_deprecate_element, apply_supersede_element, apply_update_element,
     persist_prepared_change, persist_prepared_deprecate_change, persist_prepared_update_change,
     prepare_change, prepare_change_revision, prepare_deprecate_change_revision,
-    prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
-    publish_persisted_update_change, validate_create_element_invariants,
-    validate_create_element_ontology, validate_deprecate_element_invariants,
-    validate_deprecate_element_ontology, validate_supersede_element_invariants,
-    validate_supersede_element_ontology, validate_update_element_invariants,
-    validate_update_element_ontology,
+    prepare_supersede_change_revision, prepare_update_change_revision, publish_persisted_change,
+    publish_persisted_deprecate_change, publish_persisted_update_change,
+    validate_create_element_invariants, validate_create_element_ontology,
+    validate_deprecate_element_invariants, validate_deprecate_element_ontology,
+    validate_supersede_element_invariants, validate_supersede_element_ontology,
+    validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -2778,4 +2778,142 @@ fn supersede_invariants_tampering_checks() {
         validate_supersede_element_invariants(prepared).unwrap_err(),
         ChangeError::Invariant(InvariantError::OntologyVersionChanged)
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Step 4.4 — prepare_supersede_change_revision
+// ---------------------------------------------------------------------------
+
+#[test]
+fn prepare_supersede_change_revision_end_to_end_is_preparatory_only() {
+    let setup = repo_with_typed_element(410, 510, "kat.core/design-decision");
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(980));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(981));
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(982));
+
+    let prepared = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/design-decision".into(),
+            replacement_properties: vec![(
+                "title".into(),
+                PropertyValue::Text("Replacement Decision".into()),
+            )],
+            relationship_id,
+        },
+    )
+    .unwrap();
+
+    let ontology_validated = validate_supersede_element_ontology(prepared).unwrap();
+    let validated = validate_supersede_element_invariants(ontology_validated).unwrap();
+
+    let expected_state_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(validated.prepared().candidate_state.clone()),
+    })
+    .unwrap();
+
+    let revision = prepare_supersede_change_revision(
+        validated,
+        change_id,
+        Some("Superseding decision 410".into()),
+    )
+    .unwrap();
+
+    // Verify fields
+    assert_eq!(revision.state_id, expected_state_id);
+    assert_eq!(revision.change.change_id, change_id);
+    assert_eq!(revision.change.base_states, vec![setup.state_id]);
+    assert_eq!(revision.change.result_state, expected_state_id);
+    assert_eq!(
+        revision.change.description,
+        Some("Superseding decision 410".into())
+    );
+
+    // Dependencies match current accepted change head
+    let accepted = repo.ref_store().read_accepted().unwrap();
+    assert_eq!(
+        revision.change.dependencies,
+        accepted.change.into_iter().collect::<Vec<_>>()
+    );
+
+    // Single Operation::Supersede
+    assert_eq!(revision.change.operations.len(), 1);
+    match &revision.change.operations[0] {
+        kat::domain::operation::Operation::Supersede {
+            existing_element,
+            expected_existing_version,
+            replacement_element,
+            replacement_version,
+            superseding_relationship,
+        } => {
+            assert_eq!(*existing_element, setup.element_id);
+            assert_eq!(*expected_existing_version, setup.version_id);
+            assert_eq!(*replacement_element, replacement_id);
+            assert_eq!(
+                *replacement_version,
+                revision.supersede.replacement_version_id
+            );
+            assert_eq!(
+                *superseding_relationship,
+                revision.supersede.relationship_version_id
+            );
+        }
+        _ => panic!("expected Operation::Supersede"),
+    }
+
+    // ChangeRevision ID matches canonical hash
+    let derived_change_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(revision.change.clone()),
+    })
+    .unwrap();
+    assert_eq!(revision.change_revision_id, derived_change_id);
+
+    // Purely preparatory: ObjectStore and accepted ref untouched
+    assert_eq!(
+        repo.ref_store().read_accepted().unwrap().state,
+        setup.state_id
+    );
+    assert!(
+        repo.object_store()
+            .get(revision.change_revision_id)
+            .is_err()
+    );
+}
+
+#[test]
+fn prepare_supersede_change_revision_preserves_none_description() {
+    let setup = repo_with_typed_element(411, 511, "kat.core/design-decision");
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(983));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(984));
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(985));
+
+    let prepared = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/design-decision".into(),
+            replacement_properties: vec![],
+            relationship_id,
+        },
+    )
+    .unwrap();
+
+    let ontology_validated = validate_supersede_element_ontology(prepared).unwrap();
+    let validated = validate_supersede_element_invariants(ontology_validated).unwrap();
+    let revision = prepare_supersede_change_revision(validated, change_id, None).unwrap();
+
+    assert_eq!(revision.change.description, None);
 }

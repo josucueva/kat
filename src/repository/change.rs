@@ -1306,6 +1306,68 @@ pub fn prepare_deprecate_change_revision(
     })
 }
 
+/// A logically-prepared Supersede ChangeRevision: the derived candidate-state
+/// ObjectId, the full `ChangeRevision`, and its content identity.
+///
+/// Still purely preparatory: candidate object IDs are known but **no object
+/// is persisted** and the accepted ref is unchanged.
+#[derive(Debug)]
+pub struct PreparedSupersedeChangeRevision {
+    /// The prepared element supersession this change wraps.
+    pub supersede: PreparedElementSuperseded,
+    /// ObjectId of the candidate SemanticState (`Sn+1`).
+    pub state_id: ObjectId,
+    /// The ChangeRevision (`Cn+1`).
+    pub change: ChangeRevision,
+    /// ObjectId of `change`.
+    pub change_revision_id: ObjectId,
+}
+
+/// Constructs the `ChangeRevision` for a validated `SupersedeElement`, deriving
+/// all content identities. Step 4.4 remains **purely preparatory**.
+pub fn prepare_supersede_change_revision(
+    validated: ValidatedElementSuperseded,
+    change_id: ChangeId,
+    description: Option<String>,
+) -> Result<PreparedSupersedeChangeRevision, ChangeError> {
+    let supersede = validated.prepared;
+
+    // Sn+1 ObjectId derived from the candidate state's canonical bytes.
+    let state_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(supersede.candidate_state.clone()),
+    })?;
+
+    // Dependencies = the accepted Change head.
+    let dependencies: Vec<ObjectId> = supersede.context.accepted.change.into_iter().collect();
+
+    let change = ChangeRevision {
+        change_id,
+        base_states: vec![supersede.context.base_state_id],
+        result_state: state_id,
+        operations: vec![Operation::Supersede {
+            existing_element: supersede.existing_element_id,
+            expected_existing_version: supersede.previous_existing_version_id,
+            replacement_element: supersede.replacement_element_id,
+            replacement_version: supersede.replacement_version_id,
+            superseding_relationship: supersede.relationship_version_id,
+        }],
+        dependencies,
+        description,
+    };
+
+    // Cn+1 ObjectId derived from the ChangeRevision's canonical bytes.
+    let change_revision_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(change.clone()),
+    })?;
+
+    Ok(PreparedSupersedeChangeRevision {
+        supersede,
+        state_id,
+        change,
+        change_revision_id,
+    })
+}
+
 /// A prepared change whose immutable objects have been materialized into the
 /// ObjectStore (V1, S1, C1), but which has **not** been published.
 ///
