@@ -14,10 +14,11 @@ pub mod validation;
 pub use change::{
     ChangeContext, ChangeError, CreateElementInput, PersistedChange, PersistedUpdateChange,
     PreconditionError, PreparedChangeRevision, PreparedElementCreation, PreparedElementUpdate,
-    PreparedUpdateChangeRevision, PublishedChange, UpdateElementInput, ValidatedElementCreation,
-    ValidatedElementUpdate, apply_create_element, apply_update_element, persist_prepared_change,
-    persist_prepared_update_change, prepare_change, prepare_change_revision,
-    prepare_update_change_revision, publish_persisted_change, validate_create_element_invariants,
+    PreparedUpdateChangeRevision, PublishedChange, PublishedUpdateChange, UpdateElementInput,
+    ValidatedElementCreation, ValidatedElementUpdate, apply_create_element, apply_update_element,
+    persist_prepared_change, persist_prepared_update_change, prepare_change,
+    prepare_change_revision, prepare_update_change_revision, publish_persisted_change,
+    publish_persisted_update_change, validate_create_element_invariants,
     validate_create_element_ontology, validate_update_element_invariants,
     validate_update_element_ontology,
 };

@@ -943,6 +943,86 @@ pub fn persist_prepared_update_change(
     Ok(PersistedUpdateChange { prepared })
 }
 
+/// A persisted update change that has been atomically published as the
+/// repository's accepted head (step 2.6).
+///
+/// Publication only moves `refs/accepted`; the immutable objects were already
+/// materialized by persistence (step 2.5). `accepted` is the new head
+/// `{ state: Sn+1, change: Some(Cn+1) }`, with `Cn+1.result_state == Sn+1`.
+#[derive(Debug)]
+pub struct PublishedUpdateChange {
+    /// The persisted update change that was just published.
+    pub persisted: PersistedUpdateChange,
+    /// The new accepted repository head (`state: Sn+1`, `change: Some(Cn+1)`).
+    pub accepted: AcceptedRef,
+}
+
+/// Publishes an already-persisted update change by atomically advancing the
+/// accepted State and Change head — **and only if** the repository is still at
+/// the accepted ref the change was prepared against.
+///
+/// The core is a single compare-and-swap:
+///
+/// ```text
+/// expected = persisted.prepared.update.context.accepted
+/// new      = { state: Sn+1, change: Some(Cn+1) }
+/// compare_and_swap_accepted(expected, new)
+/// ```
+///
+/// All semantic preparation, validation, encoding, hashing, and persistence
+/// already happened before this step, so publication is intentionally trivial.
+/// The API requires a [`PersistedUpdateChange`] — a raw `PreparedUpdateChangeRevision`
+/// cannot reach it, so a change cannot be published before its immutable
+/// objects exist in the ObjectStore (a compile-time pipeline guarantee).
+///
+/// Before the CAS, the publication-boundary invariant
+/// `prepared.change.result_state == prepared.state_id` is verified fail-fast
+/// (construction in 2.4 already guarantees it; this is a defensive check at
+/// the point where the Change becomes authoritative).
+///
+/// On a CAS conflict the accepted ref is left as the concurrent winner and
+/// this change's objects remain stored but unreferenced — that is the intended
+/// concurrency outcome, not corruption, and nothing is rolled back.
+pub fn publish_persisted_update_change(
+    repository: &Repository,
+    persisted: PersistedUpdateChange,
+) -> Result<PublishedUpdateChange, ChangeError> {
+    let prepared = &persisted.prepared;
+
+    // Critical publication-boundary invariant: the ChangeRevision's result
+    // state must be exactly the prepared SemanticState Sn+1. Construction (2.4)
+    // and persistence (2.5) guarantee this by construction; this cheap check
+    // runs at the point where the repository is about to make the Change
+    // authoritative.
+    if prepared.change.result_state != prepared.state_id {
+        return Err(ChangeError::PublicationStateMismatch {
+            expected: prepared.state_id,
+            actual: prepared.change.result_state,
+        });
+    }
+
+    // expected: the accepted ref the update was prepared against.
+    // new: Sn+1 + Cn+1, built from the prepared identities, so by construction
+    // new.state == Cn+1.result_state and new.change == Cn+1 ObjectId.
+    let expected = &prepared.update.context.accepted;
+    let new = AcceptedRef {
+        state: prepared.state_id,
+        change: Some(prepared.change_revision_id),
+    };
+
+    match repository
+        .ref_store()
+        .compare_and_swap_accepted(expected, &new)
+    {
+        Ok(()) => Ok(PublishedUpdateChange {
+            persisted,
+            accepted: new,
+        }),
+        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
+        Err(e) => Err(ChangeError::RefStore(e)),
+    }
+}
+
 /// A persisted change that has been atomically published as the repository's
 /// accepted head (step 1.7).
 ///

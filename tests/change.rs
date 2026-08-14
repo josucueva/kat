@@ -30,9 +30,9 @@ use kat::repository::change::{
     ChangeContext, ChangeError, CreateElementInput, PreconditionError, PreparedElementUpdate,
     UpdateElementInput, apply_create_element, apply_update_element, persist_prepared_change,
     persist_prepared_update_change, prepare_change, prepare_change_revision,
-    prepare_update_change_revision, publish_persisted_change, validate_create_element_invariants,
-    validate_create_element_ontology, validate_update_element_invariants,
-    validate_update_element_ontology,
+    prepare_update_change_revision, publish_persisted_change, publish_persisted_update_change,
+    validate_create_element_invariants, validate_create_element_ontology,
+    validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -1716,4 +1716,144 @@ fn persist_prepared_update_change_is_idempotent() {
     assert_eq!(second.prepared.update.element_version_id, expected_v2_id);
     assert_eq!(second.prepared.state_id, expected_s2_id);
     assert_eq!(second.prepared.change_revision_id, expected_c2_id);
+}
+
+#[test]
+fn publish_persisted_update_change_advances_accepted_head_and_survives_reopen() {
+    let setup = repo_with_element(133, 233);
+    let repo = &setup.repo;
+    let v1_bytes_before = repo.object_store().get(setup.version_id).unwrap();
+
+    let prepared = valid_update(&setup);
+    let validated =
+        validate_update_element_invariants(validate_update_element_ontology(prepared).unwrap())
+            .unwrap();
+    let change_id_2 = ChangeId::from_uuid(Uuid::from_u128(306));
+    let revision =
+        prepare_update_change_revision(validated, change_id_2, Some("update title".into()))
+            .unwrap();
+
+    let expected_v2_id = revision.update.element_version_id;
+    let expected_s2_id = revision.state_id;
+    let expected_c2_id = revision.change_revision_id;
+
+    let persisted = persist_prepared_update_change(repo, revision).unwrap();
+    let objects_after_persist = object_ids(&setup.root);
+
+    let published = publish_persisted_update_change(repo, persisted).unwrap();
+
+    // Accepted ref updated to { S2, C2 }
+    assert_eq!(published.accepted.state, expected_s2_id);
+    assert_eq!(published.accepted.change, Some(expected_c2_id));
+
+    // Publication creates NO additional objects
+    assert_eq!(object_ids(&setup.root), objects_after_persist);
+
+    // V1 still exists byte-for-byte unchanged in store
+    assert_eq!(
+        repo.object_store().get(setup.version_id).unwrap(),
+        v1_bytes_before
+    );
+
+    // Fresh reopen resolves to V2
+    let reopened = open_repository(&setup.root).unwrap();
+    assert_eq!(reopened.accepted.state, expected_s2_id);
+    assert_eq!(reopened.accepted.change, Some(expected_c2_id));
+
+    let view = kat::repository::show_element(&reopened, setup.element_id).unwrap();
+    assert_eq!(view.version_id, expected_v2_id);
+    assert_eq!(
+        view.element.properties,
+        vec![
+            ("title".into(), PropertyValue::Text("B".into())),
+            ("priority".into(), PropertyValue::Text("medium".into())),
+        ]
+    );
+}
+
+#[test]
+fn publish_update_conflicts_when_accepted_ref_moved_since_preparation() {
+    let setup = repo_with_element(134, 234);
+    let repo = &setup.repo;
+
+    // Writer A and Writer B both prepare from head { S1, C1 }
+    let prep_a = valid_update(&setup);
+    let val_a =
+        validate_update_element_invariants(validate_update_element_ontology(prep_a).unwrap())
+            .unwrap();
+    let rev_a = prepare_update_change_revision(
+        val_a,
+        ChangeId::from_uuid(Uuid::from_u128(307)),
+        Some("update A".into()),
+    )
+    .unwrap();
+    let pers_a = persist_prepared_update_change(repo, rev_a).unwrap();
+
+    let prep_b = prepare_update(
+        repo,
+        setup.element_id,
+        setup.version_id,
+        vec![("priority", PropertyValue::Text("high".into()))],
+    )
+    .unwrap();
+    let val_b =
+        validate_update_element_invariants(validate_update_element_ontology(prep_b).unwrap())
+            .unwrap();
+    let rev_b = prepare_update_change_revision(
+        val_b,
+        ChangeId::from_uuid(Uuid::from_u128(308)),
+        Some("update B".into()),
+    )
+    .unwrap();
+    let b_v2_id = rev_b.update.element_version_id;
+    let b_s2_id = rev_b.state_id;
+    let b_c2_id = rev_b.change_revision_id;
+    let pers_b = persist_prepared_update_change(repo, rev_b).unwrap();
+
+    // Writer A publishes: { S1, C1 } -> { S2A, C2A } succeeds
+    let pub_a = publish_persisted_update_change(repo, pers_a).unwrap();
+    assert_eq!(pub_a.accepted.state, pub_a.persisted.prepared.state_id);
+
+    // Writer B publishes with expected { S1, C1 }: CAS fails with Conflict
+    let err = publish_persisted_update_change(repo, pers_b).unwrap_err();
+    assert!(matches!(err, ChangeError::Conflict));
+
+    // Accepted head remains Writer A's winner
+    assert_eq!(repo.ref_store().read_accepted().unwrap(), pub_a.accepted);
+
+    // Writer B's objects remain stored in ObjectStore but unreferenced by head
+    let objects = object_ids(&setup.root);
+    assert!(objects.contains(&b_v2_id.to_string()));
+    assert!(objects.contains(&b_s2_id.to_string()));
+    assert!(objects.contains(&b_c2_id.to_string()));
+}
+
+#[test]
+fn publish_update_rejects_internally_inconsistent_prepared_change() {
+    let setup = repo_with_element(135, 235);
+    let repo = &setup.repo;
+
+    let prepared = valid_update(&setup);
+    let validated =
+        validate_update_element_invariants(validate_update_element_ontology(prepared).unwrap())
+            .unwrap();
+    let revision =
+        prepare_update_change_revision(validated, ChangeId::from_uuid(Uuid::from_u128(309)), None)
+            .unwrap();
+
+    let mut persisted = persist_prepared_update_change(repo, revision).unwrap();
+
+    // Tamper with result_state before publication
+    let mut tampered = persisted.prepared.change.clone();
+    tampered.result_state = object_id(0xFF);
+    persisted.prepared.change = tampered;
+
+    let err = publish_persisted_update_change(repo, persisted).unwrap_err();
+    assert!(matches!(err, ChangeError::PublicationStateMismatch { .. }));
+
+    // Accepted ref unchanged
+    assert_eq!(
+        repo.ref_store().read_accepted().unwrap().state,
+        setup.state_id
+    );
 }
