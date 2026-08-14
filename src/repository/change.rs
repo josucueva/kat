@@ -720,6 +720,82 @@ pub fn prepare_change_revision(
     })
 }
 
+/// A logically-prepared Update ChangeRevision: the derived candidate-state
+/// ObjectId, the full `ChangeRevision`, and its content identity.
+///
+/// Still purely preparatory: Vn+1/Sn+1/Cn+1 ObjectIds are known but **no object
+/// is persisted** and the accepted ref is unchanged.
+#[derive(Debug)]
+pub struct PreparedUpdateChangeRevision {
+    /// The prepared element update this change wraps.
+    pub update: PreparedElementUpdate,
+    /// ObjectId of the candidate SemanticState (`Sn+1`), derived from its
+    /// canonical bytes.
+    pub state_id: ObjectId,
+    /// The ChangeRevision (`Cn+1`).
+    pub change: ChangeRevision,
+    /// ObjectId of `change`, derived from its canonical bytes.
+    pub change_revision_id: ObjectId,
+}
+
+/// Constructs the `ChangeRevision` for a validated `UpdateElement`, deriving
+/// all content identities. Step 2.4 remains **purely preparatory**: it
+/// computes `Sn+1` and `Cn+1` ObjectIds but persists and publishes nothing.
+///
+/// `change_id` and `description` are supplied by the caller (application/CLI
+/// layer); the engine stays deterministic. `dependencies` is the accepted
+/// Change head (`context.accepted.change`), recording causal ancestry without
+/// hardcoding "first Change" semantics:
+///
+/// ```text
+/// accepted.change == none      -> dependencies == []
+/// accepted.change == Some(Cn)  -> dependencies == [Cn]
+/// ```
+///
+/// `result_state` and `change_revision_id` are derived here (encode-then-hash),
+/// which also exercises canonical structural validation.
+pub fn prepare_update_change_revision(
+    validated: ValidatedElementUpdate,
+    change_id: ChangeId,
+    description: Option<String>,
+) -> Result<PreparedUpdateChangeRevision, ChangeError> {
+    let update = validated.prepared;
+
+    // Sn+1 ObjectId derived from the candidate state's canonical bytes.
+    let state_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(update.candidate_state.clone()),
+    })?;
+
+    // Dependencies = the accepted Change head (canonically ordered; at most
+    // one at this linear stage).
+    let dependencies: Vec<ObjectId> = update.context.accepted.change.into_iter().collect();
+
+    let change = ChangeRevision {
+        change_id,
+        base_states: vec![update.context.base_state_id],
+        result_state: state_id,
+        operations: vec![Operation::UpdateElement {
+            element_id: update.element.element_id,
+            expected_version: update.previous_version_id,
+            new_version: update.element_version_id,
+        }],
+        dependencies,
+        description,
+    };
+
+    // Cn+1 ObjectId derived from the ChangeRevision's canonical bytes.
+    let change_revision_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(change.clone()),
+    })?;
+
+    Ok(PreparedUpdateChangeRevision {
+        update,
+        state_id,
+        change,
+        change_revision_id,
+    })
+}
+
 /// A prepared change whose immutable objects have been materialized into the
 /// ObjectStore (V1, S1, C1), but which has **not** been published.
 ///

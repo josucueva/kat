@@ -29,8 +29,8 @@ use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
     ChangeContext, ChangeError, CreateElementInput, PreconditionError, PreparedElementUpdate,
     UpdateElementInput, apply_create_element, apply_update_element, persist_prepared_change,
-    prepare_change, prepare_change_revision, publish_persisted_change,
-    validate_create_element_invariants, validate_create_element_ontology,
+    prepare_change, prepare_change_revision, prepare_update_change_revision,
+    publish_persisted_change, validate_create_element_invariants, validate_create_element_ontology,
     validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
@@ -1478,4 +1478,110 @@ fn update_invariants_no_side_effects() {
 
     assert_eq!(object_ids(&setup.root), objects_before);
     assert_eq!(repo.ref_store().read_accepted().unwrap(), accepted_before);
+}
+
+#[test]
+fn prepare_update_change_revision_end_to_end_is_preparatory_only() {
+    let setup = repo_with_element(127, 227);
+    let objects_before = object_ids(&setup.root);
+    let refs_before =
+        fs::read_to_string(kat_dir(&setup.root).join("refs").join("accepted")).unwrap();
+
+    let prepared = valid_update(&setup);
+    let validated =
+        validate_update_element_invariants(validate_update_element_ontology(prepared).unwrap())
+            .unwrap();
+
+    let change_id_2 = ChangeId::from_uuid(Uuid::from_u128(300));
+    let revision =
+        prepare_update_change_revision(validated, change_id_2, Some("update title".into()))
+            .unwrap();
+
+    // base_states == [S1]; dependencies == [C1] (accepted.change head from C1).
+    assert_eq!(revision.change.base_states, vec![setup.state_id]);
+    assert_eq!(
+        revision.change.dependencies,
+        vec![setup.repo.accepted.change.unwrap()]
+    );
+    assert_eq!(revision.change.change_id, change_id_2);
+    assert_eq!(revision.change.description.as_deref(), Some("update title"));
+
+    // Operations: exactly one UpdateElement.
+    assert_eq!(revision.change.operations.len(), 1);
+    match &revision.change.operations[0] {
+        kat::domain::operation::Operation::UpdateElement {
+            element_id,
+            expected_version,
+            new_version,
+        } => {
+            assert_eq!(*element_id, setup.element_id);
+            assert_eq!(*expected_version, setup.version_id);
+            assert_eq!(*expected_version, revision.update.previous_version_id);
+            assert_eq!(*new_version, revision.update.element_version_id);
+            assert_ne!(*new_version, setup.version_id);
+        }
+        other => panic!("expected UpdateElement operation, got {:?}", other),
+    }
+
+    // result_state == S2 ObjectId == canonical id of candidate state.
+    let expected_state_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(revision.update.candidate_state.clone()),
+    })
+    .unwrap();
+    assert_eq!(revision.state_id, expected_state_id);
+    assert_eq!(revision.change.result_state, revision.state_id);
+
+    // change_revision_id == canonical id of the ChangeRevision.
+    let expected_change_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(revision.change.clone()),
+    })
+    .unwrap();
+    assert_eq!(revision.change_revision_id, expected_change_id);
+
+    // Still purely preparatory: V2/S2/C2 not persisted; accepted ref unchanged.
+    assert_eq!(object_ids(&setup.root), objects_before);
+    assert_eq!(
+        fs::read_to_string(kat_dir(&setup.root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
+}
+
+#[test]
+fn prepare_update_change_revision_preserves_none_description() {
+    let setup = repo_with_element(128, 228);
+    let prepared = valid_update(&setup);
+    let validated =
+        validate_update_element_invariants(validate_update_element_ontology(prepared).unwrap())
+            .unwrap();
+
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(301));
+    let revision = prepare_update_change_revision(validated, change_id, None).unwrap();
+
+    assert_eq!(revision.change.description, None);
+}
+
+#[test]
+fn prepare_update_change_revision_with_no_accepted_change_head() {
+    let setup = repo_with_element(129, 229);
+    // Force repository head to have change = None via adopt_state
+    let repo_no_change_head = adopt_state(&setup.root, setup.state_id);
+
+    let prepared = prepare_update(
+        &repo_no_change_head,
+        setup.element_id,
+        setup.version_id,
+        vec![("title", PropertyValue::Text("Updated title".into()))],
+    )
+    .unwrap();
+
+    let validated =
+        validate_update_element_invariants(validate_update_element_ontology(prepared).unwrap())
+            .unwrap();
+
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(302));
+    let revision = prepare_update_change_revision(validated, change_id, None).unwrap();
+
+    // When accepted.change is None, dependencies is empty [].
+    assert_eq!(revision.change.dependencies, vec![]);
+    assert_eq!(revision.change.base_states, vec![setup.state_id]);
 }
