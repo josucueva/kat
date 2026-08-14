@@ -65,8 +65,8 @@ $$\text{PersistedDeprecateChange} \xrightarrow{\text{publish (CAS)}} \text{Publi
       Notes: `src/main.rs` (`cmd_deprecate`, `parse_deprecate_args`, `deprecate_pipeline`, `fail_deprecate`) thin CLI adapter over engine deprecation pipeline. Resolves $E \to V_n$ from current accepted state, runs deprecate pipeline, prints stable IDs (`element_id`, `previous_version_id`, `version_id`, `state_id`, `change_id`, `change_revision_id`). 4 CLI end-to-end integration tests (`tests/cli.rs`). `cargo test` 242 pass, fmt/clippy clean. Error Handling: `ElementNotFound`, `ElementNotActive`, `Conflict`, malformed CLI arguments.
 
 ### Step 3.8 — Acceptance Verification & Phase 3 Closure
-- **Goal**: Add `phase3_acceptance_cli_flow_end_to_end` in `tests/cli.rs`.
-- **Verification**: `kat init` -> `kat create requirement --title "A"` -> `kat deprecate <E1>` -> fresh process reopen -> verify accepted head $\{S_2, C_2\}$, $C_2.operations == [DeprecateElement(E1, V1, V2)]$, `kat show E1` resolves $V_2$ (`lifecycle: deprecated`), `kat history` lists $C_2 \to C_1$, $V_1$ byte immutability in `ObjectStore`.
+- [x] **3.8 — Acceptance verification & Phase 3 closure.**
+      Notes: Added `phase3_acceptance_cli_flow_end_to_end` in `tests/cli.rs`. Verified complete flow: `kat init` -> `kat create` ($V_{1,A}, S_1, C_1$) -> `kat deprecate` ($V_{1,B}, S_2, C_2$) -> fresh process reopen -> `accepted` ref $\{S_2, C_2\}$ -> `kat show` resolves $V_{1,B}$ with `lifecycle: deprecated` -> `kat history` lists $C_2 \to C_1$ -> $V_{1,A}$ byte-for-byte immutability in `ObjectStore` verified -> subsequent updates/deprecations on deprecated element rejected with `ElementNotActive`. All 243 unit and integration tests passing. `cargo test`, `cargo fmt --check`, and `cargo clippy --all-targets -- -D warnings` clean. **Phase 3 Frozen.**
 
 ---
 
