@@ -29,7 +29,8 @@ use crate::encoding::canonical_object_id;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload};
 use crate::encoding::validate::{CanonicalStructureError, CanonicalValidate};
 use crate::repository::change::{
-    PreparedElementCreation, PreparedElementDeprecation, PreparedElementUpdate,
+    PreparedElementCreation, PreparedElementDeprecation, PreparedElementSuperseded,
+    PreparedElementUpdate,
 };
 
 /// Error reported when a candidate semantic change violates an invariant.
@@ -107,6 +108,64 @@ pub enum InvariantError {
     /// The candidate state does not map the deprecated element to its new version.
     #[error("candidate state does not reference the deprecated element version")]
     DeprecationCandidateReferenceMismatch,
+    /// Superseding changed the existing element's properties.
+    #[error("superseding changed the existing element properties")]
+    SupersedePropertiesChanged,
+    /// The superseding lifecycle transition for E1 is invalid (previous must be Active, new must be Superseded).
+    #[error(
+        "superseding lifecycle transition for E1 is invalid (previous must be Active, new must be Superseded)"
+    )]
+    SupersedeLifecycleInvalid,
+    /// The replacement element identity does not match prepared identity.
+    #[error("replacement element identity does not match prepared identity")]
+    SupersedeReplacementIdentityMismatch,
+    /// The replacement element is not in the Active lifecycle.
+    #[error("replacement element is not in the Active lifecycle")]
+    SupersedeReplacementNotActive,
+    /// The replacement element version content identity mismatch.
+    #[error(
+        "replacement element version content identity mismatch: expected {expected}, actual {actual}"
+    )]
+    SupersedeReplacementVersionIdentityMismatch {
+        /// Re-derived ObjectId.
+        expected: ObjectId,
+        /// Prepared ObjectId.
+        actual: ObjectId,
+    },
+    /// The replacement element ID equals the superseded element ID.
+    #[error("replacement element ID equals the superseded element ID")]
+    SupersedeReplacementAliased,
+    /// The superseding relationship identity does not match prepared identity.
+    #[error("superseding relationship identity does not match prepared identity")]
+    SupersedeRelationshipIdentityMismatch,
+    /// The superseding relationship type is invalid.
+    #[error("superseding relationship type is invalid (must be kat.core/supersedes)")]
+    SupersedeRelationshipTypeInvalid,
+    /// The superseding relationship source element ID does not match replacement element ID.
+    #[error("superseding relationship source element ID does not match replacement element ID")]
+    SupersedeRelationshipSourceMismatch,
+    /// The superseding relationship target element ID does not match existing element ID.
+    #[error("superseding relationship target element ID does not match existing element ID")]
+    SupersedeRelationshipTargetMismatch,
+    /// The superseding relationship version content identity mismatch.
+    #[error(
+        "superseding relationship version content identity mismatch: expected {expected}, actual {actual}"
+    )]
+    SupersedeRelationshipVersionIdentityMismatch {
+        /// Re-derived ObjectId.
+        expected: ObjectId,
+        /// Prepared ObjectId.
+        actual: ObjectId,
+    },
+    /// Candidate state does not reference the superseded element version.
+    #[error("candidate state does not reference the superseded element version")]
+    SupersedeExistingReferenceMismatch,
+    /// Candidate state does not reference the replacement element version.
+    #[error("candidate state does not reference the replacement element version")]
+    SupersedeReplacementReferenceMismatch,
+    /// Candidate state does not reference the superseding relationship version.
+    #[error("candidate state does not reference the superseding relationship version")]
+    SupersedeRelationshipReferenceMismatch,
 }
 
 /// Validates the candidate-state invariants of a prepared `CreateElement`.
@@ -410,6 +469,203 @@ pub fn validate_deprecate_element_invariants(
     }
     if candidate.relationships != base.relationships {
         return Err(InvariantError::UnexpectedRelationshipMutation);
+    }
+
+    Ok(())
+}
+
+/// Validates the candidate-state invariants of a prepared `SupersedeElement`.
+///
+/// Multi-object transition:
+/// 1. E1: V1 -> V1_next (lifecycle Active -> Superseded)
+/// 2. insertion of E2 -> V2 (lifecycle Active)
+/// 3. insertion of R1 -> R1_version (source E2, type kat.core/supersedes, target E1)
+///
+/// Unrelated elements and relationships must remain identical.
+pub fn validate_supersede_element_invariants(
+    prepared: &PreparedElementSuperseded,
+) -> Result<(), InvariantError> {
+    let candidate = &prepared.candidate_state;
+    let base = &prepared.context.base_state;
+    let e1 = prepared.existing_element_id;
+    let e2 = prepared.replacement_element_id;
+    let r1 = prepared.relationship_id;
+
+    // 1. Candidate state is canonical.
+    candidate.validate_canonical_structure()?;
+
+    // 2. Existing element E1 identity preserved.
+    if prepared.existing_element.element_id != e1 {
+        return Err(InvariantError::UpdateIdentityChanged);
+    }
+
+    // 3. Base version and expected version match for E1.
+    let base_entry = base
+        .elements
+        .iter()
+        .find(|entry| entry.element_id == e1)
+        .ok_or(InvariantError::UpdateBaseVersionMismatch)?;
+    if base_entry.version != prepared.previous_existing_version_id
+        || base_entry.version != prepared.expected_existing_version
+    {
+        return Err(InvariantError::UpdateBaseVersionMismatch);
+    }
+
+    // 4. E1 type preserved.
+    if prepared.existing_element.type_id != prepared.previous_existing_element.type_id {
+        return Err(InvariantError::UpdateTypeChanged);
+    }
+
+    // 5. E1 properties preserved.
+    if prepared.existing_element.properties != prepared.previous_existing_element.properties {
+        return Err(InvariantError::SupersedePropertiesChanged);
+    }
+
+    // 6. Valid E1 lifecycle transition (Active -> Superseded).
+    if prepared.previous_existing_element.lifecycle != Lifecycle::Active
+        || prepared.existing_element.lifecycle != Lifecycle::Superseded
+    {
+        return Err(InvariantError::SupersedeLifecycleInvalid);
+    }
+
+    // 7. E1 derived version identity matches new_existing_version_id.
+    let derived_e1_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(prepared.existing_element.clone()),
+    })
+    .expect("canonically encoded");
+    if derived_e1_id != prepared.new_existing_version_id {
+        return Err(InvariantError::UpdateVersionIdentityMismatch {
+            expected: derived_e1_id,
+            actual: prepared.new_existing_version_id,
+        });
+    }
+
+    // 8. Replacement E2 identity matches replacement_element_id.
+    if prepared.replacement_element.element_id != e2 {
+        return Err(InvariantError::SupersedeReplacementIdentityMismatch);
+    }
+
+    // 9. Replacement E2 lifecycle is Active.
+    if prepared.replacement_element.lifecycle != Lifecycle::Active {
+        return Err(InvariantError::SupersedeReplacementNotActive);
+    }
+
+    // 10. Replacement E2 derived version identity matches replacement_version_id.
+    let derived_e2_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(prepared.replacement_element.clone()),
+    })
+    .expect("canonically encoded");
+    if derived_e2_id != prepared.replacement_version_id {
+        return Err(
+            InvariantError::SupersedeReplacementVersionIdentityMismatch {
+                expected: derived_e2_id,
+                actual: prepared.replacement_version_id,
+            },
+        );
+    }
+
+    // 11. E2 does not alias E1.
+    if e2 == e1 {
+        return Err(InvariantError::SupersedeReplacementAliased);
+    }
+
+    // 12. Relationship R1 identity matches relationship_id.
+    if prepared.relationship.relationship_id != r1 {
+        return Err(InvariantError::SupersedeRelationshipIdentityMismatch);
+    }
+
+    // 13. R1 relationship type is "kat.core/supersedes".
+    if prepared.relationship.relationship_type != "kat.core/supersedes" {
+        return Err(InvariantError::SupersedeRelationshipTypeInvalid);
+    }
+
+    // 14. R1 source element ID matches E2.
+    if prepared.relationship.source_element_id != e2 {
+        return Err(InvariantError::SupersedeRelationshipSourceMismatch);
+    }
+
+    // 15. R1 target element ID matches E1.
+    if prepared.relationship.target_element_id != e1 {
+        return Err(InvariantError::SupersedeRelationshipTargetMismatch);
+    }
+
+    // 16. R1 derived version identity matches relationship_version_id.
+    let derived_r1_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::RelationshipVersion(prepared.relationship.clone()),
+    })
+    .expect("canonically encoded");
+    if derived_r1_id != prepared.relationship_version_id {
+        return Err(
+            InvariantError::SupersedeRelationshipVersionIdentityMismatch {
+                expected: derived_r1_id,
+                actual: prepared.relationship_version_id,
+            },
+        );
+    }
+
+    // 17. Candidate state maps E1 -> V1'.
+    let entry_e1 = candidate
+        .elements
+        .iter()
+        .find(|entry| entry.element_id == e1)
+        .ok_or(InvariantError::SupersedeExistingReferenceMismatch)?;
+    if entry_e1.version != prepared.new_existing_version_id {
+        return Err(InvariantError::SupersedeExistingReferenceMismatch);
+    }
+
+    // 18. Candidate state maps E2 -> V2.
+    let entry_e2 = candidate
+        .elements
+        .iter()
+        .find(|entry| entry.element_id == e2)
+        .ok_or(InvariantError::SupersedeReplacementReferenceMismatch)?;
+    if entry_e2.version != prepared.replacement_version_id {
+        return Err(InvariantError::SupersedeReplacementReferenceMismatch);
+    }
+
+    // 19. Candidate state maps R1 -> R1Version.
+    let entry_r1 = candidate
+        .relationships
+        .iter()
+        .find(|entry| entry.relationship_id == r1)
+        .ok_or(InvariantError::SupersedeRelationshipReferenceMismatch)?;
+    if entry_r1.version != prepared.relationship_version_id {
+        return Err(InvariantError::SupersedeRelationshipReferenceMismatch);
+    }
+
+    // 20. Multi-entry delta rule for elements:
+    // candidate elements \ {E1, E2} == base elements \ {E1}
+    let candidate_other_elements: Vec<_> = candidate
+        .elements
+        .iter()
+        .filter(|entry| entry.element_id != e1 && entry.element_id != e2)
+        .cloned()
+        .collect();
+    let base_other_elements: Vec<_> = base
+        .elements
+        .iter()
+        .filter(|entry| entry.element_id != e1)
+        .cloned()
+        .collect();
+    if candidate_other_elements != base_other_elements {
+        return Err(InvariantError::UnexpectedElementMutation);
+    }
+
+    // 21. Multi-entry delta rule for relationships:
+    // candidate relationships \ {R1} == base relationships
+    let candidate_other_relationships: Vec<_> = candidate
+        .relationships
+        .iter()
+        .filter(|entry| entry.relationship_id != r1)
+        .cloned()
+        .collect();
+    if candidate_other_relationships != base.relationships {
+        return Err(InvariantError::UnexpectedRelationshipMutation);
+    }
+
+    // 22. Base ontology reference preserved.
+    if candidate.ontology_version != base.ontology_version {
+        return Err(InvariantError::OntologyVersionChanged);
     }
 
     Ok(())

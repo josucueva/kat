@@ -49,6 +49,7 @@ use crate::repository::open::Repository;
 use crate::repository::ref_store::{AcceptedRef, RefStore, RefStoreError};
 use crate::repository::validation::invariant::{
     InvariantError, validate_create_element_invariants as validate_candidate_invariants,
+    validate_supersede_element_invariants as validate_supersede_candidate_invariants,
     validate_update_element_invariants as validate_update_candidate_invariants,
 };
 use crate::repository::validation::ontology::{
@@ -696,6 +697,8 @@ pub struct PreparedElementSuperseded {
     pub context: ChangeContext,
     /// The superseded element's ID (`E1`).
     pub existing_element_id: ElementId,
+    /// The previous version `V1` loaded from the base state.
+    pub previous_existing_element: KnowledgeElementVersion,
     /// The previous version ID of `E1` (`V1`).
     pub previous_existing_version_id: ObjectId,
     /// Expected version ID of `E1` (`V1`).
@@ -876,6 +879,7 @@ pub fn apply_supersede_element(
     Ok(PreparedElementSuperseded {
         context,
         existing_element_id: input.existing_element_id,
+        previous_existing_element,
         previous_existing_version_id,
         expected_existing_version: input.expected_existing_version,
         existing_element,
@@ -1013,6 +1017,30 @@ pub fn validate_deprecate_element_invariants(
 ) -> Result<ValidatedElementDeprecation, ChangeError> {
     crate::repository::validation::invariant::validate_deprecate_element_invariants(&prepared)?;
     Ok(ValidatedElementDeprecation { prepared })
+}
+
+/// A `PreparedElementSuperseded` that has passed the Phase 4 semantic validation
+/// pipeline (ontology conformance 4.2 + invariant validation 4.3).
+#[derive(Debug)]
+pub struct ValidatedElementSuperseded {
+    prepared: PreparedElementSuperseded,
+}
+
+impl ValidatedElementSuperseded {
+    /// Borrows the underlying prepared supersession (read-only).
+    pub fn prepared(&self) -> &PreparedElementSuperseded {
+        &self.prepared
+    }
+}
+
+/// Applies the step 4.3 invariant stage to a prepared element supersession.
+///
+/// Validates candidate-state invariants via [`validate_supersede_candidate_invariants`].
+pub fn validate_supersede_element_invariants(
+    prepared: PreparedElementSuperseded,
+) -> Result<ValidatedElementSuperseded, ChangeError> {
+    validate_supersede_candidate_invariants(&prepared)?;
+    Ok(ValidatedElementSuperseded { prepared })
 }
 
 /// Applies the step 1.3 ontology-conformance stage to a prepared element

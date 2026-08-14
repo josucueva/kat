@@ -35,8 +35,9 @@ use kat::repository::change::{
     prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
     publish_persisted_update_change, validate_create_element_invariants,
     validate_create_element_ontology, validate_deprecate_element_invariants,
-    validate_deprecate_element_ontology, validate_supersede_element_ontology,
-    validate_update_element_invariants, validate_update_element_ontology,
+    validate_deprecate_element_ontology, validate_supersede_element_invariants,
+    validate_supersede_element_ontology, validate_update_element_invariants,
+    validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -2564,4 +2565,217 @@ fn supersede_ontology_obeys_custom_ontology_and_direction() {
             source_type: "custom/type-b".into(),
         }
     );
+}
+
+// ---------------------------------------------------------------------------
+// Step 4.3 — validate_supersede_element_invariants
+// ---------------------------------------------------------------------------
+
+#[test]
+fn supersede_invariants_valid_candidate_passes() {
+    let setup = repo_with_typed_element(400, 500, "kat.core/design-decision");
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(970));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(971));
+
+    let prepared = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/design-decision".into(),
+            replacement_properties: vec![(
+                "title".into(),
+                PropertyValue::Text("Replacement".into()),
+            )],
+            relationship_id,
+        },
+    )
+    .unwrap();
+
+    let ontology_validated = validate_supersede_element_ontology(prepared).unwrap();
+    let validated = validate_supersede_element_invariants(ontology_validated).unwrap();
+
+    assert_eq!(validated.prepared().existing_element_id, setup.element_id);
+    assert_eq!(validated.prepared().replacement_element_id, replacement_id);
+}
+
+#[test]
+fn supersede_invariants_tampering_checks() {
+    let setup = repo_with_typed_element(401, 501, "kat.core/design-decision");
+    let repo = &setup.repo;
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(972));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(973));
+
+    let make_prepared = || {
+        let context = prepare_change(repo).unwrap();
+        apply_supersede_element(
+            repo,
+            context,
+            SupersedeElementInput {
+                existing_element_id: setup.element_id,
+                expected_existing_version: setup.version_id,
+                replacement_element_id: replacement_id,
+                replacement_type_id: "kat.core/design-decision".into(),
+                replacement_properties: vec![(
+                    "title".into(),
+                    PropertyValue::Text("Replacement".into()),
+                )],
+                relationship_id,
+            },
+        )
+        .unwrap()
+    };
+
+    // 1. E1 identity changed
+    let mut prepared = make_prepared();
+    prepared.existing_element.element_id = ElementId::from_uuid(Uuid::from_u128(9999));
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::UpdateIdentityChanged)
+    ));
+
+    // 2. E1 type changed
+    let mut prepared = make_prepared();
+    prepared.existing_element.type_id = "kat.core/requirement".into();
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::UpdateTypeChanged)
+    ));
+
+    // 3. E1 properties changed
+    let mut prepared = make_prepared();
+    prepared.existing_element.properties =
+        vec![("title".into(), PropertyValue::Text("Tampered".into()))];
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::SupersedePropertiesChanged)
+    ));
+
+    // 4. E1 lifecycle not Superseded
+    let mut prepared = make_prepared();
+    prepared.existing_element.lifecycle = Lifecycle::Active;
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::SupersedeLifecycleInvalid)
+    ));
+
+    // 5. Previous existing version mismatch
+    let mut prepared = make_prepared();
+    prepared.previous_existing_version_id = object_id(0xEE);
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::UpdateBaseVersionMismatch)
+    ));
+
+    // 6. E2 identity changed
+    let mut prepared = make_prepared();
+    prepared.replacement_element.element_id = ElementId::from_uuid(Uuid::from_u128(8888));
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::SupersedeReplacementIdentityMismatch)
+    ));
+
+    // 7. E2 lifecycle not Active
+    let mut prepared = make_prepared();
+    prepared.replacement_element.lifecycle = Lifecycle::Deprecated;
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::SupersedeReplacementNotActive)
+    ));
+
+    // 8. E2 aliased to E1
+    let mut prepared = make_prepared();
+    prepared.replacement_element_id = setup.element_id;
+    prepared.replacement_element.element_id = setup.element_id;
+    prepared.replacement_version_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(prepared.replacement_element.clone()),
+    })
+    .unwrap();
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::SupersedeReplacementAliased)
+    ));
+
+    // 9. Relationship ID changed
+    let mut prepared = make_prepared();
+    prepared.relationship.relationship_id = RelationshipId::from_uuid(Uuid::from_u128(7777));
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::SupersedeRelationshipIdentityMismatch)
+    ));
+
+    // 10. Relationship type changed
+    let mut prepared = make_prepared();
+    prepared.relationship.relationship_type = "kat.core/depends-on".into();
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::SupersedeRelationshipTypeInvalid)
+    ));
+
+    // 11. Relationship source reversed/changed
+    let mut prepared = make_prepared();
+    prepared.relationship.source_element_id = setup.element_id;
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::SupersedeRelationshipSourceMismatch)
+    ));
+
+    // 12. Relationship target reversed/changed
+    let mut prepared = make_prepared();
+    prepared.relationship.target_element_id = replacement_id;
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::SupersedeRelationshipTargetMismatch)
+    ));
+
+    // 13. Candidate state omits E2
+    let mut prepared = make_prepared();
+    prepared
+        .candidate_state
+        .elements
+        .retain(|e| e.element_id != replacement_id);
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::SupersedeReplacementReferenceMismatch)
+    ));
+
+    // 14. Candidate state omits R1
+    let mut prepared = make_prepared();
+    prepared
+        .candidate_state
+        .relationships
+        .retain(|r| r.relationship_id != relationship_id);
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::SupersedeRelationshipReferenceMismatch)
+    ));
+
+    // 15. Unrelated element mutated
+    let mut prepared = make_prepared();
+    prepared.candidate_state.elements.push(ElementStateEntry {
+        element_id: ElementId::from_uuid(Uuid::from_u128(6666)),
+        version: object_id(0xAB),
+    });
+    prepared
+        .candidate_state
+        .elements
+        .sort_by_key(|e| e.element_id);
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::UnexpectedElementMutation)
+    ));
+
+    // 16. Ontology reference changed
+    let mut prepared = make_prepared();
+    prepared.candidate_state.ontology_version = object_id(0xFF);
+    assert!(matches!(
+        validate_supersede_element_invariants(prepared).unwrap_err(),
+        ChangeError::Invariant(InvariantError::OntologyVersionChanged)
+    ));
 }
