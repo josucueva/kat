@@ -85,8 +85,8 @@ Phase 5 introduces explicit relationship mutation into KAT. Up until Phase 4, re
       Notes: `src/repository/change.rs` — defined `PersistedLinkChange` struct and implemented `persist_prepared_link_change(repository: &Repository, prepared: PreparedLinkChangeRevision) -> Result<PersistedLinkChange, ChangeError>`. Materializes 3 objects in reference order: (1) $R_{1,\text{initial}}$ (`RelationshipVersion`), (2) $S_{n+1}$ (`SemanticState`), (3) $C_{n+1}$ (`ChangeRevision`). Zero element-version objects created. Verifies `ObjectId` matches precomputed identity. Leaves `refs/accepted` untouched (`{ Sn, Cn }`). Re-exported in `repository/mod.rs`. Unit tests in `tests/change.rs` (3-object materialization, exact count increase, no element version object created, accepted ref untouched, idempotent re-persistence). `cargo test` 277 pass, fmt/clippy clean.
 
 ### Step 5.6 — CAS Publication (`publish_persisted_link_change`)
-- [ ] **5.6 — CAS publication.**
-      Define `PublishedLinkChange` struct in `src/repository/change.rs`. Implement `publish_persisted_link_change(repository: &Repository, persisted: PersistedLinkChange) -> Result<PublishedLinkChange, ChangeError>`. Pre-CAS check (`change.result_state == state_id`). Single atomic CAS on `refs/accepted`. Re-export in `repository/mod.rs`. Integration tests in `tests/change.rs`.
+- [x] **5.6 — CAS publication.**
+      Notes: `src/repository/change.rs` — defined `PublishedLinkChange` struct and implemented `publish_persisted_link_change(repository: &Repository, persisted: PersistedLinkChange) -> Result<PublishedLinkChange, ChangeError>`. Enforces pre-CAS state check (`change.result_state == state_id`), atomic CAS update on `refs/accepted`. Zero extra objects created. Re-exported in `repository/mod.rs`. 3 integration tests in `tests/change.rs` (advances accepted head & survives reopen, conflict on stale expected head, publication state mismatch). `cargo test` 280 pass, fmt/clippy clean.
 
 ### Step 5.7 — CLI `kat link` Wiring
 - [ ] **5.7 — CLI `kat link` wiring.**

@@ -35,13 +35,13 @@ use kat::repository::change::{
     persist_prepared_update_change, prepare_change, prepare_change_revision,
     prepare_deprecate_change_revision, prepare_link_change_revision,
     prepare_supersede_change_revision, prepare_update_change_revision, publish_persisted_change,
-    publish_persisted_deprecate_change, publish_persisted_supersede_change,
-    publish_persisted_update_change, validate_create_element_invariants,
-    validate_create_element_ontology, validate_deprecate_element_invariants,
-    validate_deprecate_element_ontology, validate_link_element_invariants,
-    validate_link_element_ontology, validate_supersede_element_invariants,
-    validate_supersede_element_ontology, validate_update_element_invariants,
-    validate_update_element_ontology,
+    publish_persisted_deprecate_change, publish_persisted_link_change,
+    publish_persisted_supersede_change, publish_persisted_update_change,
+    validate_create_element_invariants, validate_create_element_ontology,
+    validate_deprecate_element_invariants, validate_deprecate_element_ontology,
+    validate_link_element_invariants, validate_link_element_ontology,
+    validate_supersede_element_invariants, validate_supersede_element_ontology,
+    validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -4077,4 +4077,199 @@ fn persist_prepared_link_change_materializes_objects_and_leaves_accepted_unchang
         .count();
     assert_eq!(after_objects2, after_objects);
     assert_eq!(persisted2.prepared.change_revision_id, c_next_id);
+}
+
+// ---------------------------------------------------------------------------
+// Step 5.6 — publish_persisted_link_change tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn publish_persisted_link_change_advances_accepted_head_and_survives_reopen() {
+    let setup = repo_with_decision_and_requirement();
+    let repo = &setup.repo;
+
+    let base_accepted = repo.accepted.clone();
+
+    let ctx = prepare_change(repo).unwrap();
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(9030));
+    let prepared = apply_link_element(
+        repo,
+        ctx,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: setup.e1,
+            target_element_id: setup.e2,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+
+    let val = validate_link_element_invariants(validate_link_element_ontology(prepared).unwrap())
+        .unwrap();
+
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(9031));
+    let revision = prepare_link_change_revision(val, change_id, None).unwrap();
+    let s_next_id = revision.state_id;
+    let c_next_id = revision.change_revision_id;
+
+    let persisted = persist_prepared_link_change(repo, revision).unwrap();
+
+    let objects_before_pub = std::fs::read_dir(setup._dir.path().join(".kat/objects"))
+        .unwrap()
+        .count();
+
+    // Publish link
+    let published = publish_persisted_link_change(repo, persisted).unwrap();
+
+    // 1. Accepted head advanced to Snext, Cnext
+    assert_eq!(published.accepted.state, s_next_id);
+    assert_eq!(published.accepted.change, Some(c_next_id));
+
+    // 2. Publication writes ZERO additional objects
+    let objects_after_pub = std::fs::read_dir(setup._dir.path().join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(objects_after_pub, objects_before_pub);
+
+    // 3. Fresh process reopen resolves Snext
+    let reopened = open_repository(setup._dir.path()).unwrap();
+    assert_eq!(reopened.accepted.state, s_next_id);
+    assert_eq!(reopened.accepted.change, Some(c_next_id));
+
+    // 4. Elements in Snext are unchanged (element ObjectIds unchanged!)
+    let base_state_obj = match kat::encoding::decode::decode_canonical(
+        &repo.object_store().get(base_accepted.state).unwrap(),
+    )
+    .unwrap()
+    .payload
+    {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => panic!("expected SemanticState"),
+    };
+
+    let s_next_state_obj = match kat::encoding::decode::decode_canonical(
+        &reopened.object_store().get(s_next_id).unwrap(),
+    )
+    .unwrap()
+    .payload
+    {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => panic!("expected SemanticState"),
+    };
+
+    assert_eq!(s_next_state_obj.elements, base_state_obj.elements);
+
+    // 5. Relationship visibility: R1 -> R1V is now present in accepted state!
+    assert_eq!(s_next_state_obj.relationships.len(), 1);
+    assert_eq!(s_next_state_obj.relationships[0].relationship_id, rel_id);
+    assert_eq!(
+        s_next_state_obj.relationships[0].version,
+        published.persisted.prepared.link.relationship_version_id
+    );
+
+    // 6. Cnext.result_state == Snext
+    let c_bytes = reopened.object_store().get(c_next_id).unwrap();
+    let c_obj = kat::encoding::decode::decode_canonical(&c_bytes).unwrap();
+    match c_obj.payload {
+        CanonicalPayload::ChangeRevision(ref c) => {
+            assert_eq!(c.result_state, s_next_id);
+            assert_eq!(c.base_states, vec![base_accepted.state]);
+        }
+        _ => panic!("expected ChangeRevision"),
+    }
+}
+
+#[test]
+fn publish_link_conflicts_when_accepted_ref_moved_since_preparation() {
+    let setup = repo_with_decision_and_requirement();
+    let repo = &setup.repo;
+
+    // Prepare and persist link 1 from S0
+    let ctx1 = prepare_change(repo).unwrap();
+    let rel_id1 = RelationshipId::from_uuid(Uuid::from_u128(9032));
+    let prep1 = apply_link_element(
+        repo,
+        ctx1,
+        LinkElementInput {
+            relationship_id: rel_id1,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: setup.e1,
+            target_element_id: setup.e2,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+    let val1 =
+        validate_link_element_invariants(validate_link_element_ontology(prep1).unwrap()).unwrap();
+    let rev1 = prepare_link_change_revision(val1, ChangeId::from_uuid(Uuid::from_u128(9033)), None)
+        .unwrap();
+    let pers1 = persist_prepared_link_change(repo, rev1).unwrap();
+
+    // Prepare, persist, and publish element creation 2 from S0 -> S1
+    let ctx2 = prepare_change(repo).unwrap();
+    let elem2_id = ElementId::from_uuid(Uuid::from_u128(9034));
+    let prep2 = apply_create_element(
+        ctx2,
+        CreateElementInput {
+            element_id: elem2_id,
+            type_id: "kat.core/requirement".into(),
+            properties: vec![],
+        },
+    )
+    .unwrap();
+    let val2 = validate_create_element_invariants(validate_create_element_ontology(prep2).unwrap())
+        .unwrap();
+    let rev2 =
+        prepare_change_revision(val2, ChangeId::from_uuid(Uuid::from_u128(9035)), None).unwrap();
+    let pers2 = persist_prepared_change(repo, rev2).unwrap();
+    publish_persisted_change(repo, pers2).unwrap();
+
+    let reopened = open_repository(setup._dir.path()).unwrap();
+
+    // Attempting to publish pers1 now fails with Conflict because accepted ref moved!
+    let err = publish_persisted_link_change(&reopened, pers1).unwrap_err();
+    assert!(matches!(err, ChangeError::Conflict));
+}
+
+#[test]
+fn publish_link_rejects_internally_inconsistent_prepared_change() {
+    let setup = repo_with_decision_and_requirement();
+    let repo = &setup.repo;
+
+    let ctx = prepare_change(repo).unwrap();
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(9036));
+    let prepared = apply_link_element(
+        repo,
+        ctx,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: setup.e1,
+            target_element_id: setup.e2,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+
+    let val = validate_link_element_invariants(validate_link_element_ontology(prepared).unwrap())
+        .unwrap();
+    let revision =
+        prepare_link_change_revision(val, ChangeId::from_uuid(Uuid::from_u128(9037)), None)
+            .unwrap();
+    let expected_state_id = revision.state_id;
+
+    let mut persisted = persist_prepared_link_change(repo, revision).unwrap();
+
+    // Tamper change.result_state after persistence
+    let tampered_state = ObjectId::from_bytes([0xFF; 32]);
+    persisted.prepared.change.result_state = tampered_state;
+
+    let err = publish_persisted_link_change(repo, persisted).unwrap_err();
+
+    assert!(matches!(
+        err,
+        ChangeError::PublicationStateMismatch { expected, actual }
+            if expected == expected_state_id && actual == tampered_state
+    ));
 }

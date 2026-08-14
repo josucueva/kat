@@ -2195,6 +2195,50 @@ pub fn publish_persisted_supersede_change(
     }
 }
 
+/// A persisted link change that has been atomically published as the
+/// repository's accepted head (step 5.6).
+#[derive(Debug)]
+pub struct PublishedLinkChange {
+    /// The persisted link change that was just published.
+    pub persisted: PersistedLinkChange,
+    /// The new accepted repository head (`state: Sn+1`, `change: Some(Cn+1)`).
+    pub accepted: AcceptedRef,
+}
+
+/// Publishes an already-persisted link change by atomically advancing the
+/// accepted State and Change head.
+pub fn publish_persisted_link_change(
+    repository: &Repository,
+    persisted: PersistedLinkChange,
+) -> Result<PublishedLinkChange, ChangeError> {
+    let prepared = &persisted.prepared;
+
+    if prepared.change.result_state != prepared.state_id {
+        return Err(ChangeError::PublicationStateMismatch {
+            expected: prepared.state_id,
+            actual: prepared.change.result_state,
+        });
+    }
+
+    let expected = &prepared.link.context.accepted;
+    let new = AcceptedRef {
+        state: prepared.state_id,
+        change: Some(prepared.change_revision_id),
+    };
+
+    match repository
+        .ref_store()
+        .compare_and_swap_accepted(expected, &new)
+    {
+        Ok(()) => Ok(PublishedLinkChange {
+            persisted,
+            accepted: new,
+        }),
+        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
+        Err(err) => Err(ChangeError::RefStore(err)),
+    }
+}
+
 /// A persisted change that has been atomically published as the repository's
 /// accepted head (step 1.7).
 ///
