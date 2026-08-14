@@ -38,12 +38,13 @@ use kat::repository::change::{
     prepare_supersede_change_revision, prepare_unlink_change_revision,
     prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
     publish_persisted_link_change, publish_persisted_supersede_change,
-    publish_persisted_update_change, validate_create_element_invariants,
-    validate_create_element_ontology, validate_deprecate_element_invariants,
-    validate_deprecate_element_ontology, validate_link_element_invariants,
-    validate_link_element_ontology, validate_supersede_element_invariants,
-    validate_supersede_element_ontology, validate_unlink_element_invariants,
-    validate_update_element_invariants, validate_update_element_ontology,
+    publish_persisted_unlink_change, publish_persisted_update_change,
+    validate_create_element_invariants, validate_create_element_ontology,
+    validate_deprecate_element_invariants, validate_deprecate_element_ontology,
+    validate_link_element_invariants, validate_link_element_ontology,
+    validate_supersede_element_invariants, validate_supersede_element_ontology,
+    validate_unlink_element_invariants, validate_update_element_invariants,
+    validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -4682,4 +4683,101 @@ fn persist_prepared_unlink_change_materializes_objects_and_leaves_accepted_uncha
     let refs_after =
         fs::read_to_string(kat_dir(setup.dir.path()).join("refs").join("accepted")).unwrap();
     assert_eq!(refs_before, refs_after);
+}
+
+// ---------------------------------------------------------------------------
+// Step 6.5 — publish_persisted_unlink_change tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn publish_persisted_unlink_change_advances_accepted_head_and_survives_reopen() {
+    let setup = repo_with_linked_elements();
+    let repo = &setup.repo;
+
+    let ctx = prepare_change(repo).unwrap();
+    let prepared = apply_unlink_element(
+        repo,
+        ctx,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+
+    let validated = validate_unlink_element_invariants(prepared).unwrap();
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(9096));
+    let revision = prepare_unlink_change_revision(validated, change_id, None).unwrap();
+    let expected_state_id = revision.state_id;
+    let expected_change_id = revision.change_revision_id;
+
+    let persisted = persist_prepared_unlink_change(repo, revision).unwrap();
+    let published = publish_persisted_unlink_change(repo, persisted).unwrap();
+
+    assert_eq!(published.accepted.state, expected_state_id);
+    assert_eq!(published.accepted.change, Some(expected_change_id));
+
+    // Reopen repository and verify accepted head
+    let reopened = open_repository(setup.dir.path()).unwrap();
+    let accepted = reopened.ref_store().read_accepted().unwrap();
+    assert_eq!(accepted.state, expected_state_id);
+    assert_eq!(accepted.change, Some(expected_change_id));
+}
+
+#[test]
+fn publish_unlink_conflicts_when_accepted_ref_moved_since_preparation() {
+    let setup = repo_with_linked_elements();
+    let repo = &setup.repo;
+
+    let ctx = prepare_change(repo).unwrap();
+    let prepared = apply_unlink_element(
+        repo,
+        ctx,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+
+    let validated = validate_unlink_element_invariants(prepared).unwrap();
+    let revision =
+        prepare_unlink_change_revision(validated, ChangeId::from_uuid(Uuid::from_u128(9097)), None)
+            .unwrap();
+    let persisted = persist_prepared_unlink_change(repo, revision).unwrap();
+
+    // Interleave another change (deprecating e1)
+    let ctx0 = prepare_change(repo).unwrap();
+    let e1_v1 = ctx0
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == setup.e1)
+        .unwrap()
+        .version;
+    let prep_dep = apply_deprecate_element(
+        repo,
+        ctx0,
+        DeprecateElementInput {
+            element_id: setup.e1,
+            expected_version: e1_v1,
+        },
+    )
+    .unwrap();
+    let val_dep = validate_deprecate_element_invariants(
+        validate_deprecate_element_ontology(prep_dep).unwrap(),
+    )
+    .unwrap();
+    let rev_dep = prepare_deprecate_change_revision(
+        val_dep,
+        ChangeId::from_uuid(Uuid::from_u128(9098)),
+        None,
+    )
+    .unwrap();
+    let pers_dep = persist_prepared_deprecate_change(repo, rev_dep).unwrap();
+    publish_persisted_deprecate_change(repo, pers_dep).unwrap();
+
+    // Now publishing the prepared unlink must fail with Conflict
+    let err = publish_persisted_unlink_change(repo, persisted).unwrap_err();
+    assert!(matches!(err, ChangeError::Conflict));
 }

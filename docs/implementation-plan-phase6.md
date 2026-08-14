@@ -45,8 +45,8 @@ publish_persisted_unlink_change          (atomic CAS on refs/accepted -> { S_n+1
       Notes: `src/repository/change.rs` — defined `PersistedUnlinkChange` and implemented `persist_prepared_unlink_change(repository: &Repository, prepared: PreparedUnlinkChangeRevision)`. Materializes objects $S_{n+1}$ and $C_{n+1}$ in reference dependency order into ObjectStore. Leaves `refs/accepted` untouched. Note: If $S_{n+1}$ is identical to an earlier state (e.g. $S_2$ before linking), CAS deduplication reuses the existing state object and 1 new object ($C_{n+1}$) is added to ObjectStore. Re-exported in `repository/mod.rs`. Unit test in `tests/change.rs`. `cargo test` 298 pass, fmt/clippy clean.
 
 ### Step 6.5 — CAS Publication (`publish_persisted_unlink_change`)
-- [ ] **6.5 — CAS publication.**
-      Define `PublishedUnlinkChange` struct in `src/repository/change.rs`. Implement `publish_persisted_unlink_change(repository: &Repository, persisted: PersistedUnlinkChange) -> Result<PublishedUnlinkChange, ChangeError>`. Pre-CAS check (`change.result_state == state_id`). Single atomic CAS on `refs/accepted`. Re-export in `repository/mod.rs`. Integration tests in `tests/cli.rs`.
+- [x] **6.5 — CAS publication.**
+      Notes: `src/repository/change.rs` — defined `PublishedUnlinkChange` and implemented `publish_persisted_unlink_change(repository: &Repository, persisted: PersistedUnlinkChange) -> Result<PublishedUnlinkChange, ChangeError>`. Enforces defensive `change.result_state == state_id` check before single atomic CAS on `refs/accepted`. Re-exported in `repository/mod.rs`. 2 unit tests in `tests/change.rs` (advances accepted head & survives reopen, conflict handling). `cargo test` 300 pass, fmt/clippy clean.
 
 ### Step 6.6 — CLI `kat unlink` Wiring
 - [ ] **6.6 — CLI `kat unlink` wiring.**
