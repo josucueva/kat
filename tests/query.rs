@@ -2031,3 +2031,163 @@ fn accountability_does_not_mutate_repository() {
         refs_before
     );
 }
+
+#[test]
+fn accountability_stale_when_upstream_element_deprecated_or_superseded() {
+    use kat::repository::change::{
+        DeprecateElementInput, apply_deprecate_element, persist_prepared_deprecate_change,
+        prepare_deprecate_change_revision, publish_persisted_deprecate_change,
+        validate_deprecate_element_invariants, validate_deprecate_element_ontology,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    // 1. Create Decision D1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_dec = ElementId::from_uuid(Uuid::from_u128(9501));
+    let prep_d1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_dec,
+                    type_id: "kat.core/design-decision".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Decision D1".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_change(
+        &repo,
+        persist_prepared_change(
+            &repo,
+            prepare_change_revision(prep_d1, ChangeId::from_uuid(Uuid::from_u128(9601)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // 2. Create Artifact A1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_art = ElementId::from_uuid(Uuid::from_u128(9502));
+    let prep_a1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_art,
+                    type_id: "kat.core/artifact".into(),
+                    properties: vec![(
+                        "title".into(),
+                        PropertyValue::Text("architecture.md".into()),
+                    )],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_change(
+        &repo,
+        persist_prepared_change(
+            &repo,
+            prepare_change_revision(prep_a1, ChangeId::from_uuid(Uuid::from_u128(9602)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // 3. Link A1 (derived-from) -> D1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let r1_id = RelationshipId::from_uuid(Uuid::from_u128(9701));
+    let prep_l1 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: r1_id,
+                    relationship_type_id: "kat.core/derived-from".into(),
+                    source_element_id: e_art,
+                    target_element_id: e_dec,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(
+            &repo,
+            prepare_link_change_revision(prep_l1, ChangeId::from_uuid(Uuid::from_u128(9603)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Verify CURRENT
+    let repo = open_repository(root).unwrap();
+    let report1 = analyze_artifact_accountability(&repo).unwrap();
+    assert_eq!(
+        report1.artifacts[0].status,
+        ArtifactAccountabilityStatus::Current
+    );
+
+    // 4. Deprecate D1
+    let v_d1 = show_element(&repo, e_dec).unwrap().version_id;
+    let ctx = prepare_change(&repo).unwrap();
+    let prep_dep = validate_deprecate_element_invariants(
+        validate_deprecate_element_ontology(
+            apply_deprecate_element(
+                &repo,
+                ctx,
+                DeprecateElementInput {
+                    element_id: e_dec,
+                    expected_version: v_d1,
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_deprecate_change(
+        &repo,
+        persist_prepared_deprecate_change(
+            &repo,
+            prepare_deprecate_change_revision(
+                prep_dep,
+                ChangeId::from_uuid(Uuid::from_u128(9604)),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Verify STALE due to upstream element deprecation
+    let repo = open_repository(root).unwrap();
+    let report2 = analyze_artifact_accountability(&repo).unwrap();
+    assert_eq!(report2.artifacts.len(), 1);
+    assert_eq!(
+        report2.artifacts[0].status,
+        ArtifactAccountabilityStatus::Stale
+    );
+    assert!(report2.artifacts[0].baselines[0].is_stale);
+}

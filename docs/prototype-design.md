@@ -1957,3 +1957,8 @@ The following implementation questions remain intentionally unresolved:
 
 For KAT v0.1, consistency rules encoded by KAT's ontology and semantic invariants are mechanically evaluated. Constraint knowledge elements that do not have executable semantics are reported as unverified rather than assumed satisfied or violated.
 
+# Artifact Accountability Semantics (v0.1 Clarification)
+
+For KAT v0.1, `CURRENT` status in artifact accountability (`kat artifacts`) means no accountability-baseline divergence has been detected; every explicit accountability relationship (`represents`, `derived-from`) points to the exact authoritative knowledge version active when that relationship was established. `CURRENT` status does **not** imply that KAT has automatically inspected, parsed, or verified physical artifact contents (such as source code, binaries, or documents).
+
+

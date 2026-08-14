@@ -136,6 +136,7 @@ See [`docs/implementation-plan-phase3.md`](file:///home/joshua/Projects/kat/docs
 | 2026-08-14 | Step 10.3 — Query Layer Re-exports & Unit Tests | Re-exported symbols in `src/repository/mod.rs`. Added 4 unit tests in `tests/query.rs` (unaccounted, current, stale, relink re-baseline, non-mutation). `cargo test` 330 pass, fmt/clippy clean. |
 | 2026-08-14 | Step 10.4 — CLI `kat artifacts` Wiring & Formatting | Implemented `cmd_artifacts` and `print_artifact_accountability_report` in `src/main.rs`. Syntax: `kat artifacts`. Formats status (current, stale, unaccounted) and baseline vs current versions. Exit 0 on all current, exit 1 on stale/unaccounted. |
 | 2026-08-14 | Step 10.5 — Acceptance Verification & Phase 10 Closure | Added `phase10_acceptance_cli_flow_end_to_end` in `tests/cli.rs`. Tested AuthX scenario (linking, element update causing stale, relink re-baselining, non-mutation). Updated `docs/cli.md`. **Phase 10 Frozen.** `cargo test` 332 pass, fmt/clippy clean. |
+| 2026-08-14 | v0.1 Release Acceptance & Specification Consistency Review | Documented normative `CURRENT` status clarification in `docs/prototype-design.md`. Added `accountability_stale_when_upstream_element_deprecated_or_superseded` test (336 pass). Completed 4-part v0.1 Release Acceptance Review in `docs/v0-1-release-acceptance-review.md`. **v0.1 Release Semantics Frozen.** |
 
 ## Non-goals during this work (do not build yet)
 
