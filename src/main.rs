@@ -4,7 +4,6 @@
 //! invocation contract in `docs/cli.md`; the CLI layer only parses and
 //! dispatches, it never owns repository semantics.
 
-use std::env;
 use std::path::Path;
 use std::process::ExitCode;
 use std::str::FromStr;
@@ -42,36 +41,53 @@ use kat::repository::query::{
 };
 use kat::repository::validation::repository::{ValidationReport, validate_repository};
 
+pub mod cli;
+
+use clap::Parser;
+use cli::{Cli, Command};
+
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
-        Some("init") => cmd_init(),
-        Some("create") => cmd_create(&args[1..]),
-        Some("update") => cmd_update(&args[1..]),
-        Some("deprecate") => cmd_deprecate(&args[1..]),
-        Some("supersede") => cmd_supersede(&args[1..]),
-        Some("link") => cmd_link(&args[1..]),
-        Some("unlink") => cmd_unlink(&args[1..]),
-        Some("show") => cmd_show(&args[1..]),
-        Some("history") => cmd_history(&args[1..]),
-        Some("trace") => cmd_trace(&args[1..]),
-        Some("impact") => cmd_impact(&args[1..]),
-        Some("validate") => cmd_validate(),
-        Some("artifacts") => cmd_artifacts(),
-        Some(other) => {
-            eprintln!("kat: unknown command '{other}'");
-            eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history | kat trace <element-id> | kat impact <element-id> | kat validate | kat artifacts"
-            );
-            ExitCode::FAILURE
-        }
-        None => {
-            eprintln!("kat: missing command");
-            eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history"
-            );
-            ExitCode::FAILURE
-        }
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Init => cmd_init(),
+        Command::Create {
+            element_type,
+            title,
+            description,
+        } => run_create(element_type, title, description),
+        Command::Update {
+            element_id,
+            title,
+            description,
+        } => run_update(element_id, title, description),
+        Command::Deprecate { element_id } => run_deprecate(element_id),
+        Command::Supersede {
+            existing_element_id,
+            replacement_type,
+            title,
+            description,
+        } => run_supersede(existing_element_id, replacement_type, title, description),
+        Command::Link {
+            relationship_type,
+            source_element_id,
+            target_element_id,
+            description,
+        } => run_link(
+            relationship_type,
+            source_element_id,
+            target_element_id,
+            description,
+        ),
+        Command::Unlink {
+            relationship_id,
+            description,
+        } => run_unlink(relationship_id, description),
+        Command::Show { element_id } => run_show(element_id),
+        Command::History => cmd_history(),
+        Command::Trace { element_id } => run_trace(element_id),
+        Command::Impact { element_id } => run_impact(element_id),
+        Command::Validate => cmd_validate(),
+        Command::Artifacts => cmd_artifacts(),
     }
 }
 
@@ -98,45 +114,6 @@ struct CreateArgs {
     type_arg: String,
     title: String,
     description: Option<String>,
-}
-
-/// Parses exactly the `cli.md` sketch: `kat create <type> --title "..."
-/// [--description "..."]`. No generic `--property` support yet.
-fn parse_create_args(args: &[String]) -> Result<CreateArgs, String> {
-    let (type_arg, rest) = args
-        .split_first()
-        .ok_or_else(|| "expected <type> --title \"...\"".to_string())?;
-    let mut title: Option<String> = None;
-    let mut description: Option<String> = None;
-    let mut i = 0;
-    while i < rest.len() {
-        let flag = rest[i].as_str();
-        let value = rest
-            .get(i + 1)
-            .ok_or_else(|| format!("missing value for {flag}"))?;
-        match flag {
-            "--title" => {
-                if title.is_some() {
-                    return Err("duplicate --title".to_string());
-                }
-                title = Some(value.clone());
-            }
-            "--description" => {
-                if description.is_some() {
-                    return Err("duplicate --description".to_string());
-                }
-                description = Some(value.clone());
-            }
-            other => return Err(format!("unknown option '{other}'")),
-        }
-        i += 2;
-    }
-    let title = title.ok_or_else(|| "--title is required".to_string())?;
-    Ok(CreateArgs {
-        type_arg: type_arg.clone(),
-        title,
-        description,
-    })
 }
 
 /// Maps a CLI type argument to a canonical element type ID.
@@ -188,14 +165,11 @@ fn resolve_relationship_type(ontology: &OntologyVersion, arg: &str) -> Result<St
 /// Identity (ElementId, ChangeId) is generated here; the engine stays
 /// deterministic. The resulting stable identifiers are printed for the
 /// caller (and for `kat show`/`kat history`).
-fn cmd_create(args: &[String]) -> ExitCode {
-    let parsed = match parse_create_args(args) {
-        Ok(parsed) => parsed,
-        Err(message) => {
-            eprintln!("kat create: {message}");
-            eprintln!("usage: kat create <type> --title \"...\" [--description \"...\"]");
-            return ExitCode::FAILURE;
-        }
+fn run_create(type_arg: String, title: String, description: Option<String>) -> ExitCode {
+    let parsed = CreateArgs {
+        type_arg,
+        title,
+        description,
     };
 
     let repository = match open_repository(Path::new(".")) {
@@ -288,64 +262,33 @@ struct UpdateArgs {
     description: Option<String>,
 }
 
-/// Parses `kat update <element-id> [--title "..."] [--description "..."]`.
-fn parse_update_args(args: &[String]) -> Result<UpdateArgs, String> {
-    let (element_id_arg, rest) = args.split_first().ok_or_else(|| {
-        "expected <element-id> [--title \"...\"] [--description \"...\"]".to_string()
-    })?;
-    let element_id = ElementId::from_str(element_id_arg)
-        .map_err(|_| format!("invalid element ID: {element_id_arg}"))?;
-
-    let mut title: Option<String> = None;
-    let mut description: Option<String> = None;
-    let mut i = 0;
-    while i < rest.len() {
-        let flag = rest[i].as_str();
-        let value = rest
-            .get(i + 1)
-            .ok_or_else(|| format!("missing value for {flag}"))?;
-        match flag {
-            "--title" => {
-                if title.is_some() {
-                    return Err("duplicate --title".to_string());
-                }
-                title = Some(value.clone());
-            }
-            "--description" => {
-                if description.is_some() {
-                    return Err("duplicate --description".to_string());
-                }
-                description = Some(value.clone());
-            }
-            other => return Err(format!("unknown option '{other}'")),
-        }
-        i += 2;
-    }
-
-    if title.is_none() && description.is_none() {
-        return Err(
-            "at least one property flag (--title, --description) must be supplied".to_string(),
-        );
-    }
-
-    Ok(UpdateArgs {
-        element_id,
-        title,
-        description,
-    })
-}
-
 /// `kat update <element-id> [--title "..."] [--description "..."]` — run an
 /// `UpdateElement` change end to end through the Change Engine and publish it
 /// (thin dispatch; all semantics live in the library).
-fn cmd_update(args: &[String]) -> ExitCode {
-    let parsed = match parse_update_args(args) {
-        Ok(parsed) => parsed,
-        Err(message) => {
-            eprintln!("kat update: {message}");
-            eprintln!("usage: kat update <element-id> [--title \"...\"] [--description \"...\"]");
+fn run_update(
+    element_id_str: String,
+    title: Option<String>,
+    description: Option<String>,
+) -> ExitCode {
+    let element_id = match ElementId::from_str(&element_id_str) {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!("kat update: invalid element ID: {element_id_str}");
             return ExitCode::FAILURE;
         }
+    };
+
+    if title.is_none() && description.is_none() {
+        eprintln!(
+            "kat update: at least one property flag (--title, --description) must be supplied"
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let parsed = UpdateArgs {
+        element_id,
+        title,
+        description,
     };
 
     let repository = match open_repository(Path::new(".")) {
@@ -446,25 +389,14 @@ struct DeprecateArgs {
     element_id: ElementId,
 }
 
-/// Parses `kat deprecate <element-id>`.
-fn parse_deprecate_args(args: &[String]) -> Result<DeprecateArgs, String> {
-    let [element_id_arg] = args else {
-        return Err("expected <element-id>".to_string());
-    };
-    let element_id = ElementId::from_str(element_id_arg)
-        .map_err(|_| format!("invalid element ID: {element_id_arg}"))?;
-    Ok(DeprecateArgs { element_id })
-}
-
 /// `kat deprecate <element-id>` — run a `DeprecateElement` change end to end
 /// through the Change Engine and publish it (thin dispatch; all semantics live
 /// in the library).
-fn cmd_deprecate(args: &[String]) -> ExitCode {
-    let parsed = match parse_deprecate_args(args) {
-        Ok(parsed) => parsed,
-        Err(message) => {
-            eprintln!("kat deprecate: {message}");
-            eprintln!("usage: kat deprecate <element-id>");
+fn run_deprecate(element_id_str: String) -> ExitCode {
+    let element_id = match ElementId::from_str(&element_id_str) {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!("kat deprecate: invalid element ID: {element_id_str}");
             return ExitCode::FAILURE;
         }
     };
@@ -482,7 +414,9 @@ fn cmd_deprecate(args: &[String]) -> ExitCode {
         Err(error) => return fail_deprecate(error),
     };
 
-    let previous_version_id = match context
+    let parsed = DeprecateArgs { element_id };
+
+    let expected_version = match context
         .base_state
         .elements
         .iter()
@@ -498,7 +432,7 @@ fn cmd_deprecate(args: &[String]) -> ExitCode {
         }
     };
 
-    let published = match deprecate_pipeline(&repository, context, previous_version_id, &parsed) {
+    let published = match deprecate_pipeline(&repository, context, expected_version, &parsed) {
         Ok(published) => published,
         Err(error) => return fail_deprecate(error),
     };
@@ -559,66 +493,27 @@ struct SupersedeArgs {
     description: Option<String>,
 }
 
-/// Parses `kat supersede <existing-id> <replacement-type> --title "..." [--description "..."]`.
-fn parse_supersede_args(args: &[String]) -> Result<SupersedeArgs, String> {
-    if args.len() < 2 {
-        return Err("expected <existing-id> <replacement-type> --title \"...\"".to_string());
-    }
-    let existing_element_id_arg = &args[0];
-    let replacement_type_arg = &args[1];
-
-    let existing_element_id = ElementId::from_str(existing_element_id_arg)
-        .map_err(|_| format!("invalid element ID: {existing_element_id_arg}"))?;
-
-    let rest = &args[2..];
-    let mut title: Option<String> = None;
-    let mut description: Option<String> = None;
-    let mut i = 0;
-    while i < rest.len() {
-        let flag = rest[i].as_str();
-        let value = rest
-            .get(i + 1)
-            .ok_or_else(|| format!("missing value for {flag}"))?;
-        match flag {
-            "--title" => {
-                if title.is_some() {
-                    return Err("duplicate --title".to_string());
-                }
-                title = Some(value.clone());
-            }
-            "--description" => {
-                if description.is_some() {
-                    return Err("duplicate --description".to_string());
-                }
-                description = Some(value.clone());
-            }
-            other => return Err(format!("unknown option '{other}'")),
-        }
-        i += 2;
-    }
-
-    let title = title.ok_or_else(|| "--title is required".to_string())?;
-
-    Ok(SupersedeArgs {
-        existing_element_id,
-        replacement_type_arg: replacement_type_arg.clone(),
-        title,
-        description,
-    })
-}
-
 /// `kat supersede <existing-id> <replacement-type> --title "..." [--description "..."]` — run a
 /// `SupersedeElement` change end to end through the Change Engine and publish it.
-fn cmd_supersede(args: &[String]) -> ExitCode {
-    let parsed = match parse_supersede_args(args) {
-        Ok(parsed) => parsed,
-        Err(message) => {
-            eprintln!("kat supersede: {message}");
-            eprintln!(
-                "usage: kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"]"
-            );
+fn run_supersede(
+    existing_id_str: String,
+    replacement_type: String,
+    title: String,
+    description: Option<String>,
+) -> ExitCode {
+    let existing_element_id = match ElementId::from_str(&existing_id_str) {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!("kat supersede: invalid element ID: {existing_id_str}");
             return ExitCode::FAILURE;
         }
+    };
+
+    let parsed = SupersedeArgs {
+        existing_element_id,
+        replacement_type_arg: replacement_type,
+        title,
+        description,
     };
 
     let repository = match open_repository(Path::new(".")) {
@@ -763,53 +658,35 @@ struct LinkArgs {
     description: Option<String>,
 }
 
-fn parse_link_args(args: &[String]) -> Result<LinkArgs, String> {
-    if args.len() < 3 {
-        return Err("expected <relationship-type> <source-element-id> <target-element-id> [--description \"...\"]".to_string());
-    }
-    let relationship_type_arg = args[0].clone();
-    let source_element_id =
-        ElementId::from_str(&args[1]).map_err(|_| format!("invalid element ID: {}", args[1]))?;
-    let target_element_id =
-        ElementId::from_str(&args[2]).map_err(|_| format!("invalid element ID: {}", args[2]))?;
-
-    let rest = &args[3..];
-    let mut description: Option<String> = None;
-    let mut i = 0;
-    while i < rest.len() {
-        let flag = rest[i].as_str();
-        let value = rest
-            .get(i + 1)
-            .ok_or_else(|| format!("missing value for {flag}"))?;
-        match flag {
-            "--description" => {
-                if description.is_some() {
-                    return Err("duplicate --description".to_string());
-                }
-                description = Some(value.clone());
-            }
-            other => return Err(format!("unknown option '{other}'")),
+/// `kat link <relationship-type> <source-element-id> <target-element-id> [--description "..."]` —
+/// run a `LinkElement` change end to end through the Change Engine and publish it.
+fn run_link(
+    type_str: String,
+    source_str: String,
+    target_str: String,
+    description: Option<String>,
+) -> ExitCode {
+    let source_element_id = match ElementId::from_str(&source_str) {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!("kat link: invalid source element ID: {source_str}");
+            return ExitCode::FAILURE;
         }
-        i += 2;
-    }
+    };
 
-    Ok(LinkArgs {
-        relationship_type_arg,
+    let target_element_id = match ElementId::from_str(&target_str) {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!("kat link: invalid target element ID: {target_str}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let parsed = LinkArgs {
+        relationship_type_arg: type_str,
         source_element_id,
         target_element_id,
         description,
-    })
-}
-
-/// `kat link <relationship-type> <source-element-id> <target-element-id> [--description "..."]` —
-/// run a `LinkElement` change end to end through the Change Engine and publish it.
-fn cmd_link(args: &[String]) -> ExitCode {
-    let parsed = match parse_link_args(args) {
-        Ok(parsed) => parsed,
-        Err(message) => {
-            eprintln!("kat link: {message}");
-            return ExitCode::FAILURE;
-        }
     };
 
     let repository = match open_repository(Path::new(".")) {
@@ -920,52 +797,18 @@ struct UnlinkArgs {
     description: Option<String>,
 }
 
-fn parse_unlink_args(args: &[String]) -> Result<UnlinkArgs, String> {
-    if args.is_empty() {
-        return Err(
-            "expected relationship ID\nusage: kat unlink <relationship-id> [--description \"...\"]"
-                .into(),
-        );
-    }
-
-    let relationship_id = RelationshipId::from_str(&args[0])
-        .map_err(|_| format!("invalid relationship ID: {}", args[0]))?;
-
-    let mut description = None;
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--description" => {
-                if i + 1 >= args.len() {
-                    return Err(
-                        "--description flag requires a value\nusage: kat unlink <relationship-id> [--description \"...\"]"
-                            .into(),
-                    );
-                }
-                description = Some(args[i + 1].clone());
-                i += 2;
-            }
-            other => {
-                return Err(format!(
-                    "unexpected option '{other}'\nusage: kat unlink <relationship-id> [--description \"...\"]"
-                ));
-            }
-        }
-    }
-
-    Ok(UnlinkArgs {
-        relationship_id,
-        description,
-    })
-}
-
-fn cmd_unlink(args: &[String]) -> ExitCode {
-    let parsed = match parse_unlink_args(args) {
-        Ok(parsed) => parsed,
-        Err(message) => {
-            eprintln!("kat unlink: {message}");
+fn run_unlink(relationship_id_str: String, description: Option<String>) -> ExitCode {
+    let relationship_id = match RelationshipId::from_str(&relationship_id_str) {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!("kat unlink: invalid relationship ID: {relationship_id_str}");
             return ExitCode::FAILURE;
         }
+    };
+
+    let parsed = UnlinkArgs {
+        relationship_id,
+        description,
     };
 
     let repository = match open_repository(Path::new(".")) {
@@ -1057,18 +900,11 @@ fn fail_unlink(error: ChangeError) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// `kat show <element-id>` — display the currently accepted version of an
-/// element (read-only; thin dispatch over [`show_element`]).
-fn cmd_show(args: &[String]) -> ExitCode {
-    let [element_id_arg] = args else {
-        eprintln!("kat show: expected exactly one argument");
-        eprintln!("usage: kat show <element-id>");
-        return ExitCode::FAILURE;
-    };
-    let element_id = match ElementId::from_str(element_id_arg) {
+fn run_show(element_id_str: String) -> ExitCode {
+    let element_id = match ElementId::from_str(&element_id_str) {
         Ok(id) => id,
         Err(_) => {
-            eprintln!("kat show: invalid element ID: {element_id_arg}");
+            eprintln!("kat show: invalid element ID: {element_id_str}");
             return ExitCode::FAILURE;
         }
     };
@@ -1101,14 +937,7 @@ fn cmd_show(args: &[String]) -> ExitCode {
     }
 }
 
-/// `kat history` — display the accepted Change history, newest first
-/// (read-only; thin dispatch over [`history`]).
-fn cmd_history(args: &[String]) -> ExitCode {
-    if !args.is_empty() {
-        eprintln!("kat history: expected no arguments");
-        eprintln!("usage: kat history");
-        return ExitCode::FAILURE;
-    }
+fn cmd_history() -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -1133,18 +962,11 @@ fn cmd_history(args: &[String]) -> ExitCode {
     }
 }
 
-/// `kat trace <element-id>` — trace an element back to its origin in the current
-/// accepted semantic state (read-only; thin dispatch over [`trace_origin`]).
-fn cmd_trace(args: &[String]) -> ExitCode {
-    let [element_id_arg] = args else {
-        eprintln!("kat trace: expected exactly one argument");
-        eprintln!("usage: kat trace <element-id>");
-        return ExitCode::FAILURE;
-    };
-    let element_id = match ElementId::from_str(element_id_arg) {
+fn run_trace(element_id_str: String) -> ExitCode {
+    let element_id = match ElementId::from_str(&element_id_str) {
         Ok(id) => id,
         Err(_) => {
-            eprintln!("kat trace: invalid element ID: {element_id_arg}");
+            eprintln!("kat trace: invalid element ID: {element_id_str}");
             return ExitCode::FAILURE;
         }
     };
@@ -1172,17 +994,6 @@ fn cmd_trace(args: &[String]) -> ExitCode {
     }
 }
 
-/// Prints a trace origin query result:
-///
-/// ```text
-/// element_id: <root_id>
-/// type: <type_id>
-/// lifecycle: <lifecycle>
-/// title: <title>
-/// origin_paths:
-///   path 1:
-///     - via kat.core/motivates (backward) -> <target_id> [<type>] "<title>"
-/// ```
 fn print_trace_result(repository: &Repository, result: &TraceResult) {
     println!("element_id: {}", result.root_element_id);
     if let Ok(view) = show_element(repository, result.root_element_id) {
@@ -1212,10 +1023,13 @@ fn print_trace_result(repository: &Repository, result: &TraceResult) {
                 "    - via {} ({dir_label}) -> {}",
                 step.relationship_type_id, step.to_element_id
             );
-            if let Ok(view) = show_element(repository, step.to_element_id) {
-                print!(" [{}]", view.element.type_id);
-                if let Some((_, PropertyValue::Text(title))) =
-                    view.element.properties.iter().find(|(k, _)| k == "title")
+            if let Ok(target_view) = show_element(repository, step.to_element_id) {
+                print!(" [{}]", target_view.element.type_id);
+                if let Some((_, PropertyValue::Text(title))) = target_view
+                    .element
+                    .properties
+                    .iter()
+                    .find(|(k, _)| k == "title")
                 {
                     print!(" \"{title}\"");
                 }
@@ -1225,18 +1039,11 @@ fn print_trace_result(repository: &Repository, result: &TraceResult) {
     }
 }
 
-/// `kat impact <element-id>` — analyze potential change impact from a root element
-/// in the current accepted semantic state (read-only; thin dispatch over [`analyze_impact`]).
-fn cmd_impact(args: &[String]) -> ExitCode {
-    let [element_id_arg] = args else {
-        eprintln!("kat impact: expected exactly one argument");
-        eprintln!("usage: kat impact <element-id>");
-        return ExitCode::FAILURE;
-    };
-    let element_id = match ElementId::from_str(element_id_arg) {
+fn run_impact(element_id_str: String) -> ExitCode {
+    let element_id = match ElementId::from_str(&element_id_str) {
         Ok(id) => id,
         Err(_) => {
-            eprintln!("kat impact: invalid element ID: {element_id_arg}");
+            eprintln!("kat impact: invalid element ID: {element_id_str}");
             return ExitCode::FAILURE;
         }
     };
@@ -1264,9 +1071,6 @@ fn cmd_impact(args: &[String]) -> ExitCode {
     }
 }
 
-/// Prints an impact analysis query result partitioned into the 3 v0.1 buckets:
-///
-/// ```text
 /// directly_changed:
 ///   <root_id> [<type>] "<title>"
 ///

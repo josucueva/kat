@@ -1,0 +1,61 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH kat 1  "kat 0.1.1" 
+.SH NAME
+kat \- Knowledge Abstraction Tracker
+.SH SYNOPSIS
+\fBkat\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+A specification\-first semantic software repository for representing, evolving, tracing, and validating authoritative software knowledge independently from source code files.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+kat\-init(1)
+Initialize a new KAT repository in the current directory
+.TP
+kat\-create(1)
+Create a new knowledge element
+.TP
+kat\-update(1)
+Update title or description of an existing active knowledge element
+.TP
+kat\-deprecate(1)
+Mark an active knowledge element as Deprecated
+.TP
+kat\-supersede(1)
+Supersede an existing knowledge element with a new replacement element
+.TP
+kat\-link(1)
+Establish a semantic relationship between two elements
+.TP
+kat\-unlink(1)
+Remove a relationship from the current accepted state
+.TP
+kat\-show(1)
+Show detailed view of a resolved active knowledge element
+.TP
+kat\-history(1)
+Reconstruct and display the accepted change revision graph
+.TP
+kat\-trace(1)
+Trace a knowledge element back to its origin
+.TP
+kat\-impact(1)
+Analyze potential impact and consequences of changing an element
+.TP
+kat\-validate(1)
+Run mechanical consistency validation across the current accepted state
+.TP
+kat\-artifacts(1)
+Evaluate artifact accountability baselines against accepted state
+.TP
+kat\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.1.1

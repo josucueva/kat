@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH supersede 1  "supersede " 
+.SH NAME
+supersede \- Supersede an existing knowledge element with a new replacement element
+.SH SYNOPSIS
+\fBsupersede\fR <\fB\-\-title\fR> [\fB\-\-description\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIEXISTING_ELEMENT_ID\fR> <\fIREPLACEMENT_TYPE\fR> 
+.SH DESCRIPTION
+Supersede an existing knowledge element with a new replacement element
+.SH OPTIONS
+.TP
+\fB\-\-title\fR \fI<TITLE>\fR
+Title for the replacement element
+.TP
+\fB\-\-description\fR \fI<DESCRIPTION>\fR
+Optional detailed description for the replacement element
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIEXISTING_ELEMENT_ID\fR>
+Existing element ID (UUID) to supersede
+.TP
+<\fIREPLACEMENT_TYPE\fR>
+Replacement element type (e.g. requirement, design\-decision)

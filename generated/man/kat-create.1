@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH create 1  "create " 
+.SH NAME
+create \- Create a new knowledge element
+.SH SYNOPSIS
+\fBcreate\fR <\fB\-\-title\fR> [\fB\-\-description\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_TYPE\fR> 
+.SH DESCRIPTION
+Create a new knowledge element
+.SH OPTIONS
+.TP
+\fB\-\-title\fR \fI<TITLE>\fR
+Title of the knowledge element
+.TP
+\fB\-\-description\fR \fI<DESCRIPTION>\fR
+Optional detailed description
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIELEMENT_TYPE\fR>
+Type of element to create (e.g. requirement, constraint, design\-decision, implementation, artifact)

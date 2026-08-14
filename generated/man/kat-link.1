@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH link 1  "link " 
+.SH NAME
+link \- Establish a semantic relationship between two elements
+.SH SYNOPSIS
+\fBlink\fR [\fB\-\-description\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIRELATIONSHIP_TYPE\fR> <\fISOURCE_ELEMENT_ID\fR> <\fITARGET_ELEMENT_ID\fR> 
+.SH DESCRIPTION
+Establish a semantic relationship between two elements
+.SH OPTIONS
+.TP
+\fB\-\-description\fR \fI<DESCRIPTION>\fR
+Optional detailed description
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIRELATIONSHIP_TYPE\fR>
+Relationship type (e.g. addresses, depends\-on, derived\-from, guides, motivates, realizes, represents, restricts, validates)
+.TP
+<\fISOURCE_ELEMENT_ID\fR>
+Source element ID (UUID)
+.TP
+<\fITARGET_ELEMENT_ID\fR>
+Target element ID (UUID)

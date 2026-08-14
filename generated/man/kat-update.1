@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH update 1  "update " 
+.SH NAME
+update \- Update title or description of an existing active knowledge element
+.SH SYNOPSIS
+\fBupdate\fR [\fB\-\-title\fR] [\fB\-\-description\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_ID\fR> 
+.SH DESCRIPTION
+Update title or description of an existing active knowledge element
+.SH OPTIONS
+.TP
+\fB\-\-title\fR \fI<TITLE>\fR
+New title for the element
+.TP
+\fB\-\-description\fR \fI<DESCRIPTION>\fR
+New description for the element
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIELEMENT_ID\fR>
+Element ID (UUID) to update

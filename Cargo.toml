@@ -1,6 +1,6 @@
 [package]
 name = "kat"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "KAT (Knowledge Abstraction Tracker) - a semantic software repository for representing, evolving, tracing, and validating authoritative software knowledge."
 
@@ -10,6 +10,9 @@ hex = "0.4"
 thiserror = "2"
 sha2 = "0.10"
 toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+clap_mangen = "0.2"
 
 [dev-dependencies]
 # Only the vector-conformance harness (tests/) parses fixture JSON. The

@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH unlink 1  "unlink " 
+.SH NAME
+unlink \- Remove a relationship from the current accepted state
+.SH SYNOPSIS
+\fBunlink\fR [\fB\-\-description\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIRELATIONSHIP_ID\fR> 
+.SH DESCRIPTION
+Remove a relationship from the current accepted state
+.SH OPTIONS
+.TP
+\fB\-\-description\fR \fI<DESCRIPTION>\fR
+Optional detailed description
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIRELATIONSHIP_ID\fR>
+Relationship ID (UUID) to remove

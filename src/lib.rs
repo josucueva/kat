@@ -8,6 +8,7 @@
 //! the domain and canonical-format rules are authoritative; storage and CLI
 //! concerns are downstream.
 
+pub mod cli;
 pub mod domain;
 pub mod encoding;
 pub mod repository;
