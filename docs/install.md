@@ -53,6 +53,84 @@ The native GNU toolchain is the default; no extra setup is required.
   The GNU-built binary depends on MinGW runtime DLLs, so `C:\msys64\mingw64\bin`
   must stay on `PATH` when running `kat`.
 
+## UNIX Man Pages and Shell Completions
+
+Generate the assets:
+
+```bash
+cargo run --bin generate_assets
+```
+
+This produces:
+
+```text
+generated/man/
+generated/completions/
+```
+
+Generated assets are deterministic and can be verified with:
+
+```bash
+cargo run --bin generate_assets
+git diff --exit-code generated/
+```
+
+### Man Pages
+
+For a per-user installation on Linux:
+
+```bash
+mkdir -p ~/.local/share/man/man1
+cp generated/man/*.1 ~/.local/share/man/man1/
+```
+
+Then, depending on the system:
+
+```bash
+mandb ~/.local/share/man
+```
+
+You can then use:
+
+```bash
+man kat
+man kat-create
+man kat-trace
+```
+
+### Bash
+
+For the current session:
+
+```bash
+source generated/completions/kat.bash
+```
+
+For persistent installation, copy it into an appropriate Bash completion directory for the user's system.
+
+### Zsh
+
+Add a directory containing `_kat` to `$fpath`, for example:
+
+```bash
+mkdir -p ~/.local/share/zsh/site-functions
+cp generated/completions/_kat ~/.local/share/zsh/site-functions/
+```
+
+Ensure that directory is present in `fpath`, then run:
+
+```bash
+autoload -Uz compinit
+compinit
+```
+
+### Fish
+
+```bash
+mkdir -p ~/.config/fish/completions
+cp generated/completions/kat.fish ~/.config/fish/completions/
+```
+
 ## Quick check
 
 Run these in a scratch directory (they create a `.kat/` repository there):
