@@ -1997,3 +1997,165 @@ fn phase7_acceptance_cli_flow_end_to_end() {
     assert_eq!(objects_after, objects_before);
     assert_eq!(refs_after, refs_before);
 }
+
+#[test]
+fn kat_impact_malformed_arguments_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+
+    let (_out, err, ok) = run_kat(root, &["impact"]);
+    assert!(!ok);
+    assert!(err.contains("expected exactly one argument"));
+
+    let (_out, err, ok) = run_kat(root, &["impact", "not-a-uuid"]);
+    assert!(!ok);
+    assert!(err.contains("invalid element ID"));
+}
+
+#[test]
+fn kat_impact_outside_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let uuid_str = Uuid::from_u128(1001).to_string();
+
+    let (_out, err, ok) = run_kat(root, &["impact", &uuid_str]);
+    assert!(!ok);
+    assert!(err.contains("no KAT repository found"));
+}
+
+#[test]
+fn kat_impact_unknown_element_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+    let uuid_str = Uuid::from_u128(9999).to_string();
+
+    let (_out, err, ok) = run_kat(root, &["impact", &uuid_str]);
+    assert!(!ok);
+    assert!(err.contains("not found in the accepted state"));
+}
+
+#[test]
+fn phase8_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init
+    let (_out, err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {err}");
+
+    // 2. Create Intent (I1)
+    let (i1_out, i1_err, ok) = run_kat(
+        root,
+        &["create", "intent", "--title", "AuthX Identity Service"],
+    );
+    assert!(ok, "create intent failed: {i1_err}");
+    let e_intent = id_line(&i1_out, "element_id");
+
+    // 3. Create Requirement (R1)
+    let (r1_out, r1_err, ok) = run_kat(
+        root,
+        &["create", "requirement", "--title", "OAuth2 Authentication"],
+    );
+    assert!(ok, "create requirement failed: {r1_err}");
+    let e_req = id_line(&r1_out, "element_id");
+
+    // 4. Create Decision (D1)
+    let (d1_out, d1_err, ok) = run_kat(
+        root,
+        &["create", "design-decision", "--title", "Use PASETO Tokens"],
+    );
+    assert!(ok, "create decision failed: {d1_err}");
+    let e_dec = id_line(&d1_out, "element_id");
+
+    // 5. Create Implementation (M1)
+    let (m1_out, m1_err, ok) = run_kat(
+        root,
+        &["create", "implementation", "--title", "OAuth Core Module"],
+    );
+    assert!(ok, "create implementation M1 failed: {m1_err}");
+    let e_impl1 = id_line(&m1_out, "element_id");
+
+    // 6. Create Implementation (M2)
+    let (m2_out, m2_err, ok) = run_kat(
+        root,
+        &["create", "implementation", "--title", "OAuth Gateway Proxy"],
+    );
+    assert!(ok, "create implementation M2 failed: {m2_err}");
+    let e_impl2 = id_line(&m2_out, "element_id");
+
+    // 7. Create Artifact (A1)
+    let (a1_out, a1_err, ok) = run_kat(root, &["create", "artifact", "--title", "authx-core.jar"]);
+    assert!(ok, "create artifact failed: {a1_err}");
+    let e_art = id_line(&a1_out, "element_id");
+
+    // 8. Create Validation (V1)
+    let (v1_out, v1_err, ok) = run_kat(
+        root,
+        &["create", "validation", "--title", "OAuth Integration Suite"],
+    );
+    assert!(ok, "create validation failed: {v1_err}");
+    let e_val = id_line(&v1_out, "element_id");
+
+    // 9. Link Intent (motivates) -> Requirement
+    let (_out, err, ok) = run_kat(root, &["link", "motivates", e_intent, e_req]);
+    assert!(ok, "link motivates failed: {err}");
+
+    // 10. Link Decision (addresses) -> Requirement
+    let (_out, err, ok) = run_kat(root, &["link", "addresses", e_dec, e_req]);
+    assert!(ok, "link addresses failed: {err}");
+
+    // 11. Link Implementation M1 (realizes) -> Requirement
+    let (_out, err, ok) = run_kat(root, &["link", "realizes", e_impl1, e_req]);
+    assert!(ok, "link realizes failed: {err}");
+
+    // 12. Link Implementation M2 (depends-on) -> Implementation M1
+    let (_out, err, ok) = run_kat(root, &["link", "depends-on", e_impl2, e_impl1]);
+    assert!(ok, "link depends-on failed: {err}");
+
+    // 13. Link Artifact A1 (represents) -> Implementation M1
+    let (_out, err, ok) = run_kat(root, &["link", "represents", e_art, e_impl1]);
+    assert!(ok, "link represents failed: {err}");
+
+    // 14. Link Validation V1 (validates) -> Requirement R1
+    let (_out, err, ok) = run_kat(root, &["link", "validates", e_val, e_req]);
+    assert!(ok, "link validates failed: {err}");
+
+    // 15. kat impact Requirement R1
+    let (impact_out, impact_err, ok) = run_kat(root, &["impact", e_req]);
+    assert!(ok, "kat impact failed: {impact_err}\n{impact_out}");
+
+    // Verify Directly Changed
+    assert!(impact_out.contains("directly_changed:"));
+    assert!(impact_out.contains(e_req));
+
+    // Verify Semantically Affected
+    assert!(impact_out.contains("semantically_affected:"));
+    assert!(impact_out.contains(e_dec));
+    assert!(impact_out.contains(e_impl1));
+    assert!(impact_out.contains(e_impl2));
+    assert!(impact_out.contains(e_val));
+
+    // Verify Affected Artifacts
+    assert!(impact_out.contains("affected_artifacts:"));
+    assert!(impact_out.contains(e_art));
+    assert!(impact_out.contains("via kat.core/represents (backward)"));
+
+    // 16. Non-mutation verification
+    let objects_before = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    let refs_before = std::fs::read_to_string(root.join(".kat/refs/accepted")).unwrap();
+
+    let (_out, _err, ok) = run_kat(root, &["impact", e_req]);
+    assert!(ok);
+
+    let objects_after = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    let refs_after = std::fs::read_to_string(root.join(".kat/refs/accepted")).unwrap();
+
+    assert_eq!(objects_after, objects_before);
+    assert_eq!(refs_after, refs_before);
+}

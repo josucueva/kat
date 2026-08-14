@@ -42,8 +42,9 @@ pub use change::{
 };
 pub use open::{Repository, open_repository};
 pub use query::{
-    ElementView, HistoryEntry, QueryError, TracePath, TraceResult, TraceStep, TraversalDirection,
-    history, origin_traversal_direction, show_element, trace_origin,
+    ElementView, HistoryEntry, ImpactPath, ImpactResult, ImpactStep, ImpactedElement, QueryError,
+    TracePath, TraceResult, TraceStep, TraversalDirection, analyze_impact, history,
+    impact_propagation_direction, origin_traversal_direction, show_element, trace_origin,
 };
 pub use validation::invariant::InvariantError;
 pub use validation::ontology::{OntologyError, validate_element_type, validate_relationship};

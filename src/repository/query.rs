@@ -89,6 +89,76 @@ pub fn origin_traversal_direction(relationship_type_id: &str) -> Option<Traversa
     }
 }
 
+/// A single step in an impact propagation path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImpactStep {
+    /// Element identity where the impact propagates from.
+    pub from_element_id: ElementId,
+    /// Stable relationship identity traversed.
+    pub relationship_id: RelationshipId,
+    /// Ontology type identifier of the relationship.
+    pub relationship_type_id: String,
+    /// Direction the relationship was traversed relative to its canonical definition.
+    pub direction: TraversalDirection,
+    /// Element identity reached by this step.
+    pub to_element_id: ElementId,
+}
+
+/// A sequence of steps explaining why an element is impacted by a change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImpactPath {
+    /// Ordered steps from change root toward impacted target.
+    pub steps: Vec<ImpactStep>,
+}
+
+/// An element impacted by a change, with its type, lifecycle, and rationale paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImpactedElement {
+    /// Identity of the impacted element.
+    pub element_id: ElementId,
+    /// Ontology type identifier of the element.
+    pub type_id: String,
+    /// Current lifecycle state.
+    pub lifecycle: crate::domain::element::Lifecycle,
+    /// Paths explaining how impact propagated to this element.
+    pub paths: Vec<ImpactPath>,
+}
+
+/// Categorized result of analyzing potential change consequences from a root element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImpactResult {
+    /// Directly changed element ID(s).
+    pub directly_changed: Vec<ElementId>,
+    /// Semantically affected active knowledge elements.
+    pub semantically_affected: Vec<ImpactedElement>,
+    /// Artifact elements affected through traceability.
+    pub affected_artifacts: Vec<ImpactedElement>,
+}
+
+/// Classifies a relationship type for impact propagation.
+///
+/// Returns `Some(direction)` indicating which direction impact propagates through the edge
+/// when a source or target changes, or `None` if the relationship is excluded from impact propagation.
+pub fn impact_propagation_direction(relationship_type_id: &str) -> Option<TraversalDirection> {
+    let short_or_qualified = relationship_type_id
+        .rsplit('/')
+        .next()
+        .unwrap_or(relationship_type_id);
+    match short_or_qualified {
+        "motivates" => Some(TraversalDirection::Forward),
+        "derived-from" | "derived_from" => Some(TraversalDirection::Backward),
+        "realizes" => Some(TraversalDirection::Backward),
+        "represents" => Some(TraversalDirection::Backward),
+        "validates" => Some(TraversalDirection::Backward),
+        "restricts" => Some(TraversalDirection::Forward),
+        "addresses" => Some(TraversalDirection::Backward),
+        "guides" => Some(TraversalDirection::Forward),
+        "depends-on" | "depends_on" => Some(TraversalDirection::Backward),
+        "supersedes" => None,
+        _ => None,
+    }
+}
+
 /// Error produced by read-side queries.
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
@@ -491,5 +561,210 @@ fn explore_origin_paths(
         paths.push(TracePath {
             steps: current_path.clone(),
         });
+    }
+}
+
+/// Analyzes the potential impact of a change to `root_element_id` in the current accepted state.
+///
+/// ```text
+/// refs/accepted (current)
+///     ↓
+/// SemanticState
+///     ↓ binary search root_element_id
+/// KnowledgeElementVersion
+///     ↓ deterministic path exploration over accepted relationships (impact rules)
+/// ImpactResult { directly_changed, semantically_affected, affected_artifacts }
+/// ```
+///
+/// Traversal is pure read-only over the accepted semantic state. It follows impact-classified
+/// relationship types in their respective impact propagation directions. Edges are evaluated
+/// in canonical accepted-state relationship order (`RelationshipId` order). Cycle detection
+/// tracks visited relationship IDs per path branch to guarantee finite, deterministic exploration.
+/// Target elements are filtered to `Lifecycle::Active` and partitioned into `semantically_affected`
+/// vs `affected_artifacts`.
+pub fn analyze_impact(
+    repository: &Repository,
+    root_element_id: ElementId,
+) -> Result<ImpactResult, QueryError> {
+    let accepted = repository.ref_store().read_accepted()?;
+
+    let state = match load_typed(
+        repository.object_store(),
+        accepted.state,
+        ObjectKind::SemanticState,
+    )?
+    .payload
+    {
+        CanonicalPayload::SemanticState(state) => state,
+        _ => unreachable!("kind verified by load_typed"),
+    };
+
+    // Verify root_element_id presence in accepted state
+    if !state
+        .elements
+        .iter()
+        .any(|e| e.element_id == root_element_id)
+    {
+        return Err(QueryError::ElementNotFound(root_element_id));
+    }
+
+    // Load element versions and relationship versions in accepted state
+    let mut loaded_element_versions = HashMap::new();
+    for entry in &state.elements {
+        let elem = match load_typed(
+            repository.object_store(),
+            entry.version,
+            ObjectKind::KnowledgeElementVersion,
+        )?
+        .payload
+        {
+            CanonicalPayload::KnowledgeElementVersion(elem) => elem,
+            _ => unreachable!("kind verified by load_typed"),
+        };
+        loaded_element_versions.insert(entry.element_id, elem);
+    }
+
+    let mut loaded_rel_versions = HashMap::new();
+    for entry in &state.relationships {
+        let rel = match load_typed(
+            repository.object_store(),
+            entry.version,
+            ObjectKind::RelationshipVersion,
+        )?
+        .payload
+        {
+            CanonicalPayload::RelationshipVersion(rel) => rel,
+            _ => unreachable!("kind verified by load_typed"),
+        };
+        loaded_rel_versions.insert(entry.relationship_id, rel);
+    }
+
+    // Explore impact paths
+    let mut raw_impacted_paths: HashMap<ElementId, Vec<ImpactPath>> = HashMap::new();
+    let mut current_path = Vec::new();
+    let mut visited_rels = HashSet::new();
+
+    explore_impact_paths(
+        root_element_id,
+        &state.relationships,
+        &loaded_rel_versions,
+        &mut current_path,
+        &mut visited_rels,
+        &mut raw_impacted_paths,
+    );
+
+    let mut semantically_affected = Vec::new();
+    let mut affected_artifacts = Vec::new();
+
+    // Preserve canonical element ordering when emitting impacted elements
+    for entry in &state.elements {
+        if entry.element_id == root_element_id {
+            continue;
+        }
+
+        let Some(paths) = raw_impacted_paths.remove(&entry.element_id) else {
+            continue;
+        };
+
+        let Some(elem_v) = loaded_element_versions.get(&entry.element_id) else {
+            continue;
+        };
+
+        // Filter propagated target elements to Active lifecycle
+        if elem_v.lifecycle != crate::domain::element::Lifecycle::Active {
+            continue;
+        }
+
+        let impacted = ImpactedElement {
+            element_id: entry.element_id,
+            type_id: elem_v.type_id.clone(),
+            lifecycle: elem_v.lifecycle,
+            paths,
+        };
+
+        let short_type = elem_v.type_id.rsplit('/').next().unwrap_or(&elem_v.type_id);
+        if short_type == "artifact" {
+            affected_artifacts.push(impacted);
+        } else {
+            semantically_affected.push(impacted);
+        }
+    }
+
+    Ok(ImpactResult {
+        directly_changed: vec![root_element_id],
+        semantically_affected,
+        affected_artifacts,
+    })
+}
+
+fn explore_impact_paths(
+    current_element_id: ElementId,
+    state_relationships: &[crate::domain::state::RelationshipStateEntry],
+    loaded_rel_versions: &HashMap<RelationshipId, crate::domain::relationship::RelationshipVersion>,
+    current_path: &mut Vec<ImpactStep>,
+    visited_rels: &mut HashSet<RelationshipId>,
+    raw_impacted_paths: &mut HashMap<ElementId, Vec<ImpactPath>>,
+) {
+    for entry in state_relationships {
+        if visited_rels.contains(&entry.relationship_id) {
+            continue;
+        }
+
+        let Some(rel_v) = loaded_rel_versions.get(&entry.relationship_id) else {
+            continue;
+        };
+
+        let Some(direction) = impact_propagation_direction(&rel_v.relationship_type) else {
+            continue;
+        };
+
+        let next_element_id = match direction {
+            TraversalDirection::Forward => {
+                if rel_v.source_element_id == current_element_id {
+                    Some(rel_v.target_element_id)
+                } else {
+                    None
+                }
+            }
+            TraversalDirection::Backward => {
+                if rel_v.target_element_id == current_element_id {
+                    Some(rel_v.source_element_id)
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(next_id) = next_element_id {
+            let step = ImpactStep {
+                from_element_id: current_element_id,
+                relationship_id: entry.relationship_id,
+                relationship_type_id: rel_v.relationship_type.clone(),
+                direction,
+                to_element_id: next_id,
+            };
+
+            visited_rels.insert(entry.relationship_id);
+            current_path.push(step);
+
+            raw_impacted_paths
+                .entry(next_id)
+                .or_default()
+                .push(ImpactPath {
+                    steps: current_path.clone(),
+                });
+
+            explore_impact_paths(
+                next_id,
+                state_relationships,
+                loaded_rel_versions,
+                current_path,
+                visited_rels,
+                raw_impacted_paths,
+            );
+
+            current_path.pop();
+            visited_rels.remove(&entry.relationship_id);
+        }
     }
 }

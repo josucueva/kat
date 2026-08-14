@@ -36,7 +36,8 @@ use kat::repository::change::{
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
 use kat::repository::query::{
-    HistoryEntry, QueryError, TraceResult, TraversalDirection, history, show_element, trace_origin,
+    HistoryEntry, ImpactResult, QueryError, TraceResult, TraversalDirection, analyze_impact,
+    history, show_element, trace_origin,
 };
 
 fn main() -> ExitCode {
@@ -52,10 +53,11 @@ fn main() -> ExitCode {
         Some("show") => cmd_show(&args[1..]),
         Some("history") => cmd_history(&args[1..]),
         Some("trace") => cmd_trace(&args[1..]),
+        Some("impact") => cmd_impact(&args[1..]),
         Some(other) => {
             eprintln!("kat: unknown command '{other}'");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history | kat trace <element-id>"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history | kat trace <element-id> | kat impact <element-id>"
             );
             ExitCode::FAILURE
         }
@@ -1216,6 +1218,131 @@ fn print_trace_result(repository: &Repository, result: &TraceResult) {
             }
             println!();
         }
+    }
+}
+
+/// `kat impact <element-id>` — analyze potential change impact from a root element
+/// in the current accepted semantic state (read-only; thin dispatch over [`analyze_impact`]).
+fn cmd_impact(args: &[String]) -> ExitCode {
+    let [element_id_arg] = args else {
+        eprintln!("kat impact: expected exactly one argument");
+        eprintln!("usage: kat impact <element-id>");
+        return ExitCode::FAILURE;
+    };
+    let element_id = match ElementId::from_str(element_id_arg) {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!("kat impact: invalid element ID: {element_id_arg}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat impact: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match analyze_impact(&repository, element_id) {
+        Ok(result) => {
+            print_impact_result(&repository, &result);
+            ExitCode::SUCCESS
+        }
+        Err(QueryError::ElementNotFound(id)) => {
+            eprintln!("kat impact: element {id} not found in the accepted state");
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("kat impact: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Prints an impact analysis query result partitioned into the 3 v0.1 buckets:
+///
+/// ```text
+/// directly_changed:
+///   <root_id> [<type>] "<title>"
+///
+/// semantically_affected:
+///   <target_id> [<type>] "<title>"
+///     via kat.core/addresses (backward) -> <from_id>
+///
+/// affected_artifacts:
+///   <artifact_id> [<type>] "<title>"
+///     via kat.core/represents (backward) -> <impl_id>
+/// ```
+fn print_impact_result(repository: &Repository, result: &ImpactResult) {
+    println!("directly_changed:");
+    for id in &result.directly_changed {
+        print!("  {id}");
+        if let Ok(view) = show_element(repository, *id) {
+            print!(" [{}]", view.element.type_id);
+            print_title_property(&view.element.properties);
+        }
+        println!();
+    }
+
+    println!();
+    println!("semantically_affected:");
+    if result.semantically_affected.is_empty() {
+        println!("  none");
+    } else {
+        for elem in &result.semantically_affected {
+            print!("  {}", elem.element_id);
+            print!(" [{}]", elem.type_id);
+            if let Ok(view) = show_element(repository, elem.element_id) {
+                print_title_property(&view.element.properties);
+            }
+            println!();
+            for path in &elem.paths {
+                for step in &path.steps {
+                    let dir_label = match step.direction {
+                        TraversalDirection::Forward => "forward",
+                        TraversalDirection::Backward => "backward",
+                    };
+                    println!(
+                        "    via {} ({dir_label}) -> {}",
+                        step.relationship_type_id, step.from_element_id
+                    );
+                }
+            }
+        }
+    }
+
+    println!();
+    println!("affected_artifacts:");
+    if result.affected_artifacts.is_empty() {
+        println!("  none");
+    } else {
+        for elem in &result.affected_artifacts {
+            print!("  {}", elem.element_id);
+            print!(" [{}]", elem.type_id);
+            if let Ok(view) = show_element(repository, elem.element_id) {
+                print_title_property(&view.element.properties);
+            }
+            println!();
+            for path in &elem.paths {
+                for step in &path.steps {
+                    let dir_label = match step.direction {
+                        TraversalDirection::Forward => "forward",
+                        TraversalDirection::Backward => "backward",
+                    };
+                    println!(
+                        "    via {} ({dir_label}) -> {}",
+                        step.relationship_type_id, step.from_element_id
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn print_title_property(properties: &[(String, PropertyValue)]) {
+    if let Some((_, PropertyValue::Text(title))) = properties.iter().find(|(k, _)| k == "title") {
+        print!(" \"{title}\"");
     }
 }
 

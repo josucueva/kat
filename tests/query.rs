@@ -38,7 +38,9 @@ use kat::repository::change::{
 use kat::repository::init::init_repository;
 use kat::repository::object_store::ObjectStoreError;
 use kat::repository::open::open_repository;
-use kat::repository::query::{QueryError, TraversalDirection, history, show_element, trace_origin};
+use kat::repository::query::{
+    QueryError, TraversalDirection, analyze_impact, history, show_element, trace_origin,
+};
 use kat::repository::ref_store::{AcceptedRef, RefStore};
 use uuid::Uuid;
 
@@ -1020,6 +1022,311 @@ fn trace_origin_does_not_mutate_repository() {
 
     let repo = open_repository(root).unwrap();
     trace_origin(&repo, ids.element_id).unwrap();
+
+    assert_eq!(object_ids(root), objects_before);
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
+}
+
+// ---------------------------------------------------------------------------
+// analyze_impact tests (Step 8.3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn impact_unknown_element_returns_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+    let repo = open_repository(root).unwrap();
+
+    let missing_id = ElementId::from_uuid(Uuid::from_u128(9999));
+    let err = analyze_impact(&repo, missing_id).unwrap_err();
+    assert!(matches!(err, QueryError::ElementNotFound(id) if id == missing_id));
+}
+
+#[test]
+fn impact_single_hop_and_category_partitioning() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    // Create Requirement R1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_req = ElementId::from_uuid(Uuid::from_u128(9001));
+    let prep_r1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_req,
+                    type_id: "kat.core/requirement".into(),
+                    properties: vec![(
+                        "title".into(),
+                        PropertyValue::Text("Requirement R1".into()),
+                    )],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_change(
+        &repo,
+        persist_prepared_change(
+            &repo,
+            prepare_change_revision(prep_r1, ChangeId::from_uuid(Uuid::from_u128(9101)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Create Design Decision D1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_dec = ElementId::from_uuid(Uuid::from_u128(9002));
+    let prep_d1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_dec,
+                    type_id: "kat.core/design-decision".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Decision D1".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_change(
+        &repo,
+        persist_prepared_change(
+            &repo,
+            prepare_change_revision(prep_d1, ChangeId::from_uuid(Uuid::from_u128(9102)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Create Implementation M1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_impl = ElementId::from_uuid(Uuid::from_u128(9003));
+    let prep_m1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_impl,
+                    type_id: "kat.core/implementation".into(),
+                    properties: vec![(
+                        "title".into(),
+                        PropertyValue::Text("Implementation M1".into()),
+                    )],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_change(
+        &repo,
+        persist_prepared_change(
+            &repo,
+            prepare_change_revision(prep_m1, ChangeId::from_uuid(Uuid::from_u128(9103)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Create Artifact A1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_art = ElementId::from_uuid(Uuid::from_u128(9004));
+    let prep_a1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_art,
+                    type_id: "kat.core/artifact".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Artifact A1".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_change(
+        &repo,
+        persist_prepared_change(
+            &repo,
+            prepare_change_revision(prep_a1, ChangeId::from_uuid(Uuid::from_u128(9104)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Link D1 (addresses) -> R1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let r1_id = RelationshipId::from_uuid(Uuid::from_u128(9201));
+    let prep_l1 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: r1_id,
+                    relationship_type_id: "kat.core/addresses".into(),
+                    source_element_id: e_dec,
+                    target_element_id: e_req,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(
+            &repo,
+            prepare_link_change_revision(prep_l1, ChangeId::from_uuid(Uuid::from_u128(9105)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Link M1 (realizes) -> R1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let r2_id = RelationshipId::from_uuid(Uuid::from_u128(9202));
+    let prep_l2 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: r2_id,
+                    relationship_type_id: "kat.core/realizes".into(),
+                    source_element_id: e_impl,
+                    target_element_id: e_req,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(
+            &repo,
+            prepare_link_change_revision(prep_l2, ChangeId::from_uuid(Uuid::from_u128(9106)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Link A1 (represents) -> M1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let r3_id = RelationshipId::from_uuid(Uuid::from_u128(9203));
+    let prep_l3 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: r3_id,
+                    relationship_type_id: "kat.core/represents".into(),
+                    source_element_id: e_art,
+                    target_element_id: e_impl,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(
+            &repo,
+            prepare_link_change_revision(prep_l3, ChangeId::from_uuid(Uuid::from_u128(9107)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let reopened = open_repository(root).unwrap();
+
+    // Analyze impact when Requirement R1 changes
+    let res = analyze_impact(&reopened, e_req).unwrap();
+    assert_eq!(res.directly_changed, vec![e_req]);
+
+    // Semantically affected elements: Decision D1 (addresses) and Implementation M1 (realizes)
+    assert_eq!(res.semantically_affected.len(), 2);
+    let sem_ids: Vec<ElementId> = res
+        .semantically_affected
+        .iter()
+        .map(|e| e.element_id)
+        .collect();
+    assert!(sem_ids.contains(&e_dec));
+    assert!(sem_ids.contains(&e_impl));
+
+    // Affected artifacts: Artifact A1 (via represents -> M1 -> R1)
+    assert_eq!(res.affected_artifacts.len(), 1);
+    assert_eq!(res.affected_artifacts[0].element_id, e_art);
+    assert_eq!(res.affected_artifacts[0].paths[0].steps.len(), 2);
+    assert_eq!(
+        res.affected_artifacts[0].paths[0].steps[0].from_element_id,
+        e_req
+    );
+    assert_eq!(
+        res.affected_artifacts[0].paths[0].steps[0].to_element_id,
+        e_impl
+    );
+    assert_eq!(
+        res.affected_artifacts[0].paths[0].steps[1].from_element_id,
+        e_impl
+    );
+    assert_eq!(
+        res.affected_artifacts[0].paths[0].steps[1].to_element_id,
+        e_art
+    );
+}
+
+#[test]
+fn impact_does_not_mutate_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let ids = publish_first_change(root, 99, 199);
+    let objects_before = object_ids(root);
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    analyze_impact(&repo, ids.element_id).unwrap();
 
     assert_eq!(object_ids(root), objects_before);
     assert_eq!(

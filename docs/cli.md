@@ -96,5 +96,6 @@ kat unlink <relationship-id> [--description "..."]
 kat show <element-id>
 kat history
 kat trace <element-id>
+kat impact <element-id>
 ```
 

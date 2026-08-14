@@ -662,4 +662,29 @@ When performing **Origin Tracing** (`kat trace`), relationships participate in p
 
 Relationships classified as *Excluded* (such as `kat.core/depends-on`) represent horizontal or operational dependencies rather than authoritative origin or rationale, and are omitted from Origin Tracing.
 
+# Impact Propagation Policy
+
+Impact Analysis (`kat impact`) answers: *If a knowledge element changes, what other current knowledge may be affected?*
+
+Impact propagation travels through relationships according to a normative direction relative to their canonical definitions:
+
+| Relationship Type | Canonical Form | Impact Propagation Direction | Semantic Rationale |
+| :--- | :--- | :--- | :--- |
+| `kat.core/motivates` | Intent $\xrightarrow{\text{motivates}}$ Req / Decision | Source $\to$ Target (**Forward**) | Changed Intent affects motivated Requirement / Decision |
+| `kat.core/addresses` | Decision $\xrightarrow{\text{addresses}}$ Requirement | Target $\to$ Source (**Backward**) | Changed Requirement affects addressing Decision |
+| `kat.core/restricts` | Constraint $\xrightarrow{\text{restricts}}$ Req / Decision / Impl | Source $\to$ Target (**Forward**) | Changed Constraint affects restricted elements |
+| `kat.core/guides` | Decision $\xrightarrow{\text{guides}}$ Implementation | Source $\to$ Target (**Forward**) | Changed Decision affects guided Implementation |
+| `kat.core/realizes` | Impl $\xrightarrow{\text{realizes}}$ Requirement | Target $\to$ Source (**Backward**) | Changed Requirement affects realizing Implementation |
+| `kat.core/represents` | Artifact $\xrightarrow{\text{represents}}$ Implementation | Target $\to$ Source (**Backward**) | Changed Implementation affects representing Artifact |
+| `kat.core/derived-from` | Artifact $\xrightarrow{\text{derived-from}}$ Auth Knowledge | Target $\to$ Source (**Backward**) | Changed Auth Knowledge affects derived Artifact |
+| `kat.core/validates` | Validation $\xrightarrow{\text{validates}}$ Subject | Target $\to$ Source (**Backward**) | Changed Subject affects validating evidence |
+| `kat.core/depends-on` | Impl A $\xrightarrow{\text{depends-on}}$ Impl B | Target $\to$ Source (**Backward**) | Changed Dependency B affects dependent Implementation A |
+| `kat.core/supersedes` | Replacement $\xrightarrow{\text{supersedes}}$ Existing Decision | *Excluded (Non-Impact)* | Historical evolution relation (omitted from current impact) |
+
+Impact Analysis categorizes impacted elements into three distinct buckets:
+1. **Directly Changed Elements**: The root element(s) being modified.
+2. **Semantically Affected Elements**: Non-artifact Active elements reached via impact propagation (`Requirement`, `Constraint`, `Design Decision`, `Implementation`, `Validation`, `Intent`).
+3. **Affected Artifacts**: Active elements of type `kat.core/artifact` reached via impact propagation.
+
+
 
