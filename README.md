@@ -1,14 +1,12 @@
-# KAT v0.1.1 (Knowledge Abstraction Tracker)
+# KAT (Knowledge Abstraction Tracker)
 
 **KAT** (**Knowledge Abstraction Tracker**) is a **semantic software repository**: a specification-first system for representing, evolving, tracing, and validating software as _knowledge_ rather than as source-code files.
 
 KAT treats the specification — intent, requirements, constraints, design decisions, and their relationships — as the authoritative knowledge of a software system. Source code, tests, configuration, and documentation are artifacts that represent, implement, validate, or materialize that knowledge. They remain traceable to it, but they never independently redefine the intended state of the software.
 
-**Status**: KAT v0.1.1 Release — Complete specification-first substrate with immutable semantic change, history reconstruction, provenance tracing, impact analysis, consistency validation, version-relative artifact accountability, plus `clap`-based CLI UX polish, per-command help, generated UNIX man pages, and shell completions.
-
 ---
 
-## Key Capabilities (v0.1.1)
+## Key Capabilities
 
 * **Knowledge Representation**: First-class Intent, Requirement, Constraint, Design Decision, Implementation, Artifact, and Validation elements with stable UUID identities and immutable CBOR-encoded version Object IDs.
 * **Immutable Semantic Evolution**: Authoritative change engine supporting 6 primary operations (`create`, `update`, `deprecate`, `supersede`, `link`, `unlink`) published atomically via compare-and-swap state refs (`refs/accepted`).
@@ -31,7 +29,7 @@ cargo install --path .
 
 ### CLI Help and Generated Assets
 
-KAT v0.1.1 includes structured command help through `clap`:
+KAT includes structured command help through `clap`:
 
 ```bash
 kat --help
