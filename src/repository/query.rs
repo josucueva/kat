@@ -13,17 +13,81 @@
 //! This is the read counterpart of `change.rs`: the engine mutates through
 //! prepared/persisted/published typestates; queries only observe.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::domain::change::ChangeRevision;
 use crate::domain::element::KnowledgeElementVersion;
-use crate::domain::identity::{ElementId, ObjectId};
+use crate::domain::identity::{ElementId, ObjectId, RelationshipId};
 use crate::encoding::decode::DecodingError;
 use crate::encoding::decode_canonical;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use crate::repository::object_store::{ObjectStore, ObjectStoreError};
 use crate::repository::open::Repository;
 use crate::repository::ref_store::{RefStore, RefStoreError};
+
+/// Direction traversed when following a relationship in an origin trace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TraversalDirection {
+    /// Traversed from relationship source to relationship target.
+    Forward,
+    /// Traversed from relationship target to relationship source.
+    Backward,
+}
+
+/// A single step in a trace origin path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceStep {
+    /// Element identity where the step originates.
+    pub from_element_id: ElementId,
+    /// Stable relationship identity traversed.
+    pub relationship_id: RelationshipId,
+    /// Ontology type identifier of the relationship.
+    pub relationship_type_id: String,
+    /// Direction the relationship was traversed relative to its canonical definition.
+    pub direction: TraversalDirection,
+    /// Element identity reached by this step.
+    pub to_element_id: ElementId,
+}
+
+/// A single sequence of trace steps connecting a root element to an origin root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TracePath {
+    /// Ordered steps from root toward origin.
+    pub steps: Vec<TraceStep>,
+}
+
+/// Result of tracing a knowledge element back to its authoritative origins.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceResult {
+    /// The root ElementId queried.
+    pub root_element_id: ElementId,
+    /// Discovered origin paths. Empty if root element is itself an authoritative origin.
+    pub paths: Vec<TracePath>,
+}
+
+/// Classifies a relationship type for origin tracing.
+///
+/// Returns `Some(direction)` indicating which direction to traverse the edge to move
+/// toward origin, or `None` if the relationship type does not participate in origin tracing.
+pub fn origin_traversal_direction(relationship_type_id: &str) -> Option<TraversalDirection> {
+    let short_or_qualified = relationship_type_id
+        .rsplit('/')
+        .next()
+        .unwrap_or(relationship_type_id);
+    match short_or_qualified {
+        "motivates" => Some(TraversalDirection::Backward),
+        "derived-from" | "derived_from" => Some(TraversalDirection::Forward),
+        "realizes" => Some(TraversalDirection::Forward),
+        "represents" => Some(TraversalDirection::Forward),
+        "validates" => Some(TraversalDirection::Forward),
+        "restricts" => Some(TraversalDirection::Backward),
+        "addresses" => Some(TraversalDirection::Forward),
+        "supersedes" => Some(TraversalDirection::Forward),
+        "guides" => Some(TraversalDirection::Backward),
+        "depends-on" | "depends_on" => None,
+        _ => None,
+    }
+}
 
 /// Error produced by read-side queries.
 #[derive(Debug, thiserror::Error)]
@@ -274,4 +338,158 @@ fn visit(
 
     states.insert(revision_id, VisitState::Visited);
     Ok(())
+}
+
+/// Traces an element back to its authoritative origins in the current accepted semantic state.
+///
+/// ```text
+/// refs/accepted (current)
+///     ↓
+/// SemanticState
+///     ↓ binary search root_element_id
+/// KnowledgeElementVersion
+///     ↓ deterministic path exploration over accepted relationships
+/// TraceResult { root_element_id, paths }
+/// ```
+///
+/// Traversal is pure read-only over the accepted semantic state. It follows origin-classified
+/// relationship types in their respective origin traversal directions. Edges are evaluated
+/// in canonical accepted-state relationship order (`RelationshipId` order). Cycle detection
+/// tracks visited relationship IDs per path branch to guarantee finite, deterministic exploration.
+pub fn trace_origin(
+    repository: &Repository,
+    root_element_id: ElementId,
+) -> Result<TraceResult, QueryError> {
+    let accepted = repository.ref_store().read_accepted()?;
+
+    let state = match load_typed(
+        repository.object_store(),
+        accepted.state,
+        ObjectKind::SemanticState,
+    )?
+    .payload
+    {
+        CanonicalPayload::SemanticState(state) => state,
+        _ => unreachable!("kind verified by load_typed"),
+    };
+
+    // Verify root_element_id presence in accepted state
+    if !state
+        .elements
+        .iter()
+        .any(|e| e.element_id == root_element_id)
+    {
+        return Err(QueryError::ElementNotFound(root_element_id));
+    }
+
+    // Load relationship versions for all relationships in accepted state
+    let mut loaded_rel_versions = HashMap::new();
+    for entry in &state.relationships {
+        let rel = match load_typed(
+            repository.object_store(),
+            entry.version,
+            ObjectKind::RelationshipVersion,
+        )?
+        .payload
+        {
+            CanonicalPayload::RelationshipVersion(rel) => rel,
+            _ => unreachable!("kind verified by load_typed"),
+        };
+        loaded_rel_versions.insert(entry.relationship_id, rel);
+    }
+
+    let mut paths = Vec::new();
+    let mut current_path = Vec::new();
+    let mut visited_rels = HashSet::new();
+
+    explore_origin_paths(
+        root_element_id,
+        &state.relationships,
+        &loaded_rel_versions,
+        &mut current_path,
+        &mut visited_rels,
+        &mut paths,
+    );
+
+    Ok(TraceResult {
+        root_element_id,
+        paths,
+    })
+}
+
+fn explore_origin_paths(
+    current_element_id: ElementId,
+    state_relationships: &[crate::domain::state::RelationshipStateEntry],
+    loaded_rel_versions: &HashMap<RelationshipId, crate::domain::relationship::RelationshipVersion>,
+    current_path: &mut Vec<TraceStep>,
+    visited_rels: &mut HashSet<RelationshipId>,
+    paths: &mut Vec<TracePath>,
+) {
+    let mut expanded_any = false;
+
+    // state_relationships is canonically sorted by RelationshipId.
+    // Iterating over state_relationships preserves canonical relationship order.
+    for entry in state_relationships {
+        if visited_rels.contains(&entry.relationship_id) {
+            continue;
+        }
+
+        let Some(rel_v) = loaded_rel_versions.get(&entry.relationship_id) else {
+            continue;
+        };
+
+        let Some(direction) = origin_traversal_direction(&rel_v.relationship_type) else {
+            continue;
+        };
+
+        let next_element_id = match direction {
+            TraversalDirection::Forward => {
+                if rel_v.source_element_id == current_element_id {
+                    Some(rel_v.target_element_id)
+                } else {
+                    None
+                }
+            }
+            TraversalDirection::Backward => {
+                if rel_v.target_element_id == current_element_id {
+                    Some(rel_v.source_element_id)
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(next_id) = next_element_id {
+            expanded_any = true;
+
+            let step = TraceStep {
+                from_element_id: current_element_id,
+                relationship_id: entry.relationship_id,
+                relationship_type_id: rel_v.relationship_type.clone(),
+                direction,
+                to_element_id: next_id,
+            };
+
+            visited_rels.insert(entry.relationship_id);
+            current_path.push(step);
+
+            explore_origin_paths(
+                next_id,
+                state_relationships,
+                loaded_rel_versions,
+                current_path,
+                visited_rels,
+                paths,
+            );
+
+            current_path.pop();
+            visited_rels.remove(&entry.relationship_id);
+        }
+    }
+
+    if !expanded_any && !current_path.is_empty() {
+        paths.push(TracePath {
+            steps: current_path.clone(),
+        });
+    }
 }

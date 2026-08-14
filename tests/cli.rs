@@ -1842,3 +1842,158 @@ fn phase6_acceptance_cli_flow_end_to_end() {
     assert!(!ok_dup, "second unlink should fail:\n{dup_out}");
     assert!(dup_err.contains("not found in the accepted state"));
 }
+
+// ---------------------------------------------------------------------------
+// Phase 7 CLI Acceptance Tests (Trace Origin)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kat_trace_outside_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_out, err, ok) = run_kat(
+        dir.path(),
+        &["trace", "00000000-0000-0000-0000-000000000001"],
+    );
+    assert!(!ok);
+    assert!(err.contains("no KAT repository found"));
+}
+
+#[test]
+fn kat_trace_unknown_element_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+    let (_out, err, ok) = run_kat(root, &["trace", "00000000-0000-0000-0000-000000000099"]);
+    assert!(!ok);
+    assert!(err.contains("not found in the accepted state"));
+}
+
+#[test]
+fn kat_trace_malformed_arguments_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+
+    let (_out, err1, ok1) = run_kat(root, &["trace"]);
+    assert!(!ok1);
+    assert!(err1.contains("expected exactly one argument"));
+
+    let (_out, err2, ok2) = run_kat(root, &["trace", "invalid-uuid"]);
+    assert!(!ok2);
+    assert!(err2.contains("invalid element ID"));
+}
+
+#[test]
+fn phase7_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init
+    let (_out, err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {err}");
+
+    // 2. Create Intent (I1)
+    let (i1_out, i1_err, ok) = run_kat(
+        root,
+        &["create", "intent", "--title", "AuthX Identity Service"],
+    );
+    assert!(ok, "create intent failed: {i1_err}");
+    let e_intent = id_line(&i1_out, "element_id");
+
+    // 3. Create Requirement (R1)
+    let (r1_out, r1_err, ok) = run_kat(
+        root,
+        &["create", "requirement", "--title", "OAuth2 Authentication"],
+    );
+    assert!(ok, "create requirement failed: {r1_err}");
+    let e_req = id_line(&r1_out, "element_id");
+
+    // 4. Create Implementation (M1)
+    let (m1_out, m1_err, ok) = run_kat(
+        root,
+        &["create", "implementation", "--title", "OAuth Core Module"],
+    );
+    assert!(ok, "create implementation failed: {m1_err}");
+    let e_impl = id_line(&m1_out, "element_id");
+
+    // 5. Create Artifact (A1)
+    let (a1_out, a1_err, ok) = run_kat(root, &["create", "artifact", "--title", "authx-core.jar"]);
+    assert!(ok, "create artifact failed: {a1_err}");
+    let e_art = id_line(&a1_out, "element_id");
+
+    // 6. Create Validation (V1)
+    let (v1_out, v1_err, ok) = run_kat(
+        root,
+        &["create", "validation", "--title", "OAuth Integration Suite"],
+    );
+    assert!(ok, "create validation failed: {v1_err}");
+    let e_val = id_line(&v1_out, "element_id");
+
+    // 7. Link Intent (motivates) -> Requirement
+    let (_out, err, ok) = run_kat(root, &["link", "motivates", e_intent, e_req]);
+    assert!(ok, "link motivates failed: {err}");
+
+    // 8. Link Implementation (realizes) -> Requirement
+    let (_out, err, ok) = run_kat(root, &["link", "realizes", e_impl, e_req]);
+    assert!(ok, "link realizes failed: {err}");
+
+    // 9. Link Artifact (represents) -> Implementation
+    let (_out, err, ok) = run_kat(root, &["link", "represents", e_art, e_impl]);
+    assert!(ok, "link represents failed: {err}");
+
+    // 10. Link Validation (validates) -> Requirement
+    let (_out, err, ok) = run_kat(root, &["link", "validates", e_val, e_req]);
+    assert!(ok, "link validates failed: {err}");
+
+    // 11. kat trace Artifact A1
+    let (art_trace_out, art_trace_err, ok) = run_kat(root, &["trace", e_art]);
+    assert!(
+        ok,
+        "kat trace artifact failed: {art_trace_err}\n{art_trace_out}"
+    );
+    assert!(art_trace_out.contains(&format!("element_id: {e_art}")));
+    assert!(art_trace_out.contains("type: kat.core/artifact"));
+    assert!(art_trace_out.contains("title: authx-core.jar"));
+    assert!(art_trace_out.contains("via kat.core/represents (forward)"));
+    assert!(art_trace_out.contains("via kat.core/realizes (forward)"));
+    assert!(art_trace_out.contains("via kat.core/motivates (backward)"));
+    assert!(art_trace_out.contains(e_intent));
+
+    // 12. kat trace Validation V1
+    let (val_trace_out, val_trace_err, ok) = run_kat(root, &["trace", e_val]);
+    assert!(
+        ok,
+        "kat trace validation failed: {val_trace_err}\n{val_trace_out}"
+    );
+    assert!(val_trace_out.contains(&format!("element_id: {e_val}")));
+    assert!(val_trace_out.contains("type: kat.core/validation"));
+    assert!(val_trace_out.contains("via kat.core/validates (forward)"));
+    assert!(val_trace_out.contains("via kat.core/motivates (backward)"));
+    assert!(val_trace_out.contains(e_intent));
+
+    // 13. kat trace Intent I1 (origin root -> no origin paths)
+    let (int_trace_out, int_trace_err, ok) = run_kat(root, &["trace", e_intent]);
+    assert!(
+        ok,
+        "kat trace intent failed: {int_trace_err}\n{int_trace_out}"
+    );
+    assert!(int_trace_out.contains(&format!("element_id: {e_intent}")));
+    assert!(int_trace_out.contains("origin: none"));
+
+    // 14. Non-mutation verification
+    let objects_before = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    let refs_before = std::fs::read_to_string(root.join(".kat/refs/accepted")).unwrap();
+
+    let (_out, _err, ok) = run_kat(root, &["trace", e_art]);
+    assert!(ok);
+
+    let objects_after = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    let refs_after = std::fs::read_to_string(root.join(".kat/refs/accepted")).unwrap();
+
+    assert_eq!(objects_after, objects_before);
+    assert_eq!(refs_after, refs_before);
+}

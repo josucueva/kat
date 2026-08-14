@@ -22,21 +22,23 @@ use std::path::{Path, PathBuf};
 
 use kat::domain::change::ChangeRevision;
 use kat::domain::element::Lifecycle;
-use kat::domain::identity::{ChangeId, ElementId, ObjectId};
+use kat::domain::identity::{ChangeId, ElementId, ObjectId, RelationshipId};
 use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
 use kat::domain::state::{ElementStateEntry, SemanticState};
 use kat::encoding::canonical_bytes;
 use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
-    CreateElementInput, apply_create_element, persist_prepared_change, prepare_change,
-    prepare_change_revision, publish_persisted_change, validate_create_element_invariants,
-    validate_create_element_ontology,
+    CreateElementInput, LinkElementInput, apply_create_element, apply_link_element,
+    persist_prepared_change, persist_prepared_link_change, prepare_change, prepare_change_revision,
+    prepare_link_change_revision, publish_persisted_change, publish_persisted_link_change,
+    validate_create_element_invariants, validate_create_element_ontology,
+    validate_link_element_invariants, validate_link_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::object_store::ObjectStoreError;
 use kat::repository::open::open_repository;
-use kat::repository::query::{QueryError, history, show_element};
+use kat::repository::query::{QueryError, TraversalDirection, history, show_element, trace_origin};
 use kat::repository::ref_store::{AcceptedRef, RefStore};
 use uuid::Uuid;
 
@@ -637,6 +639,387 @@ fn history_does_not_mutate_repository() {
 
     let repo = open_repository(root).unwrap();
     history(&repo).unwrap();
+
+    assert_eq!(object_ids(root), objects_before);
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
+}
+
+// ---------------------------------------------------------------------------
+// trace_origin tests (Step 7.3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn trace_origin_unknown_element_returns_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+    let repo = open_repository(root).unwrap();
+
+    let missing_id = ElementId::from_uuid(Uuid::from_u128(9999));
+    let err = trace_origin(&repo, missing_id).unwrap_err();
+    assert!(matches!(err, QueryError::ElementNotFound(id) if id == missing_id));
+}
+
+#[test]
+fn trace_origin_single_hop_backward() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    // Create Intent I1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_intent = ElementId::from_uuid(Uuid::from_u128(7001));
+    let prep_i1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_intent,
+                    type_id: "kat.core/intent".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Intent".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_i1 =
+        prepare_change_revision(prep_i1, ChangeId::from_uuid(Uuid::from_u128(7101)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_i1).unwrap()).unwrap();
+
+    // Create Requirement R1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_req = ElementId::from_uuid(Uuid::from_u128(7002));
+    let prep_r1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_req,
+                    type_id: "kat.core/requirement".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Requirement".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_r1 =
+        prepare_change_revision(prep_r1, ChangeId::from_uuid(Uuid::from_u128(7102)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_r1).unwrap()).unwrap();
+
+    // Link I1 (motivates) -> R1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let r1_id = RelationshipId::from_uuid(Uuid::from_u128(7201));
+    let prep_link = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: r1_id,
+                    relationship_type_id: "kat.core/motivates".into(),
+                    source_element_id: e_intent,
+                    target_element_id: e_req,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_link =
+        prepare_link_change_revision(prep_link, ChangeId::from_uuid(Uuid::from_u128(7103)), None)
+            .unwrap();
+    publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(&repo, rev_link).unwrap(),
+    )
+    .unwrap();
+
+    let reopened = open_repository(root).unwrap();
+
+    // Tracing R1 finds 1 origin path (R1 <-motivates- I1)
+    let res_req = trace_origin(&reopened, e_req).unwrap();
+    assert_eq!(res_req.root_element_id, e_req);
+    assert_eq!(res_req.paths.len(), 1);
+    assert_eq!(res_req.paths[0].steps.len(), 1);
+    assert_eq!(res_req.paths[0].steps[0].from_element_id, e_req);
+    assert_eq!(res_req.paths[0].steps[0].to_element_id, e_intent);
+    assert_eq!(
+        res_req.paths[0].steps[0].direction,
+        TraversalDirection::Backward
+    );
+    assert_eq!(
+        res_req.paths[0].steps[0].relationship_type_id,
+        "kat.core/motivates"
+    );
+
+    // Tracing I1 finds 0 origin paths (I1 is origin root)
+    let res_intent = trace_origin(&reopened, e_intent).unwrap();
+    assert_eq!(res_intent.root_element_id, e_intent);
+    assert_eq!(res_intent.paths.len(), 0);
+}
+
+#[test]
+fn trace_origin_multi_hop_forward_and_backward() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    // Intent I1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_intent = ElementId::from_uuid(Uuid::from_u128(8001));
+    let prep_i1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_intent,
+                    type_id: "kat.core/intent".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Intent".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_i1 =
+        prepare_change_revision(prep_i1, ChangeId::from_uuid(Uuid::from_u128(8101)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_i1).unwrap()).unwrap();
+
+    // Requirement R1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_req = ElementId::from_uuid(Uuid::from_u128(8002));
+    let prep_r1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_req,
+                    type_id: "kat.core/requirement".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Requirement".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_r1 =
+        prepare_change_revision(prep_r1, ChangeId::from_uuid(Uuid::from_u128(8102)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_r1).unwrap()).unwrap();
+
+    // Implementation M1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_impl = ElementId::from_uuid(Uuid::from_u128(8003));
+    let prep_m1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_impl,
+                    type_id: "kat.core/implementation".into(),
+                    properties: vec![(
+                        "title".into(),
+                        PropertyValue::Text("Implementation".into()),
+                    )],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_m1 =
+        prepare_change_revision(prep_m1, ChangeId::from_uuid(Uuid::from_u128(8103)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_m1).unwrap()).unwrap();
+
+    // Artifact A1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_art = ElementId::from_uuid(Uuid::from_u128(8004));
+    let prep_a1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_art,
+                    type_id: "kat.core/artifact".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Artifact".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_a1 =
+        prepare_change_revision(prep_a1, ChangeId::from_uuid(Uuid::from_u128(8104)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_a1).unwrap()).unwrap();
+
+    // Link I1 (motivates) -> R1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let r1_id = RelationshipId::from_uuid(Uuid::from_u128(8201));
+    let prep_link1 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: r1_id,
+                    relationship_type_id: "kat.core/motivates".into(),
+                    source_element_id: e_intent,
+                    target_element_id: e_req,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(
+            &repo,
+            prepare_link_change_revision(
+                prep_link1,
+                ChangeId::from_uuid(Uuid::from_u128(8105)),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Link M1 (realizes) -> R1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let r2_id = RelationshipId::from_uuid(Uuid::from_u128(8202));
+    let prep_link2 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: r2_id,
+                    relationship_type_id: "kat.core/realizes".into(),
+                    source_element_id: e_impl,
+                    target_element_id: e_req,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(
+            &repo,
+            prepare_link_change_revision(
+                prep_link2,
+                ChangeId::from_uuid(Uuid::from_u128(8106)),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Link A1 (represents) -> M1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let r3_id = RelationshipId::from_uuid(Uuid::from_u128(8203));
+    let prep_link3 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: r3_id,
+                    relationship_type_id: "kat.core/represents".into(),
+                    source_element_id: e_art,
+                    target_element_id: e_impl,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(
+            &repo,
+            prepare_link_change_revision(
+                prep_link3,
+                ChangeId::from_uuid(Uuid::from_u128(8107)),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let reopened = open_repository(root).unwrap();
+
+    // Tracing Artifact A1 finds multi-hop path: A1 (represents) -> M1 (realizes) -> R1 (motivates backward) -> I1
+    let res = trace_origin(&reopened, e_art).unwrap();
+    assert_eq!(res.root_element_id, e_art);
+    assert_eq!(res.paths.len(), 1);
+
+    let path = &res.paths[0];
+    assert_eq!(path.steps.len(), 3);
+
+    // Step 1: A1 -> M1 (represents, Forward)
+    assert_eq!(path.steps[0].from_element_id, e_art);
+    assert_eq!(path.steps[0].to_element_id, e_impl);
+    assert_eq!(path.steps[0].direction, TraversalDirection::Forward);
+
+    // Step 2: M1 -> R1 (realizes, Forward)
+    assert_eq!(path.steps[1].from_element_id, e_impl);
+    assert_eq!(path.steps[1].to_element_id, e_req);
+    assert_eq!(path.steps[1].direction, TraversalDirection::Forward);
+
+    // Step 3: R1 -> I1 (motivates, Backward)
+    assert_eq!(path.steps[2].from_element_id, e_req);
+    assert_eq!(path.steps[2].to_element_id, e_intent);
+    assert_eq!(path.steps[2].direction, TraversalDirection::Backward);
+}
+
+#[test]
+fn trace_origin_does_not_mutate_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let ids = publish_first_change(root, 89, 189);
+    let objects_before = object_ids(root);
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    trace_origin(&repo, ids.element_id).unwrap();
 
     assert_eq!(object_ids(root), objects_before);
     assert_eq!(

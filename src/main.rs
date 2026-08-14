@@ -35,7 +35,9 @@ use kat::repository::change::{
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
-use kat::repository::query::{HistoryEntry, QueryError, history, show_element};
+use kat::repository::query::{
+    HistoryEntry, QueryError, TraceResult, TraversalDirection, history, show_element, trace_origin,
+};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -49,10 +51,11 @@ fn main() -> ExitCode {
         Some("unlink") => cmd_unlink(&args[1..]),
         Some("show") => cmd_show(&args[1..]),
         Some("history") => cmd_history(&args[1..]),
+        Some("trace") => cmd_trace(&args[1..]),
         Some(other) => {
             eprintln!("kat: unknown command '{other}'");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history | kat trace <element-id>"
             );
             ExitCode::FAILURE
         }
@@ -1120,6 +1123,98 @@ fn cmd_history(args: &[String]) -> ExitCode {
         Err(error) => {
             eprintln!("kat history: {error}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// `kat trace <element-id>` — trace an element back to its origin in the current
+/// accepted semantic state (read-only; thin dispatch over [`trace_origin`]).
+fn cmd_trace(args: &[String]) -> ExitCode {
+    let [element_id_arg] = args else {
+        eprintln!("kat trace: expected exactly one argument");
+        eprintln!("usage: kat trace <element-id>");
+        return ExitCode::FAILURE;
+    };
+    let element_id = match ElementId::from_str(element_id_arg) {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!("kat trace: invalid element ID: {element_id_arg}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat trace: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match trace_origin(&repository, element_id) {
+        Ok(result) => {
+            print_trace_result(&repository, &result);
+            ExitCode::SUCCESS
+        }
+        Err(QueryError::ElementNotFound(id)) => {
+            eprintln!("kat trace: element {id} not found in the accepted state");
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("kat trace: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Prints a trace origin query result:
+///
+/// ```text
+/// element_id: <root_id>
+/// type: <type_id>
+/// lifecycle: <lifecycle>
+/// title: <title>
+/// origin_paths:
+///   path 1:
+///     - via kat.core/motivates (backward) -> <target_id> [<type>] "<title>"
+/// ```
+fn print_trace_result(repository: &Repository, result: &TraceResult) {
+    println!("element_id: {}", result.root_element_id);
+    if let Ok(view) = show_element(repository, result.root_element_id) {
+        println!("type: {}", view.element.type_id);
+        println!("lifecycle: {}", view.element.lifecycle);
+        if let Some((_, PropertyValue::Text(title))) =
+            view.element.properties.iter().find(|(k, _)| k == "title")
+        {
+            println!("title: {title}");
+        }
+    }
+
+    if result.paths.is_empty() {
+        println!("origin: none");
+        return;
+    }
+
+    println!("origin_paths:");
+    for (path_idx, path) in result.paths.iter().enumerate() {
+        println!("  path {}:", path_idx + 1);
+        for step in &path.steps {
+            let dir_label = match step.direction {
+                TraversalDirection::Forward => "forward",
+                TraversalDirection::Backward => "backward",
+            };
+            print!(
+                "    - via {} ({dir_label}) -> {}",
+                step.relationship_type_id, step.to_element_id
+            );
+            if let Ok(view) = show_element(repository, step.to_element_id) {
+                print!(" [{}]", view.element.type_id);
+                if let Some((_, PropertyValue::Text(title))) =
+                    view.element.properties.iter().find(|(k, _)| k == "title")
+                {
+                    print!(" \"{title}\"");
+                }
+            }
+            println!();
         }
     }
 }

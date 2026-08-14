@@ -41,6 +41,9 @@ pub use change::{
     validate_update_element_ontology,
 };
 pub use open::{Repository, open_repository};
-pub use query::{ElementView, HistoryEntry, QueryError, history, show_element};
+pub use query::{
+    ElementView, HistoryEntry, QueryError, TracePath, TraceResult, TraceStep, TraversalDirection,
+    history, origin_traversal_direction, show_element, trace_origin,
+};
 pub use validation::invariant::InvariantError;
 pub use validation::ontology::{OntologyError, validate_element_type, validate_relationship};

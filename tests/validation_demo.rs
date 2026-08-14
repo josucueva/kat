@@ -75,8 +75,7 @@ fn real_project_authx_service_validation_test() {
         ],
     };
     let intent_prep = validate_create_element_invariants(
-        validate_create_element_ontology(apply_create_element(ctx, intent_input).unwrap())
-            .unwrap(),
+        validate_create_element_ontology(apply_create_element(ctx, intent_input).unwrap()).unwrap(),
     )
     .unwrap();
     let intent_rev = prepare_change_revision(
@@ -120,8 +119,7 @@ fn real_project_authx_service_validation_test() {
     )
     .unwrap();
     let req1_pub =
-        publish_persisted_change(&repo, persist_prepared_change(&repo, req1_rev).unwrap())
-            .unwrap();
+        publish_persisted_change(&repo, persist_prepared_change(&repo, req1_rev).unwrap()).unwrap();
     let v_req1_v1 = req1_pub.persisted.prepared.creation.element_version_id;
 
     // 2c. Requirement 2: Token Expiration
@@ -157,8 +155,7 @@ fn real_project_authx_service_validation_test() {
     )
     .unwrap();
     let _req2_pub =
-        publish_persisted_change(&repo, persist_prepared_change(&repo, req2_rev).unwrap())
-            .unwrap();
+        publish_persisted_change(&repo, persist_prepared_change(&repo, req2_rev).unwrap()).unwrap();
 
     // 2d. Architecture Constraint 1: TLS 1.3
     let repo = open_repository(root).unwrap();
@@ -182,8 +179,7 @@ fn real_project_authx_service_validation_test() {
         ],
     };
     let const1_prep = validate_create_element_invariants(
-        validate_create_element_ontology(apply_create_element(ctx, const1_input).unwrap())
-            .unwrap(),
+        validate_create_element_ontology(apply_create_element(ctx, const1_input).unwrap()).unwrap(),
     )
     .unwrap();
     let const1_rev = prepare_change_revision(
@@ -229,8 +225,7 @@ fn real_project_authx_service_validation_test() {
     )
     .unwrap();
     let dec1_pub =
-        publish_persisted_change(&repo, persist_prepared_change(&repo, dec1_rev).unwrap())
-            .unwrap();
+        publish_persisted_change(&repo, persist_prepared_change(&repo, dec1_rev).unwrap()).unwrap();
     let v_dec1_v1 = dec1_pub.persisted.prepared.creation.element_version_id;
 
     // =========================================================================
@@ -269,9 +264,11 @@ fn real_project_authx_service_validation_test() {
         Some("Link Intent to Requirement 1".to_string()),
     )
     .unwrap();
-    let _link0_pub =
-        publish_persisted_link_change(&repo, persist_prepared_link_change(&repo, link0_rev).unwrap())
-            .unwrap();
+    let _link0_pub = publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(&repo, link0_rev).unwrap(),
+    )
+    .unwrap();
 
     // 3b. Link JWT Decision (addresses) -> Req 1 (OAuth2)
     let repo = open_repository(root).unwrap();
@@ -301,9 +298,11 @@ fn real_project_authx_service_validation_test() {
         Some("Link JWT decision to Auth requirement".to_string()),
     )
     .unwrap();
-    let _link1_pub =
-        publish_persisted_link_change(&repo, persist_prepared_link_change(&repo, link1_rev).unwrap())
-            .unwrap();
+    let _link1_pub = publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(&repo, link1_rev).unwrap(),
+    )
+    .unwrap();
 
     // 3c. Link Constraint 1 (restricts) -> JWT Decision
     let repo = open_repository(root).unwrap();
@@ -333,9 +332,11 @@ fn real_project_authx_service_validation_test() {
         Some("Link TLS constraint to JWT decision".to_string()),
     )
     .unwrap();
-    let link2_pub =
-        publish_persisted_link_change(&repo, persist_prepared_link_change(&repo, link2_rev).unwrap())
-            .unwrap();
+    let link2_pub = publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(&repo, link2_rev).unwrap(),
+    )
+    .unwrap();
     let r2v1_id = link2_pub.persisted.prepared.link.relationship_version_id;
 
     // =========================================================================
@@ -468,9 +469,11 @@ fn real_project_authx_service_validation_test() {
         Some("Link PASETO decision to Auth MFA requirement".to_string()),
     )
     .unwrap();
-    let _link3_pub =
-        publish_persisted_link_change(&repo, persist_prepared_link_change(&repo, link3_rev).unwrap())
-            .unwrap();
+    let _link3_pub = publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(&repo, link3_rev).unwrap(),
+    )
+    .unwrap();
 
     // =========================================================================
     // STEP 6: Deprecate Token Expiration Requirement 2

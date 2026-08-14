@@ -82,3 +82,19 @@ kat state show <state-id>
 ## Authority
 
 All mutation commands must route through the Change Engine. The CLI must not bypass ontology validation, invariant validation, or atomic publication, and it must not directly modify accepted semantic state.
+
+## Implemented Command Syntax (v0.1)
+
+```text
+kat init
+kat create <type> --title "..." [--description "..."]
+kat update <element-id> [--title "..."] [--description "..."]
+kat deprecate <element-id>
+kat supersede <existing-id> <replacement-type> --title "..." [--description "..."]
+kat link <relationship-type> <source-id> <target-id> [--description "..."]
+kat unlink <relationship-id> [--description "..."]
+kat show <element-id>
+kat history
+kat trace <element-id>
+```
+
