@@ -19,7 +19,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kat::domain::element::{KnowledgeElementVersion, Lifecycle};
-use kat::domain::identity::{ChangeId, ElementId, ObjectId};
+use kat::domain::identity::{ChangeId, ElementId, ObjectId, OntologyId};
+use kat::domain::ontology::{ElementTypeDefinition, OntologyVersion};
 use kat::domain::property::PropertyValue;
 use kat::domain::state::{ElementStateEntry, SemanticState};
 use kat::encoding::canonical_bytes;
@@ -29,11 +30,12 @@ use kat::repository::change::{
     ChangeContext, ChangeError, CreateElementInput, PreconditionError, UpdateElementInput,
     apply_create_element, apply_update_element, persist_prepared_change, prepare_change,
     prepare_change_revision, publish_persisted_change, validate_create_element_invariants,
-    validate_create_element_ontology,
+    validate_create_element_ontology, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
 use kat::repository::ref_store::{AcceptedRef, RefStore};
+use kat::repository::validation::ontology::OntologyError;
 use uuid::Uuid;
 
 fn kat_dir(root: &Path) -> PathBuf {
@@ -1097,4 +1099,109 @@ fn update_rejects_wrong_kind_current_version() {
             actual: ObjectKind::OntologyVersion,
         }
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Step 2.2 — validate_update_element_ontology
+// ---------------------------------------------------------------------------
+
+#[test]
+fn update_ontology_accepts_known_type() {
+    let setup = repo_with_element(110, 210);
+    let repo = &setup.repo;
+
+    let prepared = prepare_update(
+        repo,
+        setup.element_id,
+        setup.version_id,
+        vec![("title", PropertyValue::Text("B".into()))],
+    )
+    .unwrap();
+    let validated = validate_update_element_ontology(prepared).unwrap();
+    assert_eq!(validated.element.type_id, "kat.core/requirement");
+}
+
+#[test]
+fn update_ontology_rejects_unknown_type() {
+    // A naturally-reachable repository cannot hold an element whose type is
+    // missing from its ontology (every prior change was validated), so the
+    // failure path uses a manually tampered Vn+1 to pin the boundary.
+    let setup = repo_with_element(111, 211);
+    let repo = &setup.repo;
+
+    let mut prepared = prepare_update(
+        repo,
+        setup.element_id,
+        setup.version_id,
+        vec![("title", PropertyValue::Text("B".into()))],
+    )
+    .unwrap();
+    prepared.element.type_id = "kat.core/not-a-real-type".into();
+
+    let err = validate_update_element_ontology(prepared).unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Ontology(OntologyError::UnknownElementType(t))
+            if t == "kat.core/not-a-real-type"
+    ));
+}
+
+#[test]
+fn update_ontology_uses_base_ontology_not_global_core() {
+    let setup = repo_with_element(112, 212);
+    let repo = &setup.repo;
+
+    let mut prepared = prepare_update(
+        repo,
+        setup.element_id,
+        setup.version_id,
+        vec![("title", PropertyValue::Text("B".into()))],
+    )
+    .unwrap();
+    // A custom authoritative base ontology that does NOT define "requirement".
+    prepared.context.ontology = OntologyVersion {
+        ontology_id: OntologyId::from_uuid(Uuid::from_u128(999)),
+        element_types: vec![ElementTypeDefinition {
+            type_id: "kat.core/constraint".into(),
+            name: "Constraint".into(),
+        }],
+        relationship_types: vec![],
+    };
+
+    // "requirement" is not in the base ontology -> rejected, even though the
+    // global core ontology would accept it.
+    let err = validate_update_element_ontology(prepared).unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Ontology(OntologyError::UnknownElementType(t))
+            if t == "kat.core/requirement"
+    ));
+}
+
+#[test]
+fn update_ontology_preserves_prepared_and_changes_nothing() {
+    let setup = repo_with_element(113, 213);
+    let repo = &setup.repo;
+    let objects_before = object_ids(&setup.root);
+    let accepted_before = repo.ref_store().read_accepted().unwrap();
+
+    let prepared = prepare_update(
+        repo,
+        setup.element_id,
+        setup.version_id,
+        vec![("title", PropertyValue::Text("B".into()))],
+    )
+    .unwrap();
+    let element_before = prepared.element.clone();
+    let candidate_before = prepared.candidate_state.clone();
+
+    let validated = validate_update_element_ontology(prepared).unwrap();
+
+    // The prepared update is returned unchanged.
+    assert_eq!(validated.element, element_before);
+    assert_eq!(validated.candidate_state, candidate_before);
+
+    // Object store and accepted ref are unchanged.
+    assert_eq!(object_ids(&setup.root), objects_before);
+    assert_eq!(repo.ref_store().read_accepted().unwrap(), accepted_before);
 }

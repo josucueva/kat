@@ -17,6 +17,7 @@ pub use change::{
     UpdateElementInput, ValidatedElementCreation, apply_create_element, apply_update_element,
     persist_prepared_change, prepare_change, prepare_change_revision, publish_persisted_change,
     validate_create_element_invariants, validate_create_element_ontology,
+    validate_update_element_ontology,
 };
 pub use open::{Repository, open_repository};
 pub use query::{ElementView, HistoryEntry, QueryError, history, show_element};

@@ -528,6 +528,27 @@ pub fn apply_update_element(
     })
 }
 
+/// Applies the step 2.2 ontology-conformance stage to a prepared element
+/// update: the newly constructed `Vn+1.type_id` must exist in the base
+/// `OntologyVersion`.
+///
+/// This **reuses** [`validate_element_type`] — there is no Update-specific
+/// ontology semantics. It validates `prepared.element.type_id` (the newly
+/// built `Vn+1`), not any independently supplied type. Because step 2.1
+/// preserves the type, this effectively proves the updated version remains
+/// conformant with the authoritative base ontology. The validator uses **only**
+/// `prepared.context.ontology` — the ontology loaded from the repository's
+/// `base_state.ontology_version` — never a global core. Step 2.2 enforces this
+/// single rule (`Vn+1.type_id ∈ base ontology.element_types`) and nothing else:
+/// no property-schema validation, no invariant validation (2.3), no
+/// persistence, no ChangeRevision, no CAS.
+pub fn validate_update_element_ontology(
+    prepared: PreparedElementUpdate,
+) -> Result<PreparedElementUpdate, ChangeError> {
+    validate_element_type(&prepared.context.ontology, &prepared.element.type_id)?;
+    Ok(prepared)
+}
+
 /// Applies the step 1.3 ontology-conformance stage to a prepared element
 /// creation: the element's `type_id` must exist in the base `OntologyVersion`.
 ///
