@@ -28,7 +28,7 @@ use crate::domain::identity::ObjectId;
 use crate::encoding::canonical_object_id;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload};
 use crate::encoding::validate::{CanonicalStructureError, CanonicalValidate};
-use crate::repository::change::PreparedElementCreation;
+use crate::repository::change::{PreparedElementCreation, PreparedElementUpdate};
 
 /// Error reported when a candidate semantic change violates an invariant.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -61,6 +61,39 @@ pub enum InvariantError {
     /// The candidate state is not structurally canonical.
     #[error("candidate state is not canonically structured: {0}")]
     InvalidCanonicalStructure(#[from] CanonicalStructureError),
+    /// The update changed the element's stable identity.
+    #[error("the update changed the element identity")]
+    UpdateIdentityChanged,
+    /// The update changed the element's type (`UpdateElement` must not become
+    /// an implicit Retype).
+    #[error("the update changed the element type")]
+    UpdateTypeChanged,
+    /// A lifecycle involved in the update is not `Active` (updates apply only
+    /// to active elements and must not change the lifecycle).
+    #[error("the update lifecycle is not Active (previous or new)")]
+    UpdateLifecycleChanged,
+    /// The base state no longer maps the element to the prepared previous
+    /// version (`previous_version_id == expected_version == base.elements[E]`
+    /// no longer holds).
+    #[error("the base state no longer maps the element to the prepared previous version")]
+    UpdateBaseVersionMismatch,
+    /// The candidate's Vn+1 ObjectId no longer matches the element's re-derived
+    /// content identity (encode-then-hash).
+    #[error("Vn+1 content identity mismatch: expected {expected}, actual {actual}")]
+    UpdateVersionIdentityMismatch {
+        /// The correctly re-derived ObjectId of the new version.
+        expected: ObjectId,
+        /// The ObjectId carried on the prepared update.
+        actual: ObjectId,
+    },
+    /// The prepared update's new version is identical to the previous version
+    /// (defensive invariant breach — the operation-level no-op is rejected at
+    /// step 2.1 as `NoEffectiveChange`).
+    #[error("the update's new version is identical to the previous version")]
+    UpdateVersionUnchanged,
+    /// The candidate state does not map the updated element to its new version.
+    #[error("candidate state does not reference the updated element version")]
+    UpdateCandidateReferenceMismatch,
 }
 
 /// Validates the candidate-state invariants of a prepared `CreateElement`.
@@ -123,6 +156,132 @@ pub fn validate_create_element_invariants(
     }
 
     // 7. The base relationships are preserved.
+    if candidate.relationships != base.relationships {
+        return Err(InvariantError::UnexpectedRelationshipMutation);
+    }
+
+    Ok(())
+}
+
+/// Validates the candidate-state invariants of a prepared `UpdateElement`.
+///
+/// The central rule (normative, from the Phase 2 design):
+///
+/// > For `UpdateElement(E, Vn, Vn+1)`, the candidate Semantic State MUST differ
+/// > from the base Semantic State **only** in the version mapping for `E`, which
+/// > changes from `Vn` to `Vn+1`.
+///
+/// Checks, in order:
+///
+/// 1. candidate is structurally canonical (`CanonicalValidate`);
+/// 2. `previous_element.element_id == element.element_id` (identity preserved);
+/// 3. `previous_version_id == expected_version == base.elements[E].version`;
+/// 4. `element.type_id == previous_element.type_id` (no implicit Retype);
+/// 5. both lifecycles are `Active`;
+/// 6. `element_version_id == canonical_object_id(element)`;
+/// 7. `element_version_id != previous_version_id` (defensive — step 2.1 rejects
+///    the no-op at the operation level as `NoEffectiveChange`);
+/// 8. candidate maps `E -> element_version_id`;
+/// 9. removing E's entry from the candidate and from the base yields identical
+///    sets (no removal, replacement, unrelated insertion, or unrelated version
+///    change);
+/// 10. candidate ontology version equals base ontology version;
+/// 11. relationships unchanged.
+///
+/// Pure: **no** persistence and **no** publication; does not mutate `prepared`.
+pub fn validate_update_element_invariants(
+    prepared: &PreparedElementUpdate,
+) -> Result<(), InvariantError> {
+    let element = &prepared.element;
+    let previous = &prepared.previous_element;
+    let base = &prepared.context.base_state;
+    let candidate = &prepared.candidate_state;
+
+    // 1. Candidate remains structurally canonical (reuses CanonicalValidate).
+    candidate.validate_canonical_structure()?;
+
+    // 2. Identity preserved: Vn+1.element_id == Vn.element_id == E.
+    if element.element_id != previous.element_id {
+        return Err(InvariantError::UpdateIdentityChanged);
+    }
+    let e = element.element_id;
+
+    // 3. previous_version_id == expected_version == base.elements[E].version.
+    let base_version = base
+        .elements
+        .iter()
+        .find(|entry| entry.element_id == e)
+        .map(|entry| entry.version)
+        .ok_or(InvariantError::UnexpectedElementMutation)?;
+    if prepared.previous_version_id != prepared.expected_version
+        || prepared.previous_version_id != base_version
+    {
+        return Err(InvariantError::UpdateBaseVersionMismatch);
+    }
+
+    // 4. Type preserved (Update must not become an implicit Retype).
+    if element.type_id != previous.type_id {
+        return Err(InvariantError::UpdateTypeChanged);
+    }
+
+    // 5. Both lifecycles are Active.
+    if element.lifecycle != Lifecycle::Active || previous.lifecycle != Lifecycle::Active {
+        return Err(InvariantError::UpdateLifecycleChanged);
+    }
+
+    // 6. Vn+1 content identity is still correct (encode-then-hash).
+    let derived = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(element.clone()),
+    })
+    .expect("the element was canonically encoded at apply time");
+    if derived != prepared.element_version_id {
+        return Err(InvariantError::UpdateVersionIdentityMismatch {
+            expected: derived,
+            actual: prepared.element_version_id,
+        });
+    }
+
+    // 7. Vn+1 must differ from Vn (defensive invariant breach).
+    if prepared.element_version_id == prepared.previous_version_id {
+        return Err(InvariantError::UpdateVersionUnchanged);
+    }
+
+    // 8. The candidate maps E -> Vn+1.
+    let updated = candidate
+        .elements
+        .iter()
+        .find(|entry| entry.element_id == e)
+        .ok_or(InvariantError::UpdateCandidateReferenceMismatch)?;
+    if updated.version != prepared.element_version_id {
+        return Err(InvariantError::UpdateCandidateReferenceMismatch);
+    }
+
+    // 9. Single-state delta: the candidate and base element sets differ only
+    //    in E's entry. Removing E's entry from both must yield identical sets —
+    //    no removal, replacement, unrelated insertion, or unrelated version
+    //    change.
+    let without_updated: Vec<_> = candidate
+        .elements
+        .iter()
+        .filter(|entry| entry.element_id != e)
+        .cloned()
+        .collect();
+    let without_base: Vec<_> = base
+        .elements
+        .iter()
+        .filter(|entry| entry.element_id != e)
+        .cloned()
+        .collect();
+    if without_updated != without_base {
+        return Err(InvariantError::UnexpectedElementMutation);
+    }
+
+    // 10. The base ontology reference is preserved.
+    if candidate.ontology_version != base.ontology_version {
+        return Err(InvariantError::OntologyVersionChanged);
+    }
+
+    // 11. The base relationships are preserved.
     if candidate.relationships != base.relationships {
         return Err(InvariantError::UnexpectedRelationshipMutation);
     }

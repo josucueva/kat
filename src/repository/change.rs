@@ -48,6 +48,7 @@ use crate::repository::open::Repository;
 use crate::repository::ref_store::{AcceptedRef, RefStore, RefStoreError};
 use crate::repository::validation::invariant::{
     InvariantError, validate_create_element_invariants as validate_candidate_invariants,
+    validate_update_element_invariants as validate_update_candidate_invariants,
 };
 use crate::repository::validation::ontology::{OntologyError, validate_element_type};
 
@@ -390,6 +391,10 @@ pub struct PreparedElementUpdate {
     pub previous_element: KnowledgeElementVersion,
     /// ObjectId of the current version `Vn`.
     pub previous_version_id: ObjectId,
+    /// The `expected_version` supplied to the operation (element-level
+    /// optimistic concurrency); the invariant layer verifies it equals the base
+    /// mapping for `E`.
+    pub expected_version: ObjectId,
     /// The constructed Active `KnowledgeElementVersion` `Vn+1` (identity, type,
     /// and lifecycle preserved; patch merged onto the current properties).
     pub element: KnowledgeElementVersion,
@@ -522,6 +527,7 @@ pub fn apply_update_element(
         context,
         previous_element,
         previous_version_id,
+        expected_version: input.expected_version,
         element,
         element_version_id,
         candidate_state,
@@ -547,6 +553,44 @@ pub fn validate_update_element_ontology(
 ) -> Result<PreparedElementUpdate, ChangeError> {
     validate_element_type(&prepared.context.ontology, &prepared.element.type_id)?;
     Ok(prepared)
+}
+
+/// A `PreparedElementUpdate` that has passed the Phase 2 semantic validation
+/// pipeline (ontology conformance 2.2 + invariant validation 2.3).
+///
+/// The wrapped [`PreparedElementUpdate`] is not exposed for mutation and is
+/// consumed only by step 2.4 (`prepare_update_revision`), so a `ChangeRevision`
+/// cannot be constructed from an unvalidated update through the normal API. The
+/// type system guarantees the pipeline is not bypassable.
+#[derive(Debug)]
+pub struct ValidatedElementUpdate {
+    prepared: PreparedElementUpdate,
+}
+
+impl ValidatedElementUpdate {
+    /// Borrows the underlying prepared update (read-only; it remains validated
+    /// and cannot be moved out to construct a revision directly).
+    pub fn prepared(&self) -> &PreparedElementUpdate {
+        &self.prepared
+    }
+}
+
+/// Applies the step 2.3 invariant stage to a prepared element update.
+///
+/// Validates the **candidate SemanticState** invariants — the normative
+/// single-state-delta rule plus identity/type/lifecycle preservation, Vn+1
+/// identity + reference, and candidate coherence — via
+/// [`validate_update_candidate_invariants`]. It does **not** require
+/// persistence (Vn+1/Sn+1 are not yet in the ObjectStore — that is 2.5 and
+/// repository open/integrity), and it never publishes. Pure: no side effects.
+///
+/// Returns a [`ValidatedElementUpdate`] so that step 2.4 can only construct a
+/// `ChangeRevision` from a validated candidate.
+pub fn validate_update_element_invariants(
+    prepared: PreparedElementUpdate,
+) -> Result<ValidatedElementUpdate, ChangeError> {
+    validate_update_candidate_invariants(&prepared)?;
+    Ok(ValidatedElementUpdate { prepared })
 }
 
 /// Applies the step 1.3 ontology-conformance stage to a prepared element

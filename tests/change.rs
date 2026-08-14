@@ -19,22 +19,25 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kat::domain::element::{KnowledgeElementVersion, Lifecycle};
-use kat::domain::identity::{ChangeId, ElementId, ObjectId, OntologyId};
+use kat::domain::identity::{ChangeId, ElementId, ObjectId, OntologyId, RelationshipId};
 use kat::domain::ontology::{ElementTypeDefinition, OntologyVersion};
 use kat::domain::property::PropertyValue;
-use kat::domain::state::{ElementStateEntry, SemanticState};
+use kat::domain::state::{ElementStateEntry, RelationshipStateEntry, SemanticState};
 use kat::encoding::canonical_bytes;
 use kat::encoding::canonical_object_id;
 use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
-    ChangeContext, ChangeError, CreateElementInput, PreconditionError, UpdateElementInput,
-    apply_create_element, apply_update_element, persist_prepared_change, prepare_change,
-    prepare_change_revision, publish_persisted_change, validate_create_element_invariants,
-    validate_create_element_ontology, validate_update_element_ontology,
+    ChangeContext, ChangeError, CreateElementInput, PreconditionError, PreparedElementUpdate,
+    UpdateElementInput, apply_create_element, apply_update_element, persist_prepared_change,
+    prepare_change, prepare_change_revision, publish_persisted_change,
+    validate_create_element_invariants, validate_create_element_ontology,
+    validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
 use kat::repository::ref_store::{AcceptedRef, RefStore};
+use kat::repository::validation::invariant::InvariantError;
+use kat::repository::validation::invariant::validate_update_element_invariants as validate_update_candidate_invariants;
 use kat::repository::validation::ontology::OntologyError;
 use uuid::Uuid;
 
@@ -1202,6 +1205,277 @@ fn update_ontology_preserves_prepared_and_changes_nothing() {
     assert_eq!(validated.candidate_state, candidate_before);
 
     // Object store and accepted ref are unchanged.
+    assert_eq!(object_ids(&setup.root), objects_before);
+    assert_eq!(repo.ref_store().read_accepted().unwrap(), accepted_before);
+}
+
+// ---------------------------------------------------------------------------
+// Step 2.3 — validate_update_element_invariants
+// ---------------------------------------------------------------------------
+
+/// Publishes one element from the repo's current accepted head (reopening so
+/// `prepare_change` sees the latest head), returning (element_id, version_id).
+fn publish_one(root: &Path, n: u128, change_n: u128) -> (ElementId, ObjectId) {
+    let repo = open_repository(root).unwrap();
+    let element_id = ElementId::from_uuid(Uuid::from_u128(n));
+    let context = prepare_change(&repo).unwrap();
+    let prepared = apply_create_element(
+        context,
+        CreateElementInput {
+            element_id,
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("T".into()))],
+        },
+    )
+    .unwrap();
+    let validated =
+        validate_create_element_invariants(validate_create_element_ontology(prepared).unwrap())
+            .unwrap();
+    let revision = prepare_change_revision(
+        validated,
+        ChangeId::from_uuid(Uuid::from_u128(change_n)),
+        None,
+    )
+    .unwrap();
+    let version_id = revision.creation.element_version_id;
+    let persisted = persist_prepared_change(&repo, revision).unwrap();
+    publish_persisted_change(&repo, persisted).unwrap();
+    (element_id, version_id)
+}
+
+/// A repo with two published Active elements at the accepted head.
+struct RepoWithTwo {
+    _dir: tempfile::TempDir,
+    repo: Repository,
+    e1: ElementId,
+    v1: ObjectId,
+    e2: ElementId,
+}
+
+fn repo_with_two_elements() -> RepoWithTwo {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    init_repository(&root).unwrap();
+    let (e1, v1) = publish_one(&root, 301, 401);
+    let (e2, _v2) = publish_one(&root, 302, 402);
+    let repo = open_repository(&root).unwrap();
+    RepoWithTwo {
+        _dir: dir,
+        repo,
+        e1,
+        v1,
+        e2,
+    }
+}
+
+/// Prepares a valid (unvalidated) `UpdateElement` for `setup`'s element.
+fn valid_update(setup: &RepoWithElement) -> PreparedElementUpdate {
+    let context = prepare_change(&setup.repo).unwrap();
+    apply_update_element(
+        &setup.repo,
+        context,
+        UpdateElementInput {
+            element_id: setup.element_id,
+            expected_version: setup.version_id,
+            properties: vec![("title".into(), PropertyValue::Text("B".into()))],
+        },
+    )
+    .unwrap()
+}
+
+/// Prepares a valid (unvalidated) `UpdateElement` for an arbitrary repo/element.
+fn valid_update_for(
+    repo: &Repository,
+    element_id: ElementId,
+    version_id: ObjectId,
+) -> PreparedElementUpdate {
+    let context = prepare_change(repo).unwrap();
+    apply_update_element(
+        repo,
+        context,
+        UpdateElementInput {
+            element_id,
+            expected_version: version_id,
+            properties: vec![("title".into(), PropertyValue::Text("B".into()))],
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn update_invariants_valid_passes() {
+    let setup = repo_with_element(114, 214);
+    let prepared = valid_update(&setup);
+    let validated = validate_update_element_invariants(prepared).unwrap();
+    assert_eq!(validated.prepared().element.element_id, setup.element_id);
+    assert_eq!(validated.prepared().element.type_id, "kat.core/requirement");
+}
+
+#[test]
+fn update_invariants_identity_changed_fails() {
+    let setup = repo_with_element(115, 215);
+    let mut prepared = valid_update(&setup);
+    prepared.element.element_id = ElementId::from_uuid(Uuid::from_u128(999));
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::UpdateIdentityChanged);
+}
+
+#[test]
+fn update_invariants_type_changed_fails() {
+    let setup = repo_with_element(116, 216);
+    let mut prepared = valid_update(&setup);
+    prepared.element.type_id = "kat.core/implementation".into();
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::UpdateTypeChanged);
+}
+
+#[test]
+fn update_invariants_previous_lifecycle_not_active_fails() {
+    let setup = repo_with_element(117, 217);
+    let mut prepared = valid_update(&setup);
+    prepared.previous_element.lifecycle = Lifecycle::Deprecated;
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::UpdateLifecycleChanged);
+}
+
+#[test]
+fn update_invariants_new_lifecycle_not_active_fails() {
+    let setup = repo_with_element(118, 218);
+    let mut prepared = valid_update(&setup);
+    prepared.element.lifecycle = Lifecycle::Superseded;
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::UpdateLifecycleChanged);
+}
+
+#[test]
+fn update_invariants_version_identity_tampered_fails() {
+    let setup = repo_with_element(119, 219);
+    let mut prepared = valid_update(&setup);
+    prepared.element_version_id = object_id(0xEE);
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert!(matches!(
+        err,
+        InvariantError::UpdateVersionIdentityMismatch { actual, .. } if actual == object_id(0xEE)
+    ));
+}
+
+#[test]
+fn update_invariants_expected_version_mismatch_fails() {
+    let setup = repo_with_element(120, 220);
+    let mut prepared = valid_update(&setup);
+    prepared.expected_version = object_id(0xAB);
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::UpdateBaseVersionMismatch);
+}
+
+#[test]
+fn update_invariants_candidate_wrong_version_fails() {
+    let setup = repo_with_element(121, 221);
+    let mut prepared = valid_update(&setup);
+    prepared.candidate_state.elements[0].version = object_id(0xDD);
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::UpdateCandidateReferenceMismatch);
+}
+
+#[test]
+fn update_invariants_candidate_keeps_vn_fails() {
+    let setup = repo_with_element(122, 222);
+    let mut prepared = valid_update(&setup);
+    prepared.candidate_state.elements[0].version = prepared.previous_version_id;
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::UpdateCandidateReferenceMismatch);
+}
+
+#[test]
+fn update_invariants_another_element_changed_fails() {
+    let two = repo_with_two_elements();
+    let mut prepared = valid_update_for(&two.repo, two.e1, two.v1);
+    for entry in &mut prepared.candidate_state.elements {
+        if entry.element_id == two.e2 {
+            entry.version = object_id(0xCC);
+        }
+    }
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::UnexpectedElementMutation);
+}
+
+#[test]
+fn update_invariants_another_element_inserted_fails() {
+    let two = repo_with_two_elements();
+    let mut prepared = valid_update_for(&two.repo, two.e1, two.v1);
+    // Insert a third entry at its canonical (sorted) position so the candidate
+    // stays structurally canonical and only the delta rule can reject it.
+    prepared.candidate_state.elements.insert(
+        0,
+        ElementStateEntry {
+            element_id: ElementId::from_uuid(Uuid::from_u128(300)),
+            version: object_id(1),
+        },
+    );
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::UnexpectedElementMutation);
+}
+
+#[test]
+fn update_invariants_another_element_removed_fails() {
+    let two = repo_with_two_elements();
+    let mut prepared = valid_update_for(&two.repo, two.e1, two.v1);
+    prepared
+        .candidate_state
+        .elements
+        .retain(|e| e.element_id != two.e2);
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::UnexpectedElementMutation);
+}
+
+#[test]
+fn update_invariants_ontology_version_changed_fails() {
+    let setup = repo_with_element(123, 223);
+    let mut prepared = valid_update(&setup);
+    prepared.candidate_state.ontology_version = object_id(0xEE);
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::OntologyVersionChanged);
+}
+
+#[test]
+fn update_invariants_relationship_added_fails() {
+    let setup = repo_with_element(124, 224);
+    let mut prepared = valid_update(&setup);
+    prepared
+        .candidate_state
+        .relationships
+        .push(RelationshipStateEntry {
+            relationship_id: RelationshipId::from_uuid(Uuid::from_u128(7)),
+            version: object_id(4),
+        });
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert_eq!(err, InvariantError::UnexpectedRelationshipMutation);
+}
+
+#[test]
+fn update_invariants_candidate_noncanonical_fails() {
+    let setup = repo_with_element(125, 225);
+    let mut prepared = valid_update(&setup);
+    // Force unsorted element entries (an entry that sorts before E appended
+    // after it) so the candidate is structurally non-canonical.
+    prepared.candidate_state.elements.push(ElementStateEntry {
+        element_id: ElementId::from_uuid(Uuid::from_u128(1)),
+        version: object_id(1),
+    });
+    let err = validate_update_candidate_invariants(&prepared).unwrap_err();
+    assert!(matches!(err, InvariantError::InvalidCanonicalStructure(_)));
+}
+
+#[test]
+fn update_invariants_no_side_effects() {
+    let setup = repo_with_element(126, 226);
+    let repo = &setup.repo;
+    let objects_before = object_ids(&setup.root);
+    let accepted_before = repo.ref_store().read_accepted().unwrap();
+
+    let prepared = valid_update(&setup);
+    let _ = validate_update_element_invariants(prepared).unwrap();
+
     assert_eq!(object_ids(&setup.root), objects_before);
     assert_eq!(repo.ref_store().read_accepted().unwrap(), accepted_before);
 }
