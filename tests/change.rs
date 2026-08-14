@@ -31,8 +31,9 @@ use kat::repository::change::{
     PreconditionError, PreparedElementUpdate, SupersedeElementInput, UpdateElementInput,
     apply_create_element, apply_deprecate_element, apply_link_element, apply_supersede_element,
     apply_update_element, persist_prepared_change, persist_prepared_deprecate_change,
-    persist_prepared_supersede_change, persist_prepared_update_change, prepare_change,
-    prepare_change_revision, prepare_deprecate_change_revision, prepare_link_change_revision,
+    persist_prepared_link_change, persist_prepared_supersede_change,
+    persist_prepared_update_change, prepare_change, prepare_change_revision,
+    prepare_deprecate_change_revision, prepare_link_change_revision,
     prepare_supersede_change_revision, prepare_update_change_revision, publish_persisted_change,
     publish_persisted_deprecate_change, publish_persisted_supersede_change,
     publish_persisted_update_change, validate_create_element_invariants,
@@ -3984,4 +3985,96 @@ fn prepare_link_change_revision_preserves_none_description() {
     let revision = prepare_link_change_revision(val, change_id, None).unwrap();
 
     assert_eq!(revision.change.description, None);
+}
+
+// ---------------------------------------------------------------------------
+// Step 5.5 — persist_prepared_link_change tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn persist_prepared_link_change_materializes_objects_and_leaves_accepted_unchanged() {
+    let setup = repo_with_decision_and_requirement();
+    let repo = &setup.repo;
+
+    let initial_objects = std::fs::read_dir(setup._dir.path().join(".kat/objects"))
+        .unwrap()
+        .count();
+
+    let ctx = prepare_change(repo).unwrap();
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(9020));
+    let prepared = apply_link_element(
+        repo,
+        ctx,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: setup.e1,
+            target_element_id: setup.e2,
+            properties: vec![(
+                "note".into(),
+                PropertyValue::Text("Addresses requirement".into()),
+            )],
+        },
+    )
+    .unwrap();
+
+    let val = validate_link_element_invariants(validate_link_element_ontology(prepared).unwrap())
+        .unwrap();
+
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(9021));
+    let revision =
+        prepare_link_change_revision(val, change_id, Some("Link decision to requirement".into()))
+            .unwrap();
+
+    let r1_id = revision.link.relationship_version_id;
+    let s_next_id = revision.state_id;
+    let c_next_id = revision.change_revision_id;
+
+    let persisted = persist_prepared_link_change(repo, revision).unwrap();
+
+    // 1. Object count increases by EXACTLY 3
+    let after_objects = std::fs::read_dir(setup._dir.path().join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(after_objects, initial_objects + 3);
+
+    // 2. R1_initial, Sn+1, Cn+1 exist in ObjectStore and decode correctly
+    let r1_bytes = repo.object_store().get(r1_id).unwrap();
+    let r1_obj = kat::encoding::decode::decode_canonical(&r1_bytes).unwrap();
+    assert_eq!(r1_obj.object_kind(), ObjectKind::RelationshipVersion);
+    match r1_obj.payload {
+        CanonicalPayload::RelationshipVersion(ref r) => {
+            assert_eq!(r.relationship_id, rel_id);
+            assert_eq!(r.source_element_id, setup.e1);
+            assert_eq!(r.target_element_id, setup.e2);
+            assert_eq!(r.relationship_type, "kat.core/addresses");
+        }
+        _ => panic!("expected RelationshipVersion"),
+    }
+
+    let s_next_bytes = repo.object_store().get(s_next_id).unwrap();
+    let s_next_obj = kat::encoding::decode::decode_canonical(&s_next_bytes).unwrap();
+    assert_eq!(s_next_obj.object_kind(), ObjectKind::SemanticState);
+
+    let c_next_bytes = repo.object_store().get(c_next_id).unwrap();
+    let c_next_obj = kat::encoding::decode::decode_canonical(&c_next_bytes).unwrap();
+    assert_eq!(c_next_obj.object_kind(), ObjectKind::ChangeRevision);
+
+    // 3. Accepted ref remains UNCHANGED (points to S0)
+    assert_eq!(
+        repo.ref_store().read_accepted().unwrap().state,
+        repo.accepted.state
+    );
+
+    // 4. Fresh reopen before publication still sees old accepted state
+    let reopened = open_repository(setup._dir.path()).unwrap();
+    assert_eq!(reopened.accepted.state, repo.accepted.state);
+
+    // 5. Double persistence is idempotent
+    let persisted2 = persist_prepared_link_change(repo, persisted.prepared).unwrap();
+    let after_objects2 = std::fs::read_dir(setup._dir.path().join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(after_objects2, after_objects);
+    assert_eq!(persisted2.prepared.change_revision_id, c_next_id);
 }

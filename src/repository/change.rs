@@ -1966,6 +1966,67 @@ pub fn persist_prepared_supersede_change(
     Ok(PersistedSupersedeChange { prepared })
 }
 
+/// A prepared link change whose immutable objects have been materialized into
+/// the ObjectStore (`R1_initial`, `Sn+1`, `Cn+1`), but which has **not** been published.
+#[derive(Debug)]
+pub struct PersistedLinkChange {
+    /// The prepared link change whose objects were just persisted.
+    pub prepared: PreparedLinkChangeRevision,
+}
+
+/// Materializes a prepared, validated link change's immutable objects into
+/// the ObjectStore in reference dependency order:
+/// `R1_initial` -> `Sn+1` -> `Cn+1`.
+///
+/// Leaves `refs/accepted` untouched.
+pub fn persist_prepared_link_change(
+    repository: &Repository,
+    prepared: PreparedLinkChangeRevision,
+) -> Result<PersistedLinkChange, ChangeError> {
+    let store = repository.object_store();
+
+    // 1. R1_initial (relationship version)
+    let r1_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::RelationshipVersion(prepared.link.relationship.clone()),
+    })?;
+    let r1_id = store.put(&r1_bytes)?;
+    if r1_id != prepared.link.relationship_version_id {
+        return Err(identity_mismatch(
+            ObjectKind::RelationshipVersion,
+            prepared.link.relationship_version_id,
+            r1_id,
+        ));
+    }
+
+    // 2. Sn+1 (candidate semantic state)
+    let s_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(prepared.link.candidate_state.clone()),
+    })?;
+    let s_next_id = store.put(&s_next_bytes)?;
+    if s_next_id != prepared.state_id {
+        return Err(identity_mismatch(
+            ObjectKind::SemanticState,
+            prepared.state_id,
+            s_next_id,
+        ));
+    }
+
+    // 3. Cn+1 (change revision)
+    let c_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
+    })?;
+    let c_next_id = store.put(&c_next_bytes)?;
+    if c_next_id != prepared.change_revision_id {
+        return Err(identity_mismatch(
+            ObjectKind::ChangeRevision,
+            prepared.change_revision_id,
+            c_next_id,
+        ));
+    }
+
+    Ok(PersistedLinkChange { prepared })
+}
+
 /// A persisted update change that has been atomically published as the
 /// repository's accepted head (step 2.6).
 ///
