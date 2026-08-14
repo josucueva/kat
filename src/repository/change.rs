@@ -1247,6 +1247,30 @@ pub fn validate_supersede_element_invariants(
     Ok(ValidatedElementSuperseded { prepared })
 }
 
+/// A `PreparedElementLinked` that has passed the Phase 5 semantic validation
+/// pipeline (ontology conformance 5.2 + invariant validation 5.3).
+#[derive(Debug)]
+pub struct ValidatedElementLinked {
+    prepared: PreparedElementLinked,
+}
+
+impl ValidatedElementLinked {
+    /// Borrows the underlying prepared link (read-only).
+    pub fn prepared(&self) -> &PreparedElementLinked {
+        &self.prepared
+    }
+}
+
+/// Applies the step 5.3 invariant stage to a prepared element link.
+///
+/// Validates candidate-state invariants via [`validate_link_candidate_invariants`].
+pub fn validate_link_element_invariants(
+    prepared: PreparedElementLinked,
+) -> Result<ValidatedElementLinked, ChangeError> {
+    crate::repository::validation::invariant::validate_link_element_invariants(&prepared)?;
+    Ok(ValidatedElementLinked { prepared })
+}
+
 /// Applies the step 1.3 ontology-conformance stage to a prepared element
 /// creation: the element's `type_id` must exist in the base `OntologyVersion`.
 ///

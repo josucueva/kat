@@ -29,8 +29,8 @@ use crate::encoding::canonical_object_id;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload};
 use crate::encoding::validate::{CanonicalStructureError, CanonicalValidate};
 use crate::repository::change::{
-    PreparedElementCreation, PreparedElementDeprecation, PreparedElementSuperseded,
-    PreparedElementUpdate,
+    PreparedElementCreation, PreparedElementDeprecation, PreparedElementLinked,
+    PreparedElementSuperseded, PreparedElementUpdate,
 };
 
 /// Error reported when a candidate semantic change violates an invariant.
@@ -166,6 +166,28 @@ pub enum InvariantError {
     /// Candidate state does not reference the superseding relationship version.
     #[error("candidate state does not reference the superseding relationship version")]
     SupersedeRelationshipReferenceMismatch,
+    /// The link relationship identity does not match prepared relationship ID.
+    #[error("link relationship identity does not match prepared relationship ID")]
+    LinkRelationshipIdentityMismatch,
+    /// The link relationship source element ID does not match prepared source element ID.
+    #[error("link relationship source element ID does not match prepared source element ID")]
+    LinkSourceMismatch,
+    /// The link relationship target element ID does not match prepared target element ID.
+    #[error("link relationship target element ID does not match prepared target element ID")]
+    LinkTargetMismatch,
+    /// The link relationship version content identity mismatch.
+    #[error(
+        "link relationship version content identity mismatch: expected {expected}, actual {actual}"
+    )]
+    LinkRelationshipVersionIdentityMismatch {
+        /// Re-derived ObjectId.
+        expected: ObjectId,
+        /// Prepared ObjectId.
+        actual: ObjectId,
+    },
+    /// Candidate state does not reference the linked relationship version.
+    #[error("candidate state does not reference the linked relationship version")]
+    LinkCandidateReferenceMismatch,
 }
 
 /// Validates the candidate-state invariants of a prepared `CreateElement`.
@@ -666,6 +688,93 @@ pub fn validate_supersede_element_invariants(
     // 22. Base ontology reference preserved.
     if candidate.ontology_version != base.ontology_version {
         return Err(InvariantError::OntologyVersionChanged);
+    }
+
+    Ok(())
+}
+
+/// Validates the candidate-state invariants of a prepared `LinkElement`.
+///
+/// Normative Link Invariant:
+/// For Link(R1, Es, Et), the candidate SemanticState MUST differ from the base
+/// SemanticState only by the insertion of `R1 -> R1V`.
+/// No element mapping may change.
+/// No existing relationship mapping may change.
+/// The ontology reference must remain identical.
+pub fn validate_link_element_invariants(
+    prepared: &PreparedElementLinked,
+) -> Result<(), InvariantError> {
+    let candidate = &prepared.candidate_state;
+    let base = &prepared.context.base_state;
+    let relationship = &prepared.relationship;
+
+    // 1. Candidate state remains structurally canonical.
+    candidate.validate_canonical_structure()?;
+
+    // 2. Base ontology version reference is preserved.
+    if candidate.ontology_version != base.ontology_version {
+        return Err(InvariantError::OntologyVersionChanged);
+    }
+
+    // 3. Candidate elements are byte-for-byte identical to base elements (no elements added, removed, or updated).
+    if candidate.elements != base.elements {
+        return Err(InvariantError::UnexpectedElementMutation);
+    }
+
+    // 4. relationship.relationship_id == prepared.relationship_id
+    if relationship.relationship_id != prepared.relationship_id {
+        return Err(InvariantError::LinkRelationshipIdentityMismatch);
+    }
+
+    // 5. relationship.source_element_id == prepared.source_element.element_id
+    if relationship.source_element_id != prepared.source_element.element_id {
+        return Err(InvariantError::LinkSourceMismatch);
+    }
+
+    // 6. relationship.target_element_id == prepared.target_element.element_id
+    if relationship.target_element_id != prepared.target_element.element_id {
+        return Err(InvariantError::LinkTargetMismatch);
+    }
+
+    // 7. relationship_version_id == canonical_object_id(relationship)
+    let rederived_rel_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::RelationshipVersion(relationship.clone()),
+    })
+    .expect("canonically encoded");
+
+    if rederived_rel_id != prepared.relationship_version_id {
+        return Err(InvariantError::LinkRelationshipVersionIdentityMismatch {
+            expected: rederived_rel_id,
+            actual: prepared.relationship_version_id,
+        });
+    }
+
+    // 8. Candidate relationships delta: exactly base.relationships + { R1 -> R1V }
+    if candidate.relationships.len() != base.relationships.len() + 1 {
+        return Err(InvariantError::UnexpectedRelationshipMutation);
+    }
+
+    // Candidate maps R1 -> prepared.relationship_version_id
+    let rel_entry = candidate
+        .relationships
+        .iter()
+        .find(|r| r.relationship_id == prepared.relationship_id)
+        .ok_or(InvariantError::LinkCandidateReferenceMismatch)?;
+
+    if rel_entry.version != prepared.relationship_version_id {
+        return Err(InvariantError::LinkCandidateReferenceMismatch);
+    }
+
+    // Filter out R1 from candidate relationships and check it equals base.relationships
+    let remaining_relationships: Vec<_> = candidate
+        .relationships
+        .iter()
+        .filter(|r| r.relationship_id != prepared.relationship_id)
+        .cloned()
+        .collect();
+
+    if remaining_relationships != base.relationships {
+        return Err(InvariantError::UnexpectedRelationshipMutation);
     }
 
     Ok(())

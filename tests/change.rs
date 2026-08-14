@@ -37,9 +37,9 @@ use kat::repository::change::{
     publish_persisted_supersede_change, publish_persisted_update_change,
     validate_create_element_invariants, validate_create_element_ontology,
     validate_deprecate_element_invariants, validate_deprecate_element_ontology,
-    validate_link_element_ontology, validate_supersede_element_invariants,
-    validate_supersede_element_ontology, validate_update_element_invariants,
-    validate_update_element_ontology,
+    validate_link_element_invariants, validate_link_element_ontology,
+    validate_supersede_element_invariants, validate_supersede_element_ontology,
+    validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -3680,5 +3680,186 @@ fn link_ontology_rejections() {
             ref relationship_type,
             ref target_type,
         }) if relationship_type == "kat.core/addresses" && target_type == "kat.core/design-decision"
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Step 5.3 — validate_link_element_invariants tests
+// ---------------------------------------------------------------------------
+
+fn repo_with_decision_and_requirement() -> RepoWithTwo {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    init_repository(&root).unwrap();
+    let (e1, v1) = publish_typed_one(&root, 301, 401, "kat.core/design-decision");
+    let (e2, _v2) = publish_typed_one(&root, 302, 402, "kat.core/requirement");
+    let repo = open_repository(&root).unwrap();
+    RepoWithTwo {
+        _dir: dir,
+        repo,
+        e1,
+        v1,
+        e2,
+    }
+}
+
+fn publish_typed_one(root: &Path, n: u128, change_n: u128, type_id: &str) -> (ElementId, ObjectId) {
+    let repo = open_repository(root).unwrap();
+    let element_id = ElementId::from_uuid(Uuid::from_u128(n));
+    let context = prepare_change(&repo).unwrap();
+    let prepared = apply_create_element(
+        context,
+        CreateElementInput {
+            element_id,
+            type_id: type_id.into(),
+            properties: vec![("title".into(), PropertyValue::Text("T".into()))],
+        },
+    )
+    .unwrap();
+    let validated =
+        validate_create_element_invariants(validate_create_element_ontology(prepared).unwrap())
+            .unwrap();
+    let revision = prepare_change_revision(
+        validated,
+        ChangeId::from_uuid(Uuid::from_u128(change_n)),
+        None,
+    )
+    .unwrap();
+    let version_id = revision.creation.element_version_id;
+    let persisted = persist_prepared_change(&repo, revision).unwrap();
+    publish_persisted_change(&repo, persisted).unwrap();
+    (element_id, version_id)
+}
+
+#[test]
+fn link_invariants_valid_candidate_passes() {
+    let setup = repo_with_decision_and_requirement();
+    let repo = &setup.repo;
+
+    let ctx = prepare_change(repo).unwrap();
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(9010));
+    let prepared = apply_link_element(
+        repo,
+        ctx,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: setup.e1,
+            target_element_id: setup.e2,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+
+    let ont_val = validate_link_element_ontology(prepared).unwrap();
+    let val = validate_link_element_invariants(ont_val).unwrap();
+    assert_eq!(val.prepared().relationship_id, rel_id);
+}
+
+#[test]
+fn link_invariants_tampering_rejections() {
+    let setup = repo_with_decision_and_requirement();
+    let repo = &setup.repo;
+
+    let get_prepared = || {
+        let ctx = prepare_change(repo).unwrap();
+        let rel_id = RelationshipId::from_uuid(Uuid::from_u128(9011));
+        apply_link_element(
+            repo,
+            ctx,
+            LinkElementInput {
+                relationship_id: rel_id,
+                relationship_type_id: "kat.core/addresses".into(),
+                source_element_id: setup.e1,
+                target_element_id: setup.e2,
+                properties: vec![],
+            },
+        )
+        .unwrap()
+    };
+
+    // 1. Relationship stable ID changed -> LinkRelationshipIdentityMismatch
+    let mut p1 = get_prepared();
+    p1.relationship.relationship_id = RelationshipId::from_uuid(Uuid::from_u128(9999));
+    let err1 = validate_link_element_invariants(p1).unwrap_err();
+    assert!(matches!(
+        err1,
+        ChangeError::Invariant(InvariantError::LinkRelationshipIdentityMismatch)
+    ));
+
+    // 2. Source element ID changed -> LinkSourceMismatch
+    let mut p2 = get_prepared();
+    p2.relationship.source_element_id = ElementId::from_uuid(Uuid::from_u128(9999));
+    let err2 = validate_link_element_invariants(p2).unwrap_err();
+    assert!(matches!(
+        err2,
+        ChangeError::Invariant(InvariantError::LinkSourceMismatch)
+    ));
+
+    // 3. Target element ID changed -> LinkTargetMismatch
+    let mut p3 = get_prepared();
+    p3.relationship.target_element_id = ElementId::from_uuid(Uuid::from_u128(9999));
+    let err3 = validate_link_element_invariants(p3).unwrap_err();
+    assert!(matches!(
+        err3,
+        ChangeError::Invariant(InvariantError::LinkTargetMismatch)
+    ));
+
+    // 4. Relationship ObjectId tampered -> LinkRelationshipVersionIdentityMismatch
+    let mut p4 = get_prepared();
+    p4.relationship_version_id = ObjectId::from_bytes([0xAA; 32]);
+    let err4 = validate_link_element_invariants(p4).unwrap_err();
+    assert!(matches!(
+        err4,
+        ChangeError::Invariant(InvariantError::LinkRelationshipVersionIdentityMismatch { .. })
+    ));
+
+    // 5. Candidate omits R1 -> UnexpectedRelationshipMutation (relationship delta length mismatch)
+    let mut p5 = get_prepared();
+    p5.candidate_state.relationships.clear();
+    let err5 = validate_link_element_invariants(p5).unwrap_err();
+    assert!(matches!(
+        err5,
+        ChangeError::Invariant(InvariantError::UnexpectedRelationshipMutation)
+    ));
+
+    // 6. Candidate points R1 to another ObjectId -> LinkCandidateReferenceMismatch
+    let mut p6 = get_prepared();
+    p6.candidate_state.relationships[0].version = ObjectId::from_bytes([0xBB; 32]);
+    let err6 = validate_link_element_invariants(p6).unwrap_err();
+    assert!(matches!(
+        err6,
+        ChangeError::Invariant(InvariantError::LinkCandidateReferenceMismatch)
+    ));
+
+    // 7. Element mapping changes / added / removed -> UnexpectedElementMutation
+    let mut p7 = get_prepared();
+    p7.candidate_state.elements.clear();
+    let err7 = validate_link_element_invariants(p7).unwrap_err();
+    assert!(matches!(
+        err7,
+        ChangeError::Invariant(InvariantError::UnexpectedElementMutation)
+    ));
+
+    // 8. Extra relationship R2 added (exact 1-relationship delta violated!) -> UnexpectedRelationshipMutation
+    let mut p8 = get_prepared();
+    let extra_entry = RelationshipStateEntry {
+        relationship_id: RelationshipId::from_uuid(Uuid::from_u128(9999)),
+        version: ObjectId::from_bytes([0xCC; 32]),
+    };
+    p8.candidate_state.relationships.push(extra_entry);
+    let err8 = validate_link_element_invariants(p8).unwrap_err();
+    assert!(matches!(
+        err8,
+        ChangeError::Invariant(InvariantError::UnexpectedRelationshipMutation)
+    ));
+
+    // 9. Ontology version changed -> OntologyVersionChanged
+    let mut p9 = get_prepared();
+    p9.candidate_state.ontology_version = ObjectId::from_bytes([0xDD; 32]);
+    let err9 = validate_link_element_invariants(p9).unwrap_err();
+    assert!(matches!(
+        err9,
+        ChangeError::Invariant(InvariantError::OntologyVersionChanged)
     ));
 }
