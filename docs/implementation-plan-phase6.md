@@ -53,8 +53,8 @@ publish_persisted_unlink_change          (atomic CAS on refs/accepted -> { S_n+1
       Notes: `src/main.rs` (`cmd_unlink`, `parse_unlink_args`, `fail_unlink`). Adapts `kat unlink <relationship-id> [--description "..."]`. Resolves `expected_version` ($R_1V$) from base state $S_n$. 3 CLI integration tests in `tests/cli.rs` (outside repository failure, argument parsing rejections, relationship not found in accepted state rejection). Updated `docs/cli.md`. `cargo test` 303 pass, fmt/clippy clean.
 
 ### Step 6.7 — Acceptance Verification & Phase 6 Closure
-- [ ] **6.7 — Acceptance verification & Phase 6 closure.**
-      Add `phase6_acceptance_cli_flow_end_to_end` in `tests/cli.rs`. Verify physical object count progression (init=2 $\to$ create req=5 $\to$ create dec=8 $\to$ link=11 $\to$ unlink=13), fresh reopen accepted ref $\{S_4, C_4\}$, $S_4$ relationship removal, history $C_4 \to C_3 \to C_2 \to C_1$, unlinking non-existent relationship failure, and unlink on deprecated endpoint success. Update `docs/cli.md` and freeze Phase 6.
+- [x] **6.7 — Acceptance verification & Phase 6 closure.**
+      Notes: Added `phase6_acceptance_cli_flow_end_to_end` in `tests/cli.rs`. Proved end-to-end black-box lifecycle: init (2 objects) $\to$ create req (5 objects) $\to$ create dec (8 objects) $\to$ link (11 objects) $\to$ unlink (12 objects: $S_4$ deduplicated in CAS to $S_2$, $C_4$ written). Reopened repository accepted ref $\{S_4, C_4\}$ with zero relationship mappings and elements unchanged. Verified history chain $C_4 \to C_3 \to C_2 \to C_1$ where $C_4$ operations == `[Operation::Unlink { relationship_id: R1, expected_version: R1V }]`. Verified duplicate unlink attempt fails with `relationship <id> not found in the accepted state`. Updated `docs/cli.md`, `docs/invariants.md`, and progress docs. **Phase 6 Complete and Frozen.** `cargo test` 304 pass, fmt/clippy clean.
 
 ---
 

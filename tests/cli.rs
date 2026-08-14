@@ -1709,3 +1709,126 @@ fn kat_unlink_unknown_relationship_fails() {
     assert!(!ok);
     assert!(err.contains("not found in the accepted state"));
 }
+
+#[test]
+fn phase6_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init (Object count = 2: O1, S0)
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    let initial_objects = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(initial_objects, 2);
+
+    // 2. kat create requirement --title "User must authenticate"
+    let (c1_out, c1_err, ok) = run_kat(
+        root,
+        &["create", "requirement", "--title", "User must authenticate"],
+    );
+    assert!(ok, "kat create requirement failed: {c1_err}\n{c1_out}");
+    let e_req = ElementId::from_str(id_line(&c1_out, "element_id")).unwrap();
+    let v_req_id = ObjectId::from_str(id_line(&c1_out, "version_id")).unwrap();
+    let c1_rev_id = ObjectId::from_str(id_line(&c1_out, "change_revision_id")).unwrap();
+
+    let after_req_objects = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(after_req_objects, 5); // + V_req, S1, C1
+
+    // 3. kat create design-decision --title "Use OAuth2"
+    let (c2_out, c2_err, ok) = run_kat(
+        root,
+        &["create", "design-decision", "--title", "Use OAuth2"],
+    );
+    assert!(ok, "kat create design-decision failed: {c2_err}\n{c2_out}");
+    let e_dec = ElementId::from_str(id_line(&c2_out, "element_id")).unwrap();
+    let v_dec_id = ObjectId::from_str(id_line(&c2_out, "version_id")).unwrap();
+    let c2_rev_id = ObjectId::from_str(id_line(&c2_out, "change_revision_id")).unwrap();
+
+    let after_dec_objects = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(after_dec_objects, 8); // + V_dec, S2, C2
+
+    // 4. kat link addresses <design-decision-id> <requirement-id>
+    let (link_out, link_err, ok) = run_kat(
+        root,
+        &["link", "addresses", &e_dec.to_string(), &e_req.to_string()],
+    );
+    assert!(ok, "kat link failed: {link_err}\n{link_out}");
+    let r1_id = RelationshipId::from_str(id_line(&link_out, "relationship_id")).unwrap();
+    let r1v_id = ObjectId::from_str(id_line(&link_out, "relationship_version_id")).unwrap();
+    let s3_id = ObjectId::from_str(id_line(&link_out, "state_id")).unwrap();
+    let c3_rev_id = ObjectId::from_str(id_line(&link_out, "change_revision_id")).unwrap();
+
+    let after_link_objects = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(after_link_objects, 11); // + R1V, S3, C3
+
+    // 5. kat unlink <relationship-id>
+    let (unlink_out, unlink_err, ok) = run_kat(root, &["unlink", &r1_id.to_string()]);
+    assert!(ok, "kat unlink failed: {unlink_err}\n{unlink_out}");
+    let unlinked_r1_id = RelationshipId::from_str(id_line(&unlink_out, "relationship_id")).unwrap();
+    let s4_id = ObjectId::from_str(id_line(&unlink_out, "state_id")).unwrap();
+    let c4_rev_id = ObjectId::from_str(id_line(&unlink_out, "change_revision_id")).unwrap();
+
+    assert_eq!(unlinked_r1_id, r1_id);
+
+    // Objects count becomes 12 because S4 (relationships empty) is identical to S2 (deduplicated by CAS), so only C4 is added.
+    let after_unlink_objects = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(after_unlink_objects, 12); // + C4 (S4 deduplicated = S2)
+
+    // 6. Fresh reopen verification
+    let reopened = open_repository(root).unwrap();
+    assert_eq!(reopened.accepted.state, s4_id);
+    assert_eq!(reopened.accepted.change, Some(c4_rev_id));
+
+    // S4 maps zero relationships, elements unchanged
+    let context = prepare_change(&reopened).unwrap();
+    assert_eq!(context.base_state_id, s4_id);
+    assert_eq!(context.base_state.relationships.len(), 0);
+    assert_eq!(context.base_state.elements.len(), 2);
+    assert_eq!(context.base_state.elements[0].element_id, e_dec);
+    assert_eq!(context.base_state.elements[0].version, v_dec_id);
+    assert_eq!(context.base_state.elements[1].element_id, e_req);
+    assert_eq!(context.base_state.elements[1].version, v_req_id);
+
+    // History chain: C4 -> C3 -> C2 -> C1
+    let entries = history(&reopened).unwrap();
+    assert_eq!(entries.len(), 4);
+
+    // C4: Unlink R1
+    assert_eq!(entries[0].revision_id, c4_rev_id);
+    assert_eq!(entries[0].change.result_state, s4_id);
+    assert_eq!(entries[0].change.base_states, vec![s3_id]);
+    assert_eq!(entries[0].change.dependencies, vec![c3_rev_id]);
+    assert_eq!(
+        entries[0].change.operations,
+        vec![Operation::Unlink {
+            relationship_id: r1_id,
+            expected_version: r1v_id,
+        }]
+    );
+
+    // C3: Link R1
+    assert_eq!(entries[1].revision_id, c3_rev_id);
+    assert_eq!(entries[1].change.result_state, s3_id);
+
+    // C2: Create design decision
+    assert_eq!(entries[2].revision_id, c2_rev_id);
+
+    // C1: Create requirement
+    assert_eq!(entries[3].revision_id, c1_rev_id);
+
+    // 7. Duplicate unlink attempt MUST fail with relationship not found
+    let (dup_out, dup_err, ok_dup) = run_kat(root, &["unlink", &r1_id.to_string()]);
+    assert!(!ok_dup, "second unlink should fail:\n{dup_out}");
+    assert!(dup_err.contains("not found in the accepted state"));
+}
