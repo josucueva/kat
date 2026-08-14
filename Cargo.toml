@@ -2,7 +2,7 @@
 name = "kat"
 version = "0.1.0"
 edition = "2024"
-description = "KAT - a semantic software repository: specification-first representation, evolution, tracing, and validation of software as knowledge."
+description = "KAT (Knowledge Abstraction Tracker) - a semantic software repository for representing, evolving, tracing, and validating authoritative software knowledge."
 
 [dependencies]
 uuid = { version = "1", features = ["v4"] }
