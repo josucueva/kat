@@ -126,6 +126,11 @@ See [`docs/implementation-plan-phase3.md`](file:///home/joshua/Projects/kat/docs
 | 2026-08-14 | Step 8.3 — Query Layer Re-exports & Unit Tests | Re-exported `analyze_impact` symbols in `src/repository/mod.rs`. Added 3 unit tests in `tests/query.rs` (single-hop, category partitioning, non-mutation, unknown element error). `cargo test` 317 pass, fmt/clippy clean. |
 | 2026-08-14 | Step 8.4 — CLI `kat impact` Wiring & Formatting | Implemented `cmd_impact` and `print_impact_result` in `src/main.rs`. Syntax: `kat impact <element-id>`. Formats output into 3 v0.1 buckets: Directly changed, Semantically affected, Affected artifacts. |
 | 2026-08-14 | Step 8.5 — Acceptance Verification & Phase 8 Closure | Added `phase8_acceptance_cli_flow_end_to_end` and CLI argument tests in `tests/cli.rs`. Extended AuthX scenario with dependent implementation. Verified bucket partitioning, zero state mutation, and unknown element rejection. Updated `docs/cli.md`. **Phase 8 Frozen.** `cargo test` 321 pass, fmt/clippy clean. |
+| Planned | Step 9.1 — Validation Data Structures & API | Define `ValidationViolationKind`, `ValidationViolation`, `UnverifiedConstraint`, `ValidationReport` in `src/repository/query.rs`. Re-export symbols in `src/repository/mod.rs`. |
+| Planned | Step 9.2 — Core `validate_repository` Scan Implementation | Implement `validate_repository(repository: &Repository)` in `src/repository/query.rs`. Read-only scan over accepted $S_n$. Mechanical violation accumulation & unverified constraint reporting. |
+| Planned | Step 9.3 — Query Layer Re-exports & Unit Tests | Add unit tests in `tests/query.rs` (clean repo, invalid rel types, disallowed endpoints, duplicate triples, missing endpoints, unverified constraints, non-mutation). |
+| Planned | Step 9.4 — CLI `kat validate` Wiring & Formatting | Implement `cmd_validate` in `src/main.rs`. Syntax: `kat validate`. Render `violations:` and `unverified_constraints:`. Exit 0 on clean/unverified, exit 1 on violations. |
+| Planned | Step 9.5 — Requirements Documentation & Acceptance Closure | Add clarification note to `docs/prototype-design.md`. Add `phase9_acceptance_cli_flow_end_to_end` in `tests/cli.rs`. Update `docs/cli.md`. **Freeze Phase 9.** |
 
 ## Non-goals during this work (do not build yet)
 
