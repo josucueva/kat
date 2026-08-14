@@ -28,7 +28,9 @@ use crate::domain::identity::ObjectId;
 use crate::encoding::canonical_object_id;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload};
 use crate::encoding::validate::{CanonicalStructureError, CanonicalValidate};
-use crate::repository::change::{PreparedElementCreation, PreparedElementUpdate};
+use crate::repository::change::{
+    PreparedElementCreation, PreparedElementDeprecation, PreparedElementUpdate,
+};
 
 /// Error reported when a candidate semantic change violates an invariant.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -94,6 +96,17 @@ pub enum InvariantError {
     /// The candidate state does not map the updated element to its new version.
     #[error("candidate state does not reference the updated element version")]
     UpdateCandidateReferenceMismatch,
+    /// The deprecation changed element properties.
+    #[error("the deprecation changed element properties")]
+    DeprecationPropertiesChanged,
+    /// The deprecation lifecycle transition is invalid.
+    #[error(
+        "the deprecation lifecycle transition is invalid (previous must be Active, new must be Deprecated)"
+    )]
+    DeprecationLifecycleInvalid,
+    /// The candidate state does not map the deprecated element to its new version.
+    #[error("candidate state does not reference the deprecated element version")]
+    DeprecationCandidateReferenceMismatch,
 }
 
 /// Validates the candidate-state invariants of a prepared `CreateElement`.
@@ -282,6 +295,119 @@ pub fn validate_update_element_invariants(
     }
 
     // 11. The base relationships are preserved.
+    if candidate.relationships != base.relationships {
+        return Err(InvariantError::UnexpectedRelationshipMutation);
+    }
+
+    Ok(())
+}
+
+/// Validates the candidate-state invariants of a prepared `DeprecateElement`.
+///
+/// Steps:
+/// 1. Candidate state is canonical.
+/// 2. Identity preserved.
+/// 3. Base version & expected version match.
+/// 4. Type preserved.
+/// 5. Properties preserved (deprecation alters ONLY lifecycle).
+/// 6. Valid lifecycle transition (`Active -> Deprecated`).
+/// 7. Content identity derived correctly.
+/// 8. Vn+1 != Vn.
+/// 9. Candidate state maps E -> Vn+1.
+/// 10. Single-state delta rule (candidate minus E == base minus E).
+/// 11. Base ontology and relationships preserved.
+pub fn validate_deprecate_element_invariants(
+    prepared: &PreparedElementDeprecation,
+) -> Result<(), InvariantError> {
+    let candidate = &prepared.candidate_state;
+    let base = &prepared.context.base_state;
+    let e = prepared.element.element_id;
+
+    // 1. Candidate state is canonical.
+    candidate.validate_canonical_structure()?;
+
+    // 2. Identity preserved.
+    if prepared.element.element_id != prepared.previous_element.element_id {
+        return Err(InvariantError::UpdateIdentityChanged);
+    }
+
+    // 3. Base version and expected version match.
+    let base_entry = base
+        .elements
+        .iter()
+        .find(|entry| entry.element_id == e)
+        .ok_or(InvariantError::UpdateBaseVersionMismatch)?;
+    if base_entry.version != prepared.previous_version_id
+        || base_entry.version != prepared.expected_version
+    {
+        return Err(InvariantError::UpdateBaseVersionMismatch);
+    }
+
+    // 4. Type preserved.
+    if prepared.element.type_id != prepared.previous_element.type_id {
+        return Err(InvariantError::UpdateTypeChanged);
+    }
+
+    // 5. Properties preserved.
+    if prepared.element.properties != prepared.previous_element.properties {
+        return Err(InvariantError::DeprecationPropertiesChanged);
+    }
+
+    // 6. Valid lifecycle transition (Active -> Deprecated).
+    if prepared.previous_element.lifecycle != Lifecycle::Active
+        || prepared.element.lifecycle != Lifecycle::Deprecated
+    {
+        return Err(InvariantError::DeprecationLifecycleInvalid);
+    }
+
+    // 7. Content identity derived correctly.
+    let derived_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(prepared.element.clone()),
+    })
+    .expect("the element was canonically encoded at apply time");
+    if derived_id != prepared.element_version_id {
+        return Err(InvariantError::UpdateVersionIdentityMismatch {
+            expected: derived_id,
+            actual: prepared.element_version_id,
+        });
+    }
+
+    // 8. Vn+1 != Vn.
+    if prepared.element_version_id == prepared.previous_version_id {
+        return Err(InvariantError::UpdateVersionUnchanged);
+    }
+
+    // 9. Candidate state maps E -> Vn+1.
+    let updated = candidate
+        .elements
+        .iter()
+        .find(|entry| entry.element_id == e)
+        .ok_or(InvariantError::DeprecationCandidateReferenceMismatch)?;
+    if updated.version != prepared.element_version_id {
+        return Err(InvariantError::DeprecationCandidateReferenceMismatch);
+    }
+
+    // 10. Single-state delta rule.
+    let without_updated: Vec<_> = candidate
+        .elements
+        .iter()
+        .filter(|entry| entry.element_id != e)
+        .cloned()
+        .collect();
+    let without_base: Vec<_> = base
+        .elements
+        .iter()
+        .filter(|entry| entry.element_id != e)
+        .cloned()
+        .collect();
+    if without_updated != without_base {
+        return Err(InvariantError::UnexpectedElementMutation);
+    }
+
+    // 11. Base ontology reference and relationships preserved.
+    if candidate.ontology_version != base.ontology_version {
+        return Err(InvariantError::OntologyVersionChanged);
+    }
     if candidate.relationships != base.relationships {
         return Err(InvariantError::UnexpectedRelationshipMutation);
     }

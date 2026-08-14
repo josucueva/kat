@@ -32,8 +32,9 @@ use kat::repository::change::{
     apply_update_element, persist_prepared_change, persist_prepared_update_change, prepare_change,
     prepare_change_revision, prepare_update_change_revision, publish_persisted_change,
     publish_persisted_update_change, validate_create_element_invariants,
-    validate_create_element_ontology, validate_deprecate_element_ontology,
-    validate_update_element_invariants, validate_update_element_ontology,
+    validate_create_element_ontology, validate_deprecate_element_invariants,
+    validate_deprecate_element_ontology, validate_update_element_invariants,
+    validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -1976,4 +1977,32 @@ fn deprecate_ontology_accepts_known_type() {
 
     let validated = validate_deprecate_element_ontology(prepared).unwrap();
     assert_eq!(validated.element.lifecycle, Lifecycle::Deprecated);
+}
+
+// ---------------------------------------------------------------------------
+// Step 3.3 — validate_deprecate_element_invariants
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deprecate_invariants_valid_passes() {
+    let setup = repo_with_element(144, 244);
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let prepared = apply_deprecate_element(
+        repo,
+        context,
+        DeprecateElementInput {
+            element_id: setup.element_id,
+            expected_version: setup.version_id,
+        },
+    )
+    .unwrap();
+
+    let ontology_validated = validate_deprecate_element_ontology(prepared).unwrap();
+    let validated = validate_deprecate_element_invariants(ontology_validated).unwrap();
+    assert_eq!(
+        validated.prepared().element.lifecycle,
+        Lifecycle::Deprecated
+    );
 }

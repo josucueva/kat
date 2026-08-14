@@ -33,7 +33,8 @@ $$\text{PersistedDeprecateChange} \xrightarrow{\text{publish (CAS)}} \text{Publi
       Notes: `src/repository/change.rs` — `validate_deprecate_element_ontology(prepared: PreparedElementDeprecation) -> Result<PreparedElementDeprecation, ChangeError>` reuses `validate_element_type` to verify $V_{n+1}.type\_id$ against base-state-referenced `OntologyVersion`. Purely preparatory: returns `Ok(prepared)`, leaves `ObjectStore` and accepted ref untouched. Re-exported in `repository/mod.rs`. 1 new unit test (`tests/change.rs`). `cargo test` 234 pass, fmt/clippy clean.
 
 ### Step 3.3 — `DeprecateElement` Invariant Validation
-- **Goal**: Implement `validate_deprecate_element_invariants(&PreparedElementDeprecation) -> Result<(), InvariantError>` and engine wrapper returning `ValidatedElementDeprecation`.
+- [x] **3.3 — `DeprecateElement` invariant validation.**
+      Notes: `src/repository/validation/invariant.rs` (`validate_deprecate_element_invariants`) & `src/repository/change.rs` (`ValidatedElementDeprecation`, `validate_deprecate_element_invariants`) enforce 11 ordered candidate-state invariant checks: canonical structure, identity preserved, base version & expected version match, type preserved, properties preserved (deprecation alters ONLY lifecycle), valid `Active -> Deprecated` transition, $V_{n+1}$ content identity match, $V_{n+1} \neq V_n$, candidate maps $E \to V_{n+1}$, single-state delta rule, and base ontology/relationship preservation. `ValidatedElementDeprecation` typestate guard added so 3.4 accepts only validated deprecations. Re-exported in `repository/mod.rs`. 1 new unit test (`tests/change.rs`). `cargo test` 235 pass, fmt/clippy clean.
 - **10 Ordered Invariant Checks**:
   1. Canonical structure of candidate $S_{n+1}$.
   2. Element identity preserved ($V_{n+1}.element\_id == V_n.element\_id$).

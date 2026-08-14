@@ -736,6 +736,31 @@ pub fn validate_update_element_invariants(
     Ok(ValidatedElementUpdate { prepared })
 }
 
+/// A `PreparedElementDeprecation` that has passed the Phase 3 semantic validation
+/// pipeline (ontology conformance 3.2 + invariant validation 3.3).
+#[derive(Debug)]
+pub struct ValidatedElementDeprecation {
+    prepared: PreparedElementDeprecation,
+}
+
+impl ValidatedElementDeprecation {
+    /// Borrows the underlying prepared deprecation (read-only).
+    pub fn prepared(&self) -> &PreparedElementDeprecation {
+        &self.prepared
+    }
+}
+
+/// Applies the step 3.3 invariant stage to a prepared element deprecation.
+///
+/// Validates candidate-state invariants via
+/// [`validate_deprecate_element_invariants`].
+pub fn validate_deprecate_element_invariants(
+    prepared: PreparedElementDeprecation,
+) -> Result<ValidatedElementDeprecation, ChangeError> {
+    crate::repository::validation::invariant::validate_deprecate_element_invariants(&prepared)?;
+    Ok(ValidatedElementDeprecation { prepared })
+}
+
 /// Applies the step 1.3 ontology-conformance stage to a prepared element
 /// creation: the element's `type_id` must exist in the base `OntologyVersion`.
 ///
