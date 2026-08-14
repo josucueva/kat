@@ -686,5 +686,8 @@ Impact Analysis categorizes impacted elements into three distinct buckets:
 2. **Semantically Affected Elements**: Non-artifact Active elements reached via impact propagation (`Requirement`, `Constraint`, `Design Decision`, `Implementation`, `Validation`, `Intent`).
 3. **Affected Artifacts**: Active elements of type `kat.core/artifact` reached via impact propagation.
 
+> **Lifecycle Policy Distinction**: Filtering reached target elements to `Lifecycle::Active` is an **Impact-specific query policy**. Because Impact Analysis identifies potential consequences for the *current accepted operational state*, historical (`Deprecated` or `Superseded`) targets are excluded from impact results. By contrast, **Trace Origin** retains all historical lifecycle states in trace paths to preserve full provenance history.
+
+
 
 
