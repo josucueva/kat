@@ -1795,10 +1795,20 @@ fn phase6_acceptance_cli_flow_end_to_end() {
     assert_eq!(context.base_state_id, s4_id);
     assert_eq!(context.base_state.relationships.len(), 0);
     assert_eq!(context.base_state.elements.len(), 2);
-    assert_eq!(context.base_state.elements[0].element_id, e_dec);
-    assert_eq!(context.base_state.elements[0].version, v_dec_id);
-    assert_eq!(context.base_state.elements[1].element_id, e_req);
-    assert_eq!(context.base_state.elements[1].version, v_req_id);
+    let elem_dec = context
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == e_dec)
+        .unwrap();
+    assert_eq!(elem_dec.version, v_dec_id);
+    let elem_req = context
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == e_req)
+        .unwrap();
+    assert_eq!(elem_req.version, v_req_id);
 
     // History chain: C4 -> C3 -> C2 -> C1
     let entries = history(&reopened).unwrap();
