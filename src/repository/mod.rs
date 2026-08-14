@@ -42,9 +42,11 @@ pub use change::{
 };
 pub use open::{Repository, open_repository};
 pub use query::{
-    ElementView, HistoryEntry, ImpactPath, ImpactResult, ImpactStep, ImpactedElement, QueryError,
-    TracePath, TraceResult, TraceStep, TraversalDirection, analyze_impact, history,
-    impact_propagation_direction, origin_traversal_direction, show_element, trace_origin,
+    ArtifactAccountability, ArtifactAccountabilityReport, ArtifactAccountabilityStatus,
+    ArtifactBaseline, ElementView, HistoryEntry, ImpactPath, ImpactResult, ImpactStep,
+    ImpactedElement, QueryError, TracePath, TraceResult, TraceStep, TraversalDirection,
+    analyze_artifact_accountability, analyze_impact, history, impact_propagation_direction,
+    origin_traversal_direction, show_element, trace_origin,
 };
 pub use validation::invariant::InvariantError;
 pub mod validation_repository {

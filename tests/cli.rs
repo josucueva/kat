@@ -2233,3 +2233,104 @@ fn phase9_acceptance_cli_flow_end_to_end() {
     assert_eq!(objects_after, objects_before);
     assert_eq!(refs_after, refs_before);
 }
+
+#[test]
+fn kat_artifacts_outside_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    let (_out, err, ok) = run_kat(root, &["artifacts"]);
+    assert!(!ok);
+    assert!(err.contains("no KAT repository found"));
+}
+
+#[test]
+fn phase10_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init
+    let (_out, err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {err}");
+
+    // 2. Create Implementation M1
+    let (m1_out, m1_err, ok) = run_kat(
+        root,
+        &[
+            "create",
+            "implementation",
+            "--title",
+            "AuthX Service Core Module",
+        ],
+    );
+    assert!(ok, "create implementation failed: {m1_err}");
+    let e_imp = id_line(&m1_out, "element_id");
+
+    // 3. Create Artifact A1
+    let (a1_out, a1_err, ok) = run_kat(
+        root,
+        &["create", "artifact", "--title", "authx-core-v1.jar"],
+    );
+    assert!(ok, "create artifact failed: {a1_err}");
+    let e_art = id_line(&a1_out, "element_id");
+
+    // 4. Check initial artifacts status -> UNACCOUNTED
+    let (art_out1, _art_err1, ok1) = run_kat(root, &["artifacts"]);
+    assert!(!ok1, "expected exit 1 for unaccounted artifact");
+    assert!(art_out1.contains(e_art));
+    assert!(art_out1.contains("status: unaccounted"));
+
+    // 5. Link A1 (represents) -> M1
+    let (l1_out, l1_err, ok) = run_kat(root, &["link", "represents", e_art, e_imp]);
+    assert!(ok, "link represents failed: {l1_err}");
+    let r1_id = id_line(&l1_out, "relationship_id");
+
+    // 6. Check status -> CURRENT
+    let (art_out2, art_err2, ok2) = run_kat(root, &["artifacts"]);
+    assert!(ok2, "kat artifacts failed: {art_err2}\n{art_out2}");
+    assert!(art_out2.contains("status: current"));
+    assert!(art_out2.contains(e_imp));
+
+    // 7. Update M1 -> advances Implementation version
+    let (_out, err, ok) = run_kat(
+        root,
+        &["update", e_imp, "--title", "AuthX Service Core Module v2"],
+    );
+    assert!(ok, "update implementation failed: {err}");
+
+    // 8. Check status -> STALE
+    let (art_out3, _err, ok3) = run_kat(root, &["artifacts"]);
+    assert!(!ok3, "expected exit 1 for stale artifact");
+    assert!(art_out3.contains("status: stale"));
+    assert!(art_out3.contains("status: STALE"));
+
+    // 9. Re-account: Unlink r1 and Link r2 (A1 represents M1)
+    let (_out, err, ok) = run_kat(root, &["unlink", r1_id]);
+    assert!(ok, "unlink failed: {err}");
+
+    let (_out, err, ok) = run_kat(root, &["link", "represents", e_art, e_imp]);
+    assert!(ok, "re-link failed: {err}");
+
+    // 10. Check status -> CURRENT restored
+    let (art_out4, art_err4, ok4) = run_kat(root, &["artifacts"]);
+    assert!(ok4, "kat artifacts failed: {art_err4}\n{art_out4}");
+    assert!(art_out4.contains("status: current"));
+    assert!(art_out4.contains("summary:\n  current: 1\n  stale: 0\n  unaccounted: 0"));
+
+    // 11. Non-mutation verification
+    let objects_before = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    let refs_before = std::fs::read_to_string(root.join(".kat/refs/accepted")).unwrap();
+
+    let (_out, _err, ok) = run_kat(root, &["artifacts"]);
+    assert!(ok);
+
+    let objects_after = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    let refs_after = std::fs::read_to_string(root.join(".kat/refs/accepted")).unwrap();
+
+    assert_eq!(objects_after, objects_before);
+    assert_eq!(refs_after, refs_before);
+}

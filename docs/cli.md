@@ -97,5 +97,7 @@ kat show <element-id>
 kat history
 kat trace <element-id>
 kat impact <element-id>
+kat validate
+kat artifacts
 ```
 

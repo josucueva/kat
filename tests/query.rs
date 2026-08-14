@@ -40,7 +40,8 @@ use kat::repository::init::init_repository;
 use kat::repository::object_store::ObjectStoreError;
 use kat::repository::open::open_repository;
 use kat::repository::query::{
-    QueryError, TraversalDirection, analyze_impact, history, show_element, trace_origin,
+    ArtifactAccountabilityStatus, QueryError, TraversalDirection, analyze_artifact_accountability,
+    analyze_impact, history, show_element, trace_origin,
 };
 use kat::repository::ref_store::{AcceptedRef, RefStore};
 use kat::repository::validation::repository::{ValidationViolationKind, validate_repository};
@@ -1690,4 +1691,343 @@ fn validate_permits_deprecated_source_on_existing_relationship() {
 
     let report = validate_repository(&repo).unwrap();
     assert!(report.violations.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// analyze_artifact_accountability tests (Step 10.3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn accountability_no_artifacts_returns_empty_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let report = analyze_artifact_accountability(&repo).unwrap();
+    assert!(report.artifacts.is_empty());
+}
+
+#[test]
+fn accountability_unaccounted_artifact_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_art = ElementId::from_uuid(Uuid::from_u128(9001));
+    let prep_a1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_art,
+                    type_id: "kat.core/artifact".into(),
+                    properties: vec![(
+                        "title".into(),
+                        PropertyValue::Text("auth_service.rs".into()),
+                    )],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_change(
+        &repo,
+        persist_prepared_change(
+            &repo,
+            prepare_change_revision(prep_a1, ChangeId::from_uuid(Uuid::from_u128(9101)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let reopened = open_repository(root).unwrap();
+    let report = analyze_artifact_accountability(&reopened).unwrap();
+    assert_eq!(report.artifacts.len(), 1);
+    assert_eq!(report.artifacts[0].artifact_element_id, e_art);
+    assert_eq!(
+        report.artifacts[0].status,
+        ArtifactAccountabilityStatus::Unaccounted
+    );
+    assert!(report.artifacts[0].baselines.is_empty());
+}
+
+#[test]
+fn accountability_current_and_stale_and_relink_lifecycle() {
+    use kat::repository::change::{
+        UnlinkElementInput, UpdateElementInput, apply_unlink_element, apply_update_element,
+        persist_prepared_unlink_change, persist_prepared_update_change,
+        prepare_unlink_change_revision, prepare_update_change_revision,
+        publish_persisted_unlink_change, publish_persisted_update_change,
+        validate_unlink_element_invariants, validate_update_element_invariants,
+        validate_update_element_ontology,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    // 1. Create Implementation M1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_imp = ElementId::from_uuid(Uuid::from_u128(9011));
+    let prep_m1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_imp,
+                    type_id: "kat.core/implementation".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("AuthX Core".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_change(
+        &repo,
+        persist_prepared_change(
+            &repo,
+            prepare_change_revision(prep_m1, ChangeId::from_uuid(Uuid::from_u128(9111)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // 2. Create Artifact A1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_art = ElementId::from_uuid(Uuid::from_u128(9012));
+    let prep_a1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_art,
+                    type_id: "kat.core/artifact".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("authx.jar".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_change(
+        &repo,
+        persist_prepared_change(
+            &repo,
+            prepare_change_revision(prep_a1, ChangeId::from_uuid(Uuid::from_u128(9112)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // 3. Link A1 (represents) -> M1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let r1_id = RelationshipId::from_uuid(Uuid::from_u128(9211));
+    let prep_l1 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: r1_id,
+                    relationship_type_id: "kat.core/represents".into(),
+                    source_element_id: e_art,
+                    target_element_id: e_imp,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(
+            &repo,
+            prepare_link_change_revision(prep_l1, ChangeId::from_uuid(Uuid::from_u128(9113)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Verify CURRENT status
+    let repo = open_repository(root).unwrap();
+    let report1 = analyze_artifact_accountability(&repo).unwrap();
+    assert_eq!(report1.artifacts.len(), 1);
+    assert_eq!(
+        report1.artifacts[0].status,
+        ArtifactAccountabilityStatus::Current
+    );
+    assert_eq!(report1.artifacts[0].baselines.len(), 1);
+    assert!(!report1.artifacts[0].baselines[0].is_stale);
+
+    // 4. Update M1 (advances Implementation version)
+    let repo = open_repository(root).unwrap();
+    let v_m1 = show_element(&repo, e_imp).unwrap().version_id;
+    let ctx = prepare_change(&repo).unwrap();
+    let prep_u1 = validate_update_element_invariants(
+        validate_update_element_ontology(
+            apply_update_element(
+                &repo,
+                ctx,
+                UpdateElementInput {
+                    element_id: e_imp,
+                    expected_version: v_m1,
+                    properties: vec![("title".into(), PropertyValue::Text("AuthX Core v2".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_update_change(
+        &repo,
+        persist_prepared_update_change(
+            &repo,
+            prepare_update_change_revision(
+                prep_u1,
+                ChangeId::from_uuid(Uuid::from_u128(9114)),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Verify STALE status
+    let repo = open_repository(root).unwrap();
+    let report2 = analyze_artifact_accountability(&repo).unwrap();
+    assert_eq!(report2.artifacts.len(), 1);
+    assert_eq!(
+        report2.artifacts[0].status,
+        ArtifactAccountabilityStatus::Stale
+    );
+    assert_eq!(report2.artifacts[0].baselines.len(), 1);
+    assert!(report2.artifacts[0].baselines[0].is_stale);
+
+    // 5. Unlink r1 and Link r2 (A1 represents M1)
+    let repo = open_repository(root).unwrap();
+    let state_bytes = repo
+        .object_store()
+        .get(repo.ref_store().read_accepted().unwrap().state)
+        .unwrap();
+    let state_obj = kat::encoding::decode_canonical(&state_bytes).unwrap();
+    let state_tmp = match state_obj.payload {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => unreachable!(),
+    };
+    let r1_ver_id = state_tmp
+        .relationships
+        .iter()
+        .find(|r| r.relationship_id == r1_id)
+        .unwrap()
+        .version;
+
+    let ctx = prepare_change(&repo).unwrap();
+    let prep_ul = validate_unlink_element_invariants(
+        apply_unlink_element(
+            &repo,
+            ctx,
+            UnlinkElementInput {
+                relationship_id: r1_id,
+                expected_version: r1_ver_id,
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_unlink_change(
+        &repo,
+        persist_prepared_unlink_change(
+            &repo,
+            prepare_unlink_change_revision(
+                prep_ul,
+                ChangeId::from_uuid(Uuid::from_u128(9115)),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let r2_id = RelationshipId::from_uuid(Uuid::from_u128(9212));
+    let prep_l2 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: r2_id,
+                    relationship_type_id: "kat.core/represents".into(),
+                    source_element_id: e_art,
+                    target_element_id: e_imp,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    publish_persisted_link_change(
+        &repo,
+        persist_prepared_link_change(
+            &repo,
+            prepare_link_change_revision(prep_l2, ChangeId::from_uuid(Uuid::from_u128(9116)), None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Verify CURRENT status restored after re-link
+    let repo = open_repository(root).unwrap();
+    let report3 = analyze_artifact_accountability(&repo).unwrap();
+    assert_eq!(report3.artifacts.len(), 1);
+    assert_eq!(
+        report3.artifacts[0].status,
+        ArtifactAccountabilityStatus::Current
+    );
+    assert_eq!(report3.artifacts[0].baselines.len(), 1);
+    assert!(!report3.artifacts[0].baselines[0].is_stale);
+}
+
+#[test]
+fn accountability_does_not_mutate_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let _ids = publish_first_change(root, 88, 188);
+    let objects_before = object_ids(root);
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    analyze_artifact_accountability(&repo).unwrap();
+
+    assert_eq!(object_ids(root), objects_before);
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
 }

@@ -16,8 +16,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::domain::change::ChangeRevision;
-use crate::domain::element::KnowledgeElementVersion;
+use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
 use crate::domain::identity::{ElementId, ObjectId, RelationshipId};
+use crate::domain::property::PropertyValue;
 use crate::encoding::decode::DecodingError;
 use crate::encoding::decode_canonical;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
@@ -157,6 +158,58 @@ pub fn impact_propagation_direction(relationship_type_id: &str) -> Option<Traver
         "supersedes" => None,
         _ => None,
     }
+}
+
+/// Status of an active Artifact element's alignment with upstream authoritative knowledge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ArtifactAccountabilityStatus {
+    /// All direct accountability baselines match current active upstream versions.
+    Current,
+    /// At least one direct baseline differs from the current active upstream version.
+    Stale,
+    /// The active Artifact has no direct accountability relationships (represents / derived-from).
+    Unaccounted,
+}
+
+/// Alignment baseline of an Artifact with one direct upstream authoritative element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactBaseline {
+    /// Stable identity of the accountability relationship (represents / derived-from).
+    pub relationship_id: RelationshipId,
+    /// Relationship type ID.
+    pub relationship_type: String,
+    /// Upstream element ID.
+    pub upstream_element_id: ElementId,
+    /// Upstream element type ID.
+    pub upstream_type_id: String,
+    /// Upstream version object ID when the accountability relationship was introduced.
+    pub baseline_version: ObjectId,
+    /// Current active version object ID of the upstream element.
+    pub current_version: ObjectId,
+    /// True if `current_version != baseline_version`.
+    pub is_stale: bool,
+}
+
+/// Accountability record for one active Artifact element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactAccountability {
+    /// Identity of the Artifact element.
+    pub artifact_element_id: ElementId,
+    /// Type ID of the artifact element (`kat.core/artifact`).
+    pub artifact_type_id: String,
+    /// Title property if present.
+    pub title: Option<String>,
+    /// Accountability status.
+    pub status: ArtifactAccountabilityStatus,
+    /// Detailed baseline records for direct accountability relationships.
+    pub baselines: Vec<ArtifactBaseline>,
+}
+
+/// Comprehensive report produced by `analyze_artifact_accountability`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactAccountabilityReport {
+    /// Records for all active Artifact elements in the accepted state.
+    pub artifacts: Vec<ArtifactAccountability>,
 }
 
 /// Error produced by read-side queries.
@@ -767,4 +820,177 @@ fn explore_impact_paths(
             visited_rels.remove(&entry.relationship_id);
         }
     }
+}
+
+/// Traces history backward from accepted head to find the ChangeRevision where `relationship_id`
+/// was first introduced, returning the target element's version ObjectId in that change's result state.
+pub fn resolve_relationship_baseline_version(
+    repository: &Repository,
+    relationship_id: RelationshipId,
+    target_element_id: ElementId,
+) -> Result<ObjectId, QueryError> {
+    let entries = history(repository)?;
+
+    // `entries` is ordered from accepted head (newest) to oldest.
+    // Walk newest to oldest: track the last seen state containing relationship_id,
+    // and stop when relationship_id is no longer present.
+    let mut introducing_state = None;
+    for entry in &entries {
+        let state = match load_typed(
+            repository.object_store(),
+            entry.change.result_state,
+            ObjectKind::SemanticState,
+        )?
+        .payload
+        {
+            CanonicalPayload::SemanticState(s) => s,
+            _ => unreachable!("kind verified by load_typed"),
+        };
+
+        if state
+            .relationships
+            .iter()
+            .any(|r| r.relationship_id == relationship_id)
+        {
+            introducing_state = Some(state);
+        } else {
+            break;
+        }
+    }
+
+    let state = introducing_state.ok_or(QueryError::ElementNotFound(target_element_id))?;
+
+    let elem_entry = state
+        .elements
+        .iter()
+        .find(|e| e.element_id == target_element_id)
+        .ok_or(QueryError::ElementNotFound(target_element_id))?;
+
+    Ok(elem_entry.version)
+}
+
+/// Evaluates artifact accountability across all active `kat.core/artifact` elements
+/// in the repository's current accepted state $S_n$.
+pub fn analyze_artifact_accountability(
+    repository: &Repository,
+) -> Result<ArtifactAccountabilityReport, QueryError> {
+    let accepted = repository.ref_store().read_accepted()?;
+    let state = match load_typed(
+        repository.object_store(),
+        accepted.state,
+        ObjectKind::SemanticState,
+    )?
+    .payload
+    {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => unreachable!("kind verified by load_typed"),
+    };
+
+    let mut artifact_records = Vec::new();
+
+    for elem_entry in &state.elements {
+        let el_version = match load_typed(
+            repository.object_store(),
+            elem_entry.version,
+            ObjectKind::KnowledgeElementVersion,
+        )?
+        .payload
+        {
+            CanonicalPayload::KnowledgeElementVersion(v) => v,
+            _ => unreachable!("kind verified by load_typed"),
+        };
+        if el_version.lifecycle != Lifecycle::Active {
+            continue;
+        }
+
+        let short_or_qualified = el_version
+            .type_id
+            .rsplit('/')
+            .next()
+            .unwrap_or(&el_version.type_id);
+        if short_or_qualified != "artifact" {
+            continue;
+        }
+
+        let title = el_version
+            .properties
+            .iter()
+            .find(|(k, _)| k == "title")
+            .and_then(|(_, v)| match v {
+                PropertyValue::Text(t) => Some(t.clone()),
+                _ => None,
+            });
+
+        let mut baselines = Vec::new();
+
+        for rel_entry in &state.relationships {
+            let rel_version = match load_typed(
+                repository.object_store(),
+                rel_entry.version,
+                ObjectKind::RelationshipVersion,
+            )?
+            .payload
+            {
+                CanonicalPayload::RelationshipVersion(v) => v,
+                _ => unreachable!("kind verified by load_typed"),
+            };
+            if rel_version.source_element_id != el_version.element_id {
+                continue;
+            }
+
+            let rel_type_short = rel_version
+                .relationship_type
+                .rsplit('/')
+                .next()
+                .unwrap_or(&rel_version.relationship_type);
+            if rel_type_short != "represents"
+                && rel_type_short != "derived-from"
+                && rel_type_short != "derived_from"
+            {
+                continue;
+            }
+
+            let target_view = show_element(repository, rel_version.target_element_id)?;
+            let current_version = target_view.version_id;
+
+            let baseline_version = resolve_relationship_baseline_version(
+                repository,
+                rel_version.relationship_id,
+                rel_version.target_element_id,
+            )?;
+
+            let is_stale = current_version != baseline_version
+                || target_view.element.lifecycle != Lifecycle::Active;
+
+            baselines.push(ArtifactBaseline {
+                relationship_id: rel_version.relationship_id,
+                relationship_type: rel_version.relationship_type.clone(),
+                upstream_element_id: rel_version.target_element_id,
+                upstream_type_id: target_view.element.type_id.clone(),
+                baseline_version,
+                current_version,
+                is_stale,
+            });
+        }
+
+        let status = if baselines.is_empty() {
+            ArtifactAccountabilityStatus::Unaccounted
+        } else if baselines.iter().any(|b| b.is_stale) {
+            ArtifactAccountabilityStatus::Stale
+        } else {
+            ArtifactAccountabilityStatus::Current
+        };
+
+        artifact_records.push(ArtifactAccountability {
+            artifact_element_id: el_version.element_id,
+            artifact_type_id: el_version.type_id,
+            title,
+            status,
+            baselines,
+        });
+    }
+
+    Ok(ArtifactAccountabilityReport {
+        artifacts: artifact_records,
+    })
 }

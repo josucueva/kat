@@ -36,7 +36,8 @@ use kat::repository::change::{
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
 use kat::repository::query::{
-    HistoryEntry, ImpactResult, QueryError, TraceResult, TraversalDirection, analyze_impact,
+    ArtifactAccountabilityReport, ArtifactAccountabilityStatus, HistoryEntry, ImpactResult,
+    QueryError, TraceResult, TraversalDirection, analyze_artifact_accountability, analyze_impact,
     history, show_element, trace_origin,
 };
 use kat::repository::validation::repository::{ValidationReport, validate_repository};
@@ -56,10 +57,11 @@ fn main() -> ExitCode {
         Some("trace") => cmd_trace(&args[1..]),
         Some("impact") => cmd_impact(&args[1..]),
         Some("validate") => cmd_validate(),
+        Some("artifacts") => cmd_artifacts(),
         Some(other) => {
             eprintln!("kat: unknown command '{other}'");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history | kat trace <element-id> | kat impact <element-id> | kat validate"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat supersede <existing-id> <replacement-type> --title \"...\" [--description \"...\"] | kat link <relationship-type> <source-id> <target-id> [--description \"...\"] | kat unlink <relationship-id> [--description \"...\"] | kat show <element-id> | kat history | kat trace <element-id> | kat impact <element-id> | kat validate | kat artifacts"
             );
             ExitCode::FAILURE
         }
@@ -1510,6 +1512,98 @@ fn print_validation_report(repository: &Repository, report: &ValidationReport) {
             );
         }
     }
+}
+
+/// `kat artifacts` — evaluate artifact accountability across all active `kat.core/artifact` elements
+/// against current accepted state (read-only; thin dispatch over [`analyze_artifact_accountability`]).
+fn cmd_artifacts() -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat artifacts: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match analyze_artifact_accountability(&repository) {
+        Ok(report) => {
+            print_artifact_accountability_report(&report);
+            let has_stale_or_unaccounted = report.artifacts.iter().any(|a| {
+                a.status == ArtifactAccountabilityStatus::Stale
+                    || a.status == ArtifactAccountabilityStatus::Unaccounted
+            });
+            if has_stale_or_unaccounted {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => {
+            eprintln!("kat artifacts: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport) {
+    println!("artifact accountability:");
+    println!();
+
+    if report.artifacts.is_empty() {
+        println!("  no active artifacts found");
+        println!();
+        println!("summary:");
+        println!("  current: 0");
+        println!("  stale: 0");
+        println!("  unaccounted: 0");
+        return;
+    }
+
+    let mut current_count = 0;
+    let mut stale_count = 0;
+    let mut unaccounted_count = 0;
+
+    for a in &report.artifacts {
+        match a.status {
+            ArtifactAccountabilityStatus::Current => current_count += 1,
+            ArtifactAccountabilityStatus::Stale => stale_count += 1,
+            ArtifactAccountabilityStatus::Unaccounted => unaccounted_count += 1,
+        }
+
+        print!("  {}", a.artifact_element_id);
+        if let Some(ref title) = a.title {
+            print!(" \"{title}\"");
+        }
+        println!();
+
+        let status_str = match a.status {
+            ArtifactAccountabilityStatus::Current => "current",
+            ArtifactAccountabilityStatus::Stale => "stale",
+            ArtifactAccountabilityStatus::Unaccounted => "unaccounted",
+        };
+        println!("    status: {status_str}");
+
+        if a.baselines.is_empty() {
+            println!("    accountability relationships: none");
+        } else {
+            println!("    accountability relationships:");
+            for b in &a.baselines {
+                let status_flag = if b.is_stale { "STALE" } else { "CURRENT" };
+                println!(
+                    "      - {} -> {} [{}] status: {}",
+                    b.relationship_type, b.upstream_element_id, b.upstream_type_id, status_flag
+                );
+                println!("        baseline version: {}", b.baseline_version);
+                println!("        current version:  {}", b.current_version);
+            }
+        }
+        println!();
+    }
+
+    println!("summary:");
+    println!("  current: {current_count}");
+    println!("  stale: {stale_count}");
+    println!("  unaccounted: {unaccounted_count}");
 }
 
 #[cfg(test)]
