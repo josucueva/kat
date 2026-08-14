@@ -1791,6 +1791,50 @@ pub fn publish_persisted_deprecate_change(
     }
 }
 
+/// A persisted supersede change that has been atomically published as the
+/// repository's accepted head (step 4.6).
+#[derive(Debug)]
+pub struct PublishedSupersedeChange {
+    /// The persisted supersede change that was just published.
+    pub persisted: PersistedSupersedeChange,
+    /// The new accepted repository head (`state: Sn+1`, `change: Some(Cn+1)`).
+    pub accepted: AcceptedRef,
+}
+
+/// Publishes an already-persisted supersede change by atomically advancing the
+/// accepted State and Change head.
+pub fn publish_persisted_supersede_change(
+    repository: &Repository,
+    persisted: PersistedSupersedeChange,
+) -> Result<PublishedSupersedeChange, ChangeError> {
+    let prepared = &persisted.prepared;
+
+    if prepared.change.result_state != prepared.state_id {
+        return Err(ChangeError::PublicationStateMismatch {
+            expected: prepared.state_id,
+            actual: prepared.change.result_state,
+        });
+    }
+
+    let expected = &prepared.supersede.context.accepted;
+    let new = AcceptedRef {
+        state: prepared.state_id,
+        change: Some(prepared.change_revision_id),
+    };
+
+    match repository
+        .ref_store()
+        .compare_and_swap_accepted(expected, &new)
+    {
+        Ok(()) => Ok(PublishedSupersedeChange {
+            persisted,
+            accepted: new,
+        }),
+        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
+        Err(err) => Err(ChangeError::RefStore(err)),
+    }
+}
+
 /// A persisted change that has been atomically published as the repository's
 /// accepted head (step 1.7).
 ///

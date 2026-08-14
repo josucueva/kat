@@ -34,11 +34,11 @@ use kat::repository::change::{
     persist_prepared_update_change, prepare_change, prepare_change_revision,
     prepare_deprecate_change_revision, prepare_supersede_change_revision,
     prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
-    publish_persisted_update_change, validate_create_element_invariants,
-    validate_create_element_ontology, validate_deprecate_element_invariants,
-    validate_deprecate_element_ontology, validate_supersede_element_invariants,
-    validate_supersede_element_ontology, validate_update_element_invariants,
-    validate_update_element_ontology,
+    publish_persisted_supersede_change, publish_persisted_update_change,
+    validate_create_element_invariants, validate_create_element_ontology,
+    validate_deprecate_element_invariants, validate_deprecate_element_ontology,
+    validate_supersede_element_invariants, validate_supersede_element_ontology,
+    validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -3035,4 +3035,236 @@ fn persist_prepared_supersede_change_increases_object_count_by_five() {
 
     let count_after = std::fs::read_dir(&objects_dir).unwrap().count();
     assert_eq!(count_after, count_before + 5);
+}
+
+// ---------------------------------------------------------------------------
+// Step 4.6 — publish_persisted_supersede_change
+// ---------------------------------------------------------------------------
+
+#[test]
+fn publish_persisted_supersede_change_advances_accepted_head_and_survives_reopen() {
+    let setup = repo_with_typed_element(430, 530, "kat.core/design-decision");
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(996));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(997));
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(998));
+
+    let prepared_elem = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/design-decision".into(),
+            replacement_properties: vec![(
+                "title".into(),
+                PropertyValue::Text("Replacement".into()),
+            )],
+            relationship_id,
+        },
+    )
+    .unwrap();
+
+    let ontology_validated = validate_supersede_element_ontology(prepared_elem).unwrap();
+    let validated = validate_supersede_element_invariants(ontology_validated).unwrap();
+    let revision =
+        prepare_supersede_change_revision(validated, change_id, Some("Superseding 430".into()))
+            .unwrap();
+    let persisted = persist_prepared_supersede_change(repo, revision).unwrap();
+
+    let objects_dir = setup.root.join(".kat/objects");
+    let count_before = std::fs::read_dir(&objects_dir).unwrap().count();
+
+    // Publish
+    let published = publish_persisted_supersede_change(repo, persisted).unwrap();
+
+    // Zero new objects created by publication
+    let count_after = std::fs::read_dir(&objects_dir).unwrap().count();
+    assert_eq!(count_before, count_after);
+
+    // Accepted ref advanced to S_next, C_next
+    assert_eq!(
+        published.accepted.state,
+        published.persisted.prepared.state_id
+    );
+    assert_eq!(
+        published.accepted.change,
+        Some(published.persisted.prepared.change_revision_id)
+    );
+
+    // Reopen fresh repository handle
+    let reopened = open_repository(&setup.root).unwrap();
+
+    // E1 resolves to V1_next with Lifecycle::Superseded
+    let view_e1 = show_element(&reopened, setup.element_id).unwrap();
+    assert_eq!(
+        view_e1.version_id,
+        published
+            .persisted
+            .prepared
+            .supersede
+            .new_existing_version_id
+    );
+    assert_eq!(view_e1.element.lifecycle, Lifecycle::Superseded);
+
+    // E2 resolves to V2_initial with Lifecycle::Active
+    let view_e2 = show_element(&reopened, replacement_id).unwrap();
+    assert_eq!(
+        view_e2.version_id,
+        published
+            .persisted
+            .prepared
+            .supersede
+            .replacement_version_id
+    );
+    assert_eq!(view_e2.element.lifecycle, Lifecycle::Active);
+
+    // Old V1 remains in ObjectStore unchanged
+    assert!(reopened.object_store().get(setup.version_id).is_ok());
+
+    // Post-supersession lifecycle enforcement:
+    // Attempting Update on E1 (Superseded) MUST fail with ElementNotActive
+    let new_context = prepare_change(&reopened).unwrap();
+    let err = apply_update_element(
+        &reopened,
+        new_context,
+        UpdateElementInput {
+            element_id: setup.element_id,
+            expected_version: view_e1.version_id,
+            properties: vec![("title".into(), PropertyValue::Text("Fails".into()))],
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::ElementNotActive(e)) if e == setup.element_id
+    ));
+
+    // Updating E2 (Active) MUST succeed
+    let new_context2 = prepare_change(&reopened).unwrap();
+    assert!(
+        apply_update_element(
+            &reopened,
+            new_context2,
+            UpdateElementInput {
+                element_id: replacement_id,
+                expected_version: view_e2.version_id,
+                properties: vec![(
+                    "title".into(),
+                    PropertyValue::Text("Updated Replacement".into())
+                )],
+            },
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn publish_supersede_conflicts_when_accepted_ref_moved_since_preparation() {
+    let setup = repo_with_typed_element(431, 531, "kat.core/design-decision");
+    let repo = &setup.repo;
+
+    // Writer 1 (Update)
+    let ctx1 = prepare_change(repo).unwrap();
+    let prep1 = apply_update_element(
+        repo,
+        ctx1,
+        UpdateElementInput {
+            element_id: setup.element_id,
+            expected_version: setup.version_id,
+            properties: vec![(
+                "title".into(),
+                PropertyValue::Text("Writer 1 Update".into()),
+            )],
+        },
+    )
+    .unwrap();
+    let val1 = validate_update_element_ontology(prep1).unwrap();
+    let val_inv1 = validate_update_element_invariants(val1).unwrap();
+    let rev1 =
+        prepare_update_change_revision(val_inv1, ChangeId::from_uuid(Uuid::from_u128(701)), None)
+            .unwrap();
+    let pers1 = persist_prepared_update_change(repo, rev1).unwrap();
+
+    // Writer 2 (Supersede)
+    let ctx2 = prepare_change(repo).unwrap();
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(999));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(1000));
+    let prep2 = apply_supersede_element(
+        repo,
+        ctx2,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/design-decision".into(),
+            replacement_properties: vec![],
+            relationship_id,
+        },
+    )
+    .unwrap();
+    let val2 = validate_supersede_element_ontology(prep2).unwrap();
+    let val_inv2 = validate_supersede_element_invariants(val2).unwrap();
+    let rev2 = prepare_supersede_change_revision(
+        val_inv2,
+        ChangeId::from_uuid(Uuid::from_u128(702)),
+        None,
+    )
+    .unwrap();
+    let pers2 = persist_prepared_supersede_change(repo, rev2).unwrap();
+
+    // Writer 1 publishes successfully
+    publish_persisted_update_change(repo, pers1).unwrap();
+
+    // Writer 2 attempt to publish -> Conflict
+    let err = publish_persisted_supersede_change(repo, pers2).unwrap_err();
+    assert!(matches!(err, ChangeError::Conflict));
+}
+
+#[test]
+fn publish_supersede_rejects_internally_inconsistent_prepared_change() {
+    let setup = repo_with_typed_element(432, 532, "kat.core/design-decision");
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(1001));
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(1002));
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(1003));
+
+    let prepared_elem = apply_supersede_element(
+        repo,
+        context,
+        SupersedeElementInput {
+            existing_element_id: setup.element_id,
+            expected_existing_version: setup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/design-decision".into(),
+            replacement_properties: vec![],
+            relationship_id,
+        },
+    )
+    .unwrap();
+
+    let ontology_validated = validate_supersede_element_ontology(prepared_elem).unwrap();
+    let validated = validate_supersede_element_invariants(ontology_validated).unwrap();
+    let revision = prepare_supersede_change_revision(validated, change_id, None).unwrap();
+
+    let expected_state_id = revision.state_id;
+
+    let mut persisted = persist_prepared_supersede_change(repo, revision).unwrap();
+
+    // Tamper change.result_state after persistence
+    let tampered_state = object_id(0xFF);
+    persisted.prepared.change.result_state = tampered_state;
+
+    let err = publish_persisted_supersede_change(repo, persisted).unwrap_err();
+
+    assert!(matches!(
+        err,
+        ChangeError::PublicationStateMismatch { expected, actual }
+            if expected == expected_state_id && actual == tampered_state
+    ));
 }
