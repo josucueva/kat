@@ -641,3 +641,25 @@ This initial ontology is intentionally small.
 
 New element types and relationships should be added only when they represent concepts that cannot be expressed clearly through the existing ontology.
 
+# Origin Traversal Policy
+
+Relationships carry semantic directionality that defines how KAT queries navigate the semantic graph to trace authoritative origin and provenance.
+
+When performing **Origin Tracing** (`kat trace`), relationships participate in provenance navigation according to a normative direction relative to their canonical definitions:
+
+| Relationship Type | Canonical Form | Origin Traversal Direction | Semantic Rationale |
+| :--- | :--- | :--- | :--- |
+| `kat.core/motivates` | Intent $\xrightarrow{\text{motivates}}$ Req / Decision | Target $\to$ Source (**Backward**) | Requirement / Decision is motivated by Intent |
+| `kat.core/derived-from` | Artifact $\xrightarrow{\text{derived-from}}$ Auth Knowledge | Source $\to$ Target (**Forward**) | Artifact is derived from Requirement / Decision / Constraint |
+| `kat.core/realizes` | Impl $\xrightarrow{\text{realizes}}$ Requirement | Source $\to$ Target (**Forward**) | Implementation realizes Requirement |
+| `kat.core/represents` | Artifact $\xrightarrow{\text{represents}}$ Implementation | Source $\to$ Target (**Forward**) | Artifact represents Implementation |
+| `kat.core/validates` | Validation $\xrightarrow{\text{validates}}$ Subject | Source $\to$ Target (**Forward**) | Validation validates Requirement / Constraint / Implementation |
+| `kat.core/restricts` | Constraint $\xrightarrow{\text{restricts}}$ Req / Decision / Impl | Target $\to$ Source (**Backward**) | Element is restricted by Constraint |
+| `kat.core/addresses` | Decision $\xrightarrow{\text{addresses}}$ Requirement | Source $\to$ Target (**Forward**) | Decision exists to address Requirement |
+| `kat.core/supersedes` | Replacement $\xrightarrow{\text{supersedes}}$ Existing Decision | Source $\to$ Target (**Forward**) | Replacement decision supersedes old decision |
+| `kat.core/guides` | Decision $\xrightarrow{\text{guides}}$ Implementation | Target $\to$ Source (**Backward**) | Implementation is guided by Decision |
+| `kat.core/depends-on` | Impl $\xrightarrow{\text{depends-on}}$ Implementation | *Excluded (Non-Origin)* | Structural dependency (reserved for Impact Analysis) |
+
+Relationships classified as *Excluded* (such as `kat.core/depends-on`) represent horizontal or operational dependencies rather than authoritative origin or rationale, and are omitted from Origin Tracing.
+
+
