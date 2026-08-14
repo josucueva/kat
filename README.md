@@ -22,10 +22,15 @@ KAT treats the specification — intent, requirements, constraints, design decis
 
 ### Build & Install
 
+The recommended way to install KAT (including binary, UNIX man pages, and shell completions for Bash, Zsh, and Fish) is:
+
 ```bash
-cargo build --release
-cargo install --path .
+./install.sh
 ```
+
+This installs `kat` to `~/.local/bin`, man pages to `~/.local/share/man/man1/`, and completions to your user shell completion directory.
+
+See [`docs/install.md`](docs/install.md) for full installation details and alternative options (such as `cargo install`).
 
 ### CLI Help and Generated Assets
 
@@ -37,7 +42,7 @@ kat create --help
 kat trace --help
 ```
 
-UNIX man pages and shell completion scripts are generated from the same CLI definition:
+Man pages and completion scripts are generated from the declarative CLI model:
 
 ```bash
 cargo run --bin generate_assets
