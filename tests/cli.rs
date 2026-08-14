@@ -667,3 +667,115 @@ fn kat_update_malformed_arguments_and_no_effective_change_fail() {
     assert!(!ok);
     assert!(err.contains("no effective change"));
 }
+
+#[test]
+fn kat_deprecate_outside_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    let element_id = ElementId::from_uuid(Uuid::from_u128(993));
+    let (out, err, ok) = run_kat(root, &["deprecate", &element_id.to_string()]);
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("no KAT repository found"));
+}
+
+#[test]
+fn kat_deprecate_unknown_element_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    let missing_id = ElementId::from_uuid(Uuid::from_u128(994));
+    let (out, err, ok) = run_kat(root, &["deprecate", &missing_id.to_string()]);
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("not found in the base state"));
+}
+
+#[test]
+fn kat_deprecate_malformed_arguments_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    // Invalid element ID
+    let (_out, err, ok) = run_kat(root, &["deprecate", "not-a-uuid"]);
+    assert!(!ok);
+    assert!(err.contains("invalid element ID"));
+
+    // Missing element ID
+    let (_out, err, ok) = run_kat(root, &["deprecate"]);
+    assert!(!ok);
+    assert!(err.contains("expected <element-id>"));
+
+    // Extra arguments
+    let (_out, err, ok) = run_kat(root, &["deprecate", "arg1", "arg2"]);
+    assert!(!ok);
+    assert!(err.contains("expected <element-id>"));
+}
+
+#[test]
+fn kat_deprecate_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (init_out, init_err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {init_err}\n{init_out}");
+
+    // 1. Create requirement -> V1, S1, C1
+    let (create_out, create_err, ok) =
+        run_kat(root, &["create", "requirement", "--title", "Req 1"]);
+    assert!(ok, "kat create failed: {create_err}\n{create_out}");
+    let element_id = ElementId::from_str(id_line(&create_out, "element_id")).unwrap();
+    let v1_id = ObjectId::from_str(id_line(&create_out, "version_id")).unwrap();
+    let s1_id = ObjectId::from_str(id_line(&create_out, "state_id")).unwrap();
+    let c1_rev_id = ObjectId::from_str(id_line(&create_out, "change_revision_id")).unwrap();
+
+    // 2. Deprecate requirement -> V2, S2, C2
+    let (deprecate_out, deprecate_err, ok) = run_kat(root, &["deprecate", &element_id.to_string()]);
+    assert!(ok, "kat deprecate failed: {deprecate_err}\n{deprecate_out}");
+    let prev_v_id = ObjectId::from_str(id_line(&deprecate_out, "previous_version_id")).unwrap();
+    let v2_id = ObjectId::from_str(id_line(&deprecate_out, "version_id")).unwrap();
+    let s2_id = ObjectId::from_str(id_line(&deprecate_out, "state_id")).unwrap();
+    let c2_change_id = ChangeId::from_str(id_line(&deprecate_out, "change_id")).unwrap();
+    let c2_rev_id = ObjectId::from_str(id_line(&deprecate_out, "change_revision_id")).unwrap();
+
+    assert_eq!(prev_v_id, v1_id);
+    assert_ne!(v2_id, v1_id);
+
+    // 3. Reopen repository -> accepted head is { S2, C2 }
+    let reopened = open_repository(root).unwrap();
+    assert_eq!(reopened.accepted.state, s2_id);
+    assert_eq!(reopened.accepted.change, Some(c2_rev_id));
+
+    // 4. History lists C2 -> C1
+    let entries = history(&reopened).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].revision_id, c2_rev_id);
+    assert_eq!(entries[0].change.change_id, c2_change_id);
+    assert_eq!(entries[0].change.result_state, s2_id);
+    assert_eq!(entries[0].change.base_states, vec![s1_id]);
+    assert_eq!(entries[0].change.dependencies, vec![c1_rev_id]);
+    assert_eq!(
+        entries[0].change.operations,
+        vec![Operation::DeprecateElement {
+            element_id,
+            expected_version: v1_id,
+            new_version: v2_id,
+        }]
+    );
+
+    // 5. kat show resolves V2 with lifecycle Deprecated
+    let (show_out, show_err, ok) = run_kat(root, &["show", &element_id.to_string()]);
+    assert!(ok, "kat show failed: {show_err}\n{show_out}");
+    assert!(show_out.contains("lifecycle: deprecated"));
+
+    // 6. Deprecating an already deprecated element fails with 'not active'
+    let (deprecate_again_out, deprecate_again_err, ok) =
+        run_kat(root, &["deprecate", &element_id.to_string()]);
+    assert!(!ok);
+    assert!(deprecate_again_out.is_empty());
+    assert!(deprecate_again_err.contains("is not active in the base state"));
+}

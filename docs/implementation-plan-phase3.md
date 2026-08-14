@@ -61,9 +61,8 @@ $$\text{PersistedDeprecateChange} \xrightarrow{\text{publish (CAS)}} \text{Publi
       Notes: `src/repository/change.rs` — `PublishedDeprecateChange` and `publish_persisted_deprecate_change(&Repository, PersistedDeprecateChange) -> Result<PublishedDeprecateChange, ChangeError>`: single CAS `expected = persisted.prepared.deprecation.context.accepted` → `new = { state: Sn+1, change: Some(Cn+1) }`, returning new head in `PublishedDeprecateChange { persisted, accepted }`. Pre-CAS defensive check `prepared.change.result_state == prepared.state_id` (`ChangeError::PublicationStateMismatch`); `RefStoreError::Conflict` surfaced as domain `ChangeError::Conflict`. Pipeline typestate enforced (`PersistedDeprecateChange` required). Re-exported in `repository/mod.rs`. 1 new integration test (`tests/change.rs`). `cargo test` 238 pass, fmt/clippy clean.
 
 ### Step 3.7 — CLI `kat deprecate <element-id>` Wiring
-- **Goal**: Wire `kat deprecate <element-id>` in `src/main.rs`.
-- **Flow**: Parse `element-id` -> open repo -> prepare change -> resolve $V_n$ from base state -> run deprecate pipeline -> print stable IDs (`element_id`, `previous_version_id`, `version_id`, `state_id`, `change_id`, `change_revision_id`).
-- **Error Handling**: `ElementNotFound`, `ElementNotActive`, `Conflict`, malformed CLI arguments.
+- [x] **3.7 — CLI `kat deprecate <element-id>` wiring.**
+      Notes: `src/main.rs` (`cmd_deprecate`, `parse_deprecate_args`, `deprecate_pipeline`, `fail_deprecate`) thin CLI adapter over engine deprecation pipeline. Resolves $E \to V_n$ from current accepted state, runs deprecate pipeline, prints stable IDs (`element_id`, `previous_version_id`, `version_id`, `state_id`, `change_id`, `change_revision_id`). 4 CLI end-to-end integration tests (`tests/cli.rs`). `cargo test` 242 pass, fmt/clippy clean. Error Handling: `ElementNotFound`, `ElementNotActive`, `Conflict`, malformed CLI arguments.
 
 ### Step 3.8 — Acceptance Verification & Phase 3 Closure
 - **Goal**: Add `phase3_acceptance_cli_flow_end_to_end` in `tests/cli.rs`.

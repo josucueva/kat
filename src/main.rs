@@ -14,11 +14,14 @@ use kat::domain::ontology::OntologyVersion;
 use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
 use kat::repository::change::{
-    ChangeContext, ChangeError, CreateElementInput, PublishedChange, PublishedUpdateChange,
-    UpdateElementInput, apply_create_element, apply_update_element, persist_prepared_change,
-    persist_prepared_update_change, prepare_change, prepare_change_revision,
-    prepare_update_change_revision, publish_persisted_change, publish_persisted_update_change,
+    ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, PublishedChange,
+    PublishedDeprecateChange, PublishedUpdateChange, UpdateElementInput, apply_create_element,
+    apply_deprecate_element, apply_update_element, persist_prepared_change,
+    persist_prepared_deprecate_change, persist_prepared_update_change, prepare_change,
+    prepare_change_revision, prepare_deprecate_change_revision, prepare_update_change_revision,
+    publish_persisted_change, publish_persisted_deprecate_change, publish_persisted_update_change,
     validate_create_element_invariants, validate_create_element_ontology,
+    validate_deprecate_element_invariants, validate_deprecate_element_ontology,
     validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
@@ -31,19 +34,20 @@ fn main() -> ExitCode {
         Some("init") => cmd_init(),
         Some("create") => cmd_create(&args[1..]),
         Some("update") => cmd_update(&args[1..]),
+        Some("deprecate") => cmd_deprecate(&args[1..]),
         Some("show") => cmd_show(&args[1..]),
         Some("history") => cmd_history(&args[1..]),
         Some(other) => {
             eprintln!("kat: unknown command '{other}'");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat show <element-id> | kat history"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat show <element-id> | kat history"
             );
             ExitCode::FAILURE
         }
         None => {
             eprintln!("kat: missing command");
             eprintln!(
-                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat show <element-id> | kat history"
+                "usage: kat init | kat create <type> --title \"...\" [--description \"...\"] | kat update <element-id> [--title \"...\"] [--description \"...\"] | kat deprecate <element-id> | kat show <element-id> | kat history"
             );
             ExitCode::FAILURE
         }
@@ -389,6 +393,116 @@ fn update_pipeline(
     let revision = prepare_update_change_revision(validated, ChangeId::new(), None)?;
     let persisted = persist_prepared_update_change(repository, revision)?;
     publish_persisted_update_change(repository, persisted)
+}
+
+/// Parsed `kat deprecate` arguments.
+struct DeprecateArgs {
+    element_id: ElementId,
+}
+
+/// Parses `kat deprecate <element-id>`.
+fn parse_deprecate_args(args: &[String]) -> Result<DeprecateArgs, String> {
+    let [element_id_arg] = args else {
+        return Err("expected <element-id>".to_string());
+    };
+    let element_id = ElementId::from_str(element_id_arg)
+        .map_err(|_| format!("invalid element ID: {element_id_arg}"))?;
+    Ok(DeprecateArgs { element_id })
+}
+
+/// `kat deprecate <element-id>` — run a `DeprecateElement` change end to end
+/// through the Change Engine and publish it (thin dispatch; all semantics live
+/// in the library).
+fn cmd_deprecate(args: &[String]) -> ExitCode {
+    let parsed = match parse_deprecate_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("kat deprecate: {message}");
+            eprintln!("usage: kat deprecate <element-id>");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat deprecate: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let context = match prepare_change(&repository) {
+        Ok(context) => context,
+        Err(error) => return fail_deprecate(error),
+    };
+
+    let previous_version_id = match context
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == parsed.element_id)
+    {
+        Some(entry) => entry.version,
+        None => {
+            eprintln!(
+                "kat deprecate: element {} not found in the base state",
+                parsed.element_id
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let published = match deprecate_pipeline(&repository, context, previous_version_id, &parsed) {
+        Ok(published) => published,
+        Err(error) => return fail_deprecate(error),
+    };
+
+    let prepared = &published.persisted.prepared;
+    println!("element_id: {}", prepared.deprecation.element.element_id);
+    println!(
+        "previous_version_id: {}",
+        prepared.deprecation.previous_version_id
+    );
+    println!("version_id: {}", prepared.deprecation.element_version_id);
+    println!("state_id: {}", prepared.state_id);
+    println!("change_id: {}", prepared.change.change_id);
+    println!("change_revision_id: {}", prepared.change_revision_id);
+    ExitCode::SUCCESS
+}
+
+fn fail_deprecate(error: ChangeError) -> ExitCode {
+    match error {
+        ChangeError::Precondition(
+            kat::repository::change::PreconditionError::ElementNotActive(id),
+        ) => {
+            eprintln!("kat deprecate: element {id} is not active in the base state");
+        }
+        ChangeError::Conflict => {
+            eprintln!(
+                "kat deprecate: the accepted repository state changed while deprecating; nothing was published. Re-run kat deprecate."
+            );
+        }
+        other => eprintln!("kat deprecate: {other}"),
+    }
+    ExitCode::FAILURE
+}
+
+fn deprecate_pipeline(
+    repository: &Repository,
+    context: ChangeContext,
+    expected_version: ObjectId,
+    parsed: &DeprecateArgs,
+) -> Result<PublishedDeprecateChange, ChangeError> {
+    let input = DeprecateElementInput {
+        element_id: parsed.element_id,
+        expected_version,
+    };
+    let prepared = apply_deprecate_element(repository, context, input)?;
+    let validated = validate_deprecate_element_ontology(prepared)?;
+    let validated = validate_deprecate_element_invariants(validated)?;
+    let revision = prepare_deprecate_change_revision(validated, ChangeId::new(), None)?;
+    let persisted = persist_prepared_deprecate_change(repository, revision)?;
+    publish_persisted_deprecate_change(repository, persisted)
 }
 
 /// `kat show <element-id>` — display the currently accepted version of an
