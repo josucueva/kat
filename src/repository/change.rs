@@ -684,6 +684,20 @@ pub fn validate_update_element_ontology(
     Ok(prepared)
 }
 
+/// Applies the step 3.2 ontology-conformance stage to a prepared element
+/// deprecation: the newly constructed `Vn+1.type_id` must exist in the base
+/// `OntologyVersion`.
+///
+/// This **reuses** [`validate_element_type`]. It validates `prepared.element.type_id`
+/// (the newly built `Vn+1`), proving the deprecated version remains conformant
+/// with the base ontology. Purely preparatory; no persistence or CAS.
+pub fn validate_deprecate_element_ontology(
+    prepared: PreparedElementDeprecation,
+) -> Result<PreparedElementDeprecation, ChangeError> {
+    validate_element_type(&prepared.context.ontology, &prepared.element.type_id)?;
+    Ok(prepared)
+}
+
 /// A `PreparedElementUpdate` that has passed the Phase 2 semantic validation
 /// pipeline (ontology conformance 2.2 + invariant validation 2.3).
 ///

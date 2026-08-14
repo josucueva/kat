@@ -29,9 +29,8 @@ $$\text{PersistedDeprecateChange} \xrightarrow{\text{publish (CAS)}} \text{Publi
       Notes: `src/repository/change.rs` — `DeprecateElementInput { element_id, expected_version }`, `PreparedElementDeprecation`, and `apply_deprecate_element(&Repository, ChangeContext, DeprecateElementInput) -> Result<PreparedElementDeprecation, ChangeError>`. Enforces preconditions (element exists, base version == `expected_version`, current lifecycle == `Active`). Constructs $V_{n+1}$ preserving `element_id`, `type_id`, and `properties` with `lifecycle: Deprecated`. Builds candidate `SemanticState` $S_{n+1}$ replacing $E \to V_n$ with $E \to V_{n+1}$. Purely preparatory: nothing persisted to `ObjectStore` and accepted ref unchanged. Re-exported in `repository/mod.rs`. 3 new unit tests (`tests/change.rs`). `cargo test` 233 pass, fmt/clippy clean.
 
 ### Step 3.2 — `DeprecateElement` Ontology Validation
-- **Goal**: Implement `validate_deprecate_element_ontology(prepared: PreparedElementDeprecation) -> Result<PreparedElementDeprecation, ChangeError>`.
-- **Logic**: Validates $V_{n+1}.type\_id$ against base ontology `context.ontology`. (Reuses `validate_element_type`).
-- **Semantics**: Purely preparatory; no state mutation.
+- [x] **3.2 — `DeprecateElement` ontology validation.**
+      Notes: `src/repository/change.rs` — `validate_deprecate_element_ontology(prepared: PreparedElementDeprecation) -> Result<PreparedElementDeprecation, ChangeError>` reuses `validate_element_type` to verify $V_{n+1}.type\_id$ against base-state-referenced `OntologyVersion`. Purely preparatory: returns `Ok(prepared)`, leaves `ObjectStore` and accepted ref untouched. Re-exported in `repository/mod.rs`. 1 new unit test (`tests/change.rs`). `cargo test` 234 pass, fmt/clippy clean.
 
 ### Step 3.3 — `DeprecateElement` Invariant Validation
 - **Goal**: Implement `validate_deprecate_element_invariants(&PreparedElementDeprecation) -> Result<(), InvariantError>` and engine wrapper returning `ValidatedElementDeprecation`.

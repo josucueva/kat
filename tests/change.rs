@@ -32,8 +32,8 @@ use kat::repository::change::{
     apply_update_element, persist_prepared_change, persist_prepared_update_change, prepare_change,
     prepare_change_revision, prepare_update_change_revision, publish_persisted_change,
     publish_persisted_update_change, validate_create_element_invariants,
-    validate_create_element_ontology, validate_update_element_invariants,
-    validate_update_element_ontology,
+    validate_create_element_ontology, validate_deprecate_element_ontology,
+    validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -1952,4 +1952,28 @@ fn deprecate_rejects_version_mismatch() {
         ChangeError::Precondition(PreconditionError::VersionMismatch { expected, actual, .. })
             if expected == wrong_version && actual == setup.version_id
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Step 3.2 — validate_deprecate_element_ontology
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deprecate_ontology_accepts_known_type() {
+    let setup = repo_with_element(143, 243);
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let prepared = apply_deprecate_element(
+        repo,
+        context,
+        DeprecateElementInput {
+            element_id: setup.element_id,
+            expected_version: setup.version_id,
+        },
+    )
+    .unwrap();
+
+    let validated = validate_deprecate_element_ontology(prepared).unwrap();
+    assert_eq!(validated.element.lifecycle, Lifecycle::Deprecated);
 }
