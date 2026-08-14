@@ -25,12 +25,13 @@ KAT treats the specification — intent, requirements, constraints, design decis
 The recommended way to install KAT (including binary, UNIX man pages, and shell completions for Bash, Zsh, and Fish) is:
 
 ```bash
-./install.sh
+./install.sh     # Install binary, man pages, and completions
+./uninstall.sh   # Remove installed binary and assets
 ```
 
 This installs `kat` to `~/.local/bin`, man pages to `~/.local/share/man/man1/`, and completions to your user shell completion directory.
 
-See [`docs/install.md`](docs/install.md) for full installation details and alternative options (such as `cargo install`).
+See [`docs/install.md`](docs/install.md) for full installation details, uninstallation, and alternative options.
 
 ### CLI Help and Generated Assets
 

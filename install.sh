@@ -3,8 +3,9 @@ set -euo pipefail
 
 # Default prefix to ~/.local for user-level installation without sudo
 PREFIX="${PREFIX:-$HOME/.local}"
+UNINSTALL=false
 
-# Parse optional --prefix argument
+# Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --prefix)
@@ -15,19 +16,61 @@ while [[ $# -gt 0 ]]; do
             PREFIX="${1#*=}"
             shift 1
             ;;
+        --uninstall)
+            UNINSTALL=true
+            shift 1
+            ;;
         -h|--help)
-            echo "Usage: ./install.sh [--prefix PATH]"
-            echo "Installs KAT binary, UNIX man pages, and shell completions."
+            echo "Usage: ./install.sh [--prefix PATH] [--uninstall]"
+            echo "Installs or uninstalls KAT binary, UNIX man pages, and shell completions."
             echo "Default prefix: $HOME/.local"
             exit 0
             ;;
         *)
             echo "Error: Unknown option $1" >&2
-            echo "Usage: ./install.sh [--prefix PATH]" >&2
+            echo "Usage: ./install.sh [--prefix PATH] [--uninstall]" >&2
             exit 1
             ;;
     esac
 done
+
+BIN_DIR="${PREFIX}/bin"
+MAN_DIR="${PREFIX}/share/man/man1"
+BASH_COMP_DIR="${PREFIX}/share/bash-completion/completions"
+ZSH_COMP_DIR="${PREFIX}/share/zsh/site-functions"
+FISH_COMP_DIR="${PREFIX}/share/fish/vendor_completions.d"
+
+if [[ "${UNINSTALL}" == "true" ]]; then
+    echo "Uninstalling KAT from ${PREFIX}..."
+
+    # Remove binary
+    if [[ -f "${BIN_DIR}/kat" ]]; then
+        echo "==> Removing binary ${BIN_DIR}/kat..."
+        rm -f "${BIN_DIR}/kat"
+    fi
+
+    # Remove man pages
+    if [[ -d "${MAN_DIR}" ]]; then
+        echo "==> Removing man pages from ${MAN_DIR}..."
+        rm -f "${MAN_DIR}/kat.1" "${MAN_DIR}"/kat-*.1
+    fi
+
+    # Remove shell completions
+    echo "==> Removing shell completions..."
+    rm -f "${BASH_COMP_DIR}/kat"
+    rm -f "${ZSH_COMP_DIR}/_kat"
+    rm -f "${FISH_COMP_DIR}/kat.fish"
+
+    # Refresh man database if mandb exists
+    if command -v mandb >/dev/null 2>&1; then
+        echo "==> Updating man database..."
+        mandb -q "${PREFIX}/share/man" 2>/dev/null || true
+    fi
+
+    echo ""
+    echo "Uninstallation complete!"
+    exit 0
+fi
 
 echo "Installing KAT to ${PREFIX}..."
 
@@ -40,12 +83,6 @@ echo "==> Generating UNIX man pages and shell completions..."
 cargo run --bin generate_assets
 
 # 3. Create destination directories
-BIN_DIR="${PREFIX}/bin"
-MAN_DIR="${PREFIX}/share/man/man1"
-BASH_COMP_DIR="${PREFIX}/share/bash-completion/completions"
-ZSH_COMP_DIR="${PREFIX}/share/zsh/site-functions"
-FISH_COMP_DIR="${PREFIX}/share/fish/vendor_completions.d"
-
 mkdir -p "${BIN_DIR}" "${MAN_DIR}" "${BASH_COMP_DIR}" "${ZSH_COMP_DIR}" "${FISH_COMP_DIR}"
 
 # 4. Install binary

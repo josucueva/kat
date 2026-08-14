@@ -32,6 +32,22 @@ To install system-wide (requires write permissions to `/usr/local`):
 sudo ./install.sh --prefix /usr/local
 ```
 
+### Uninstallation
+
+To remove the installed binary, man pages, and shell completions:
+
+```bash
+./install.sh --uninstall
+# or
+./uninstall.sh
+```
+
+For system-wide installations:
+
+```bash
+sudo ./install.sh --uninstall --prefix /usr/local
+```
+
 ---
 
 ## Cargo Installation (Binary Only)
