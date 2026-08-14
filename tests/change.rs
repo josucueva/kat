@@ -32,8 +32,9 @@ use kat::repository::change::{
     UnlinkElementInput, UpdateElementInput, apply_create_element, apply_deprecate_element,
     apply_link_element, apply_supersede_element, apply_unlink_element, apply_update_element,
     persist_prepared_change, persist_prepared_deprecate_change, persist_prepared_link_change,
-    persist_prepared_supersede_change, persist_prepared_update_change, prepare_change,
-    prepare_change_revision, prepare_deprecate_change_revision, prepare_link_change_revision,
+    persist_prepared_supersede_change, persist_prepared_unlink_change,
+    persist_prepared_update_change, prepare_change, prepare_change_revision,
+    prepare_deprecate_change_revision, prepare_link_change_revision,
     prepare_supersede_change_revision, prepare_unlink_change_revision,
     prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
     publish_persisted_link_change, publish_persisted_supersede_change,
@@ -4634,4 +4635,51 @@ fn prepare_unlink_change_revision_preserves_none_description() {
     let revision = prepare_unlink_change_revision(validated, change_id, None).unwrap();
 
     assert_eq!(revision.change.description, None);
+}
+
+// ---------------------------------------------------------------------------
+// Step 6.4 — persist_prepared_unlink_change tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn persist_prepared_unlink_change_materializes_objects_and_leaves_accepted_unchanged() {
+    let setup = repo_with_linked_elements();
+    let repo = &setup.repo;
+    let objects_before = object_ids(setup.dir.path());
+    let refs_before =
+        fs::read_to_string(kat_dir(setup.dir.path()).join("refs").join("accepted")).unwrap();
+
+    let ctx = prepare_change(repo).unwrap();
+    let prepared = apply_unlink_element(
+        repo,
+        ctx,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+
+    let validated = validate_unlink_element_invariants(prepared).unwrap();
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(9095));
+    let revision = prepare_unlink_change_revision(validated, change_id, None).unwrap();
+
+    let persisted = persist_prepared_unlink_change(repo, revision).unwrap();
+
+    // Candidate state Sn+1 (relationships empty) has content identity identical to S2,
+    // so Sn+1 is deduplicated in ObjectStore and exactly 1 new object (Cn+1) is added on disk.
+    let objects_after = object_ids(setup.dir.path());
+    assert_eq!(objects_after.len(), objects_before.len() + 1);
+
+    // Verify written ObjectIds match prepared revision IDs
+    let state_id = persisted.prepared.state_id;
+    let change_revision_id = persisted.prepared.change_revision_id;
+
+    assert!(objects_after.contains(&state_id.to_string()));
+    assert!(objects_after.contains(&change_revision_id.to_string()));
+
+    // Verify refs/accepted is untouched
+    let refs_after =
+        fs::read_to_string(kat_dir(setup.dir.path()).join("refs").join("accepted")).unwrap();
+    assert_eq!(refs_before, refs_after);
 }

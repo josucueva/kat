@@ -2226,6 +2226,56 @@ pub fn persist_prepared_link_change(
     Ok(PersistedLinkChange { prepared })
 }
 
+/// A prepared unlink change whose immutable objects have been materialized into
+/// the ObjectStore (`Sn+1`, `Cn+1`), but which has **not** been published.
+#[derive(Debug)]
+pub struct PersistedUnlinkChange {
+    /// The prepared unlink change whose objects were just persisted.
+    pub prepared: PreparedUnlinkChangeRevision,
+}
+
+/// Materializes a prepared, validated unlink change's immutable objects into
+/// the ObjectStore in reference dependency order:
+/// `Sn+1` -> `Cn+1`.
+///
+/// Materializes exactly 2 objects into ObjectStore ($S_{n+1}, C_{n+1}$).
+/// Zero element or relationship version objects written.
+/// Leaves `refs/accepted` untouched.
+pub fn persist_prepared_unlink_change(
+    repository: &Repository,
+    prepared: PreparedUnlinkChangeRevision,
+) -> Result<PersistedUnlinkChange, ChangeError> {
+    let store = repository.object_store();
+
+    // 1. Sn+1 (candidate semantic state)
+    let s_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(prepared.unlink.candidate_state.clone()),
+    })?;
+    let s_next_id = store.put(&s_next_bytes)?;
+    if s_next_id != prepared.state_id {
+        return Err(identity_mismatch(
+            ObjectKind::SemanticState,
+            prepared.state_id,
+            s_next_id,
+        ));
+    }
+
+    // 2. Cn+1 (change revision)
+    let c_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
+    })?;
+    let c_next_id = store.put(&c_next_bytes)?;
+    if c_next_id != prepared.change_revision_id {
+        return Err(identity_mismatch(
+            ObjectKind::ChangeRevision,
+            prepared.change_revision_id,
+            c_next_id,
+        ));
+    }
+
+    Ok(PersistedUnlinkChange { prepared })
+}
+
 /// A persisted update change that has been atomically published as the
 /// repository's accepted head (step 2.6).
 ///
