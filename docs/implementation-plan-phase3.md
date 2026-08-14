@@ -57,9 +57,8 @@ $$\text{PersistedDeprecateChange} \xrightarrow{\text{publish (CAS)}} \text{Publi
       Notes: `src/repository/change.rs` — `PersistedDeprecateChange` and `persist_prepared_deprecate_change(&Repository, PreparedDeprecateChangeRevision) -> Result<PersistedDeprecateChange, ChangeError>`. Materializes immutable objects into `ObjectStore` in reference order `Vn+1 -> Sn+1 -> Cn+1` and verifies store identity matches prepared identity (`element_version_id`, `state_id`, `change_revision_id`), failing closed on mismatch. `refs/accepted` remains unchanged (no CAS/publication). Re-exported in `repository/mod.rs`. 1 new unit test (`tests/change.rs`). `cargo test` 237 pass, fmt/clippy clean.
 
 ### Step 3.6 — CAS Publication
-- **Goal**: Implement `publish_persisted_deprecate_change(repository: &Repository, persisted: PersistedDeprecateChange) -> Result<PublishedDeprecateChange, ChangeError>`.
-- **Logic**: Pre-CAS defensive check (`prepared.change.result_state == prepared.state_id`). Compare-and-swap `refs/accepted` from `expected` ($S_n, C_n$) to `new` ($S_{n+1}, C_{n+1}$). Surfacing CAS conflict as `ChangeError::Conflict`.
-- **Return**: `PublishedDeprecateChange { persisted, accepted }`.
+- [x] **3.6 — CAS publication.**
+      Notes: `src/repository/change.rs` — `PublishedDeprecateChange` and `publish_persisted_deprecate_change(&Repository, PersistedDeprecateChange) -> Result<PublishedDeprecateChange, ChangeError>`: single CAS `expected = persisted.prepared.deprecation.context.accepted` → `new = { state: Sn+1, change: Some(Cn+1) }`, returning new head in `PublishedDeprecateChange { persisted, accepted }`. Pre-CAS defensive check `prepared.change.result_state == prepared.state_id` (`ChangeError::PublicationStateMismatch`); `RefStoreError::Conflict` surfaced as domain `ChangeError::Conflict`. Pipeline typestate enforced (`PersistedDeprecateChange` required). Re-exported in `repository/mod.rs`. 1 new integration test (`tests/change.rs`). `cargo test` 238 pass, fmt/clippy clean.
 
 ### Step 3.7 — CLI `kat deprecate <element-id>` Wiring
 - **Goal**: Wire `kat deprecate <element-id>` in `src/main.rs`.

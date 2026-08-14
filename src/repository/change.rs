@@ -1307,7 +1307,51 @@ pub fn publish_persisted_update_change(
             accepted: new,
         }),
         Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
-        Err(e) => Err(ChangeError::RefStore(e)),
+        Err(err) => Err(ChangeError::RefStore(err)),
+    }
+}
+
+/// A persisted deprecate change that has been atomically published as the
+/// repository's accepted head (step 3.6).
+#[derive(Debug)]
+pub struct PublishedDeprecateChange {
+    /// The persisted deprecate change that was just published.
+    pub persisted: PersistedDeprecateChange,
+    /// The new accepted repository head (`state: Sn+1`, `change: Some(Cn+1)`).
+    pub accepted: AcceptedRef,
+}
+
+/// Publishes an already-persisted deprecate change by atomically advancing the
+/// accepted State and Change head.
+pub fn publish_persisted_deprecate_change(
+    repository: &Repository,
+    persisted: PersistedDeprecateChange,
+) -> Result<PublishedDeprecateChange, ChangeError> {
+    let prepared = &persisted.prepared;
+
+    if prepared.change.result_state != prepared.state_id {
+        return Err(ChangeError::PublicationStateMismatch {
+            expected: prepared.state_id,
+            actual: prepared.change.result_state,
+        });
+    }
+
+    let expected = &prepared.deprecation.context.accepted;
+    let new = AcceptedRef {
+        state: prepared.state_id,
+        change: Some(prepared.change_revision_id),
+    };
+
+    match repository
+        .ref_store()
+        .compare_and_swap_accepted(expected, &new)
+    {
+        Ok(()) => Ok(PublishedDeprecateChange {
+            persisted,
+            accepted: new,
+        }),
+        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
+        Err(err) => Err(ChangeError::RefStore(err)),
     }
 }
 

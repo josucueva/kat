@@ -32,10 +32,10 @@ use kat::repository::change::{
     apply_update_element, persist_prepared_change, persist_prepared_deprecate_change,
     persist_prepared_update_change, prepare_change, prepare_change_revision,
     prepare_deprecate_change_revision, prepare_update_change_revision, publish_persisted_change,
-    publish_persisted_update_change, validate_create_element_invariants,
-    validate_create_element_ontology, validate_deprecate_element_invariants,
-    validate_deprecate_element_ontology, validate_update_element_invariants,
-    validate_update_element_ontology,
+    publish_persisted_deprecate_change, publish_persisted_update_change,
+    validate_create_element_invariants, validate_create_element_ontology,
+    validate_deprecate_element_invariants, validate_deprecate_element_ontology,
+    validate_update_element_invariants, validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -2108,4 +2108,75 @@ fn persist_prepared_deprecate_change_materializes_objects_and_leaves_accepted_un
         repo.ref_store().read_accepted().unwrap().state,
         setup.state_id
     );
+}
+
+// ---------------------------------------------------------------------------
+// Step 3.6 — publish_persisted_deprecate_change
+// ---------------------------------------------------------------------------
+
+#[test]
+fn publish_persisted_deprecate_change_advances_accepted_head_and_survives_reopen() {
+    let setup = repo_with_element(147, 247);
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let prepared = apply_deprecate_element(
+        repo,
+        context,
+        DeprecateElementInput {
+            element_id: setup.element_id,
+            expected_version: setup.version_id,
+        },
+    )
+    .unwrap();
+
+    let ontology_validated = validate_deprecate_element_ontology(prepared).unwrap();
+    let validated = validate_deprecate_element_invariants(ontology_validated).unwrap();
+    let revision = prepare_deprecate_change_revision(
+        validated,
+        ChangeId::from_uuid(Uuid::from_u128(312)),
+        None,
+    )
+    .unwrap();
+
+    let expected_v2_id = revision.deprecation.element_version_id;
+    let expected_s2_id = revision.state_id;
+    let expected_c2_id = revision.change_revision_id;
+
+    let persisted = persist_prepared_deprecate_change(repo, revision).unwrap();
+    let published = publish_persisted_deprecate_change(repo, persisted).unwrap();
+
+    // Accepted ref updated to { S2, C2 }
+    assert_eq!(published.accepted.state, expected_s2_id);
+    assert_eq!(published.accepted.change, Some(expected_c2_id));
+
+    // Fresh reopen resolves to V2 (lifecycle: deprecated)
+    let reopened = open_repository(&setup.root).unwrap();
+    assert_eq!(reopened.accepted.state, expected_s2_id);
+    assert_eq!(reopened.accepted.change, Some(expected_c2_id));
+
+    let view = kat::repository::show_element(&reopened, setup.element_id).unwrap();
+    assert_eq!(view.version_id, expected_v2_id);
+    assert_eq!(view.element.lifecycle, Lifecycle::Deprecated);
+
+    // V1 still exists byte-for-byte unchanged in store
+    assert!(repo.object_store().get(setup.version_id).is_ok());
+
+    // Attempts to update deprecated element fail precondition check
+    let update_context = prepare_change(&reopened).unwrap();
+    let update_err = apply_update_element(
+        &reopened,
+        update_context,
+        UpdateElementInput {
+            element_id: setup.element_id,
+            expected_version: expected_v2_id,
+            properties: vec![("title".into(), PropertyValue::Text("Fails".into()))],
+        },
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        update_err,
+        ChangeError::Precondition(PreconditionError::ElementNotActive(id)) if id == setup.element_id
+    ));
 }
