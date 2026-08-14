@@ -7,55 +7,59 @@ The `kat` CLI is a single Rust binary that builds on **Linux** and **Windows**.
 - [Rust](https://rustup.rs) (stable, via `rustup`)
 - Git (to clone the repository)
 
-## Install
+## Standard Installation (Recommended)
 
 From the repository root:
+
+```bash
+./install.sh
+```
+
+This automates:
+1. Building `kat` in release mode (`cargo build --release`).
+2. Generating UNIX man pages and shell completion scripts.
+3. Installing the binary to `~/.local/bin/kat`.
+4. Installing man pages to `~/.local/share/man/man1/`.
+5. Installing shell completions for Bash, Zsh, and Fish.
+
+Ensure `~/.local/bin` is on your `PATH`.
+
+### System-Wide Installation
+
+To install system-wide (requires write permissions to `/usr/local`):
+
+```bash
+sudo ./install.sh --prefix /usr/local
+```
+
+---
+
+## Cargo Installation (Binary Only)
+
+If you only want the executable installed via Cargo:
 
 ```bash
 cargo install --path .
 ```
 
-This builds in release mode and installs `kat` into Cargo's bin directory:
+This installs `kat` into Cargo's bin directory:
 
 - **Linux:** `~/.cargo/bin/kat`
 - **Windows:** `%USERPROFILE%\.cargo\bin\kat.exe`
 
-That directory is on `PATH` by default when Rust is installed via `rustup`, so
-`kat` becomes available from anywhere.
-
-## Manual build (no install)
+Note: `cargo install` only installs binary executables. To generate and install man pages and shell completions when using `cargo install`, run:
 
 ```bash
-cargo build --release
-./target/release/kat          # Linux
-.\target\release\kat.exe      # Windows
+cargo run --bin generate_assets
 ```
 
-## Platform notes
+---
 
-### Linux
+## UNIX Man Pages and Shell Completions (Manual Setup)
 
-The native GNU toolchain is the default; no extra setup is required.
+If installing manually without `install.sh`:
 
-### Windows
-
-- **With VS Build Tools (MSVC):** the default toolchain
-  (`x86_64-pc-windows-msvc`) produces a self-contained `kat.exe`.
-- **Without (MinGW/GNU):** set the machine-local override and keep the MinGW
-  runtime on `PATH`:
-
-  ```powershell
-  rustup override set stable-x86_64-pc-windows-gnu
-  $env:PATH = "$env:USERPROFILE\.cargo\bin;C:\msys64\mingw64\bin;$env:PATH"
-  cargo install --path .
-  ```
-
-  The GNU-built binary depends on MinGW runtime DLLs, so `C:\msys64\mingw64\bin`
-  must stay on `PATH` when running `kat`.
-
-## UNIX Man Pages and Shell Completions
-
-Generate the assets:
+Generate assets:
 
 ```bash
 cargo run --bin generate_assets
@@ -84,13 +88,13 @@ mkdir -p ~/.local/share/man/man1
 cp generated/man/*.1 ~/.local/share/man/man1/
 ```
 
-Then, depending on the system:
+Then refresh the man database if applicable:
 
 ```bash
 mandb ~/.local/share/man
 ```
 
-You can then use:
+You can then view command documentation:
 
 ```bash
 man kat
@@ -106,7 +110,12 @@ For the current session:
 source generated/completions/kat.bash
 ```
 
-For persistent installation, copy it into an appropriate Bash completion directory for the user's system.
+For persistent installation, copy it into an appropriate Bash completion directory:
+
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+cp generated/completions/kat.bash ~/.local/share/bash-completion/completions/kat
+```
 
 ### Zsh
 
@@ -131,7 +140,38 @@ mkdir -p ~/.config/fish/completions
 cp generated/completions/kat.fish ~/.config/fish/completions/
 ```
 
-## Quick check
+---
+
+## Manual Build (No Install)
+
+```bash
+cargo build --release
+./target/release/kat          # Linux
+.\target\release\kat.exe      # Windows
+```
+
+---
+
+## Platform Notes
+
+### Linux
+
+The native GNU toolchain is the default; no extra setup is required.
+
+### Windows
+
+- **With VS Build Tools (MSVC):** the default toolchain (`x86_64-pc-windows-msvc`) produces a self-contained `kat.exe`.
+- **Without (MinGW/GNU):** set the machine-local override:
+
+  ```powershell
+  rustup override set stable-x86_64-pc-windows-gnu
+  $env:PATH = "$env:USERPROFILE\.cargo\bin;C:\msys64\mingw64\bin;$env:PATH"
+  cargo install --path .
+  ```
+
+---
+
+## Quick Check
 
 Run these in a scratch directory (they create a `.kat/` repository there):
 
