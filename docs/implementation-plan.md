@@ -131,6 +131,11 @@ See [`docs/implementation-plan-phase3.md`](file:///home/joshua/Projects/kat/docs
 | 2026-08-14 | Step 9.3 — Validation Engine Unit Tests | Added 7 unit tests in `tests/query.rs` (clean repo, invalid rel types, disallowed endpoints, duplicate triples, unverified constraints with restricts targets, deprecated source permission, non-mutation). `cargo test` 326 pass, fmt/clippy clean. |
 | 2026-08-14 | Step 9.4 — CLI `kat validate` Wiring & Formatting | Implemented `cmd_validate` and `print_validation_report` in `src/main.rs`. Syntax: `kat validate`. Renders `violations:` and `unverified_constraints:`. Exit 0 on clean/unverified, exit 1 on violations. |
 | 2026-08-14 | Step 9.5 — Requirements Documentation & Acceptance Closure | Documented v0.1 Constraint Validation semantics clarification in `docs/prototype-design.md`. Added `phase9_acceptance_cli_flow_end_to_end` in `tests/cli.rs`. Updated `docs/cli.md`. **Phase 9 Frozen.** `cargo test` 328 pass, fmt/clippy clean. |
+| Planned | Step 10.1 — Data Structures & Baseline Resolution Engine | Define `ArtifactAccountabilityStatus`, `ArtifactBaseline`, `ArtifactAccountability`, `ArtifactAccountabilityReport` in `src/repository/query.rs`. Implement `resolve_relationship_baseline_version`. |
+| Planned | Step 10.2 — Core `analyze_artifact_accountability` Implementation | Implement `analyze_artifact_accountability(repository: &Repository)` in `src/repository/query.rs`. Read-only scan over active artifacts & direct accountability edges. |
+| Planned | Step 10.3 — Query Layer Re-exports & Unit Tests | Re-export symbols in `src/repository/mod.rs`. Add unit tests in `tests/query.rs` (unaccounted, current, stale, relink re-baseline, non-mutation). |
+| Planned | Step 10.4 — CLI `kat artifacts` Wiring & Formatting | Implement `cmd_artifacts` in `src/main.rs`. Syntax: `kat artifacts`. Render active artifacts, status (current, stale, unaccounted), baseline vs current versions. Exit 0 on all current, exit 1 on stale/unaccounted. |
+| Planned | Step 10.5 — Acceptance Verification & Phase 10 Closure | Add `phase10_acceptance_cli_flow_end_to_end` in `tests/cli.rs`. Extend AuthX scenario (linking, element update causing stale, relink re-baselining). Update `docs/cli.md`. **Freeze Phase 10.** |
 
 ## Non-goals during this work (do not build yet)
 
