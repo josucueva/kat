@@ -28,12 +28,12 @@ use kat::encoding::canonical_object_id;
 use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
     ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, LinkElementInput,
-    PreconditionError, PreparedElementUpdate, SupersedeElementInput, UpdateElementInput,
-    apply_create_element, apply_deprecate_element, apply_link_element, apply_supersede_element,
-    apply_update_element, persist_prepared_change, persist_prepared_deprecate_change,
-    persist_prepared_link_change, persist_prepared_supersede_change,
-    persist_prepared_update_change, prepare_change, prepare_change_revision,
-    prepare_deprecate_change_revision, prepare_link_change_revision,
+    PreconditionError, PreparedElementUpdate, PublishedLinkChange, SupersedeElementInput,
+    UnlinkElementInput, UpdateElementInput, apply_create_element, apply_deprecate_element,
+    apply_link_element, apply_supersede_element, apply_unlink_element, apply_update_element,
+    persist_prepared_change, persist_prepared_deprecate_change, persist_prepared_link_change,
+    persist_prepared_supersede_change, persist_prepared_update_change, prepare_change,
+    prepare_change_revision, prepare_deprecate_change_revision, prepare_link_change_revision,
     prepare_supersede_change_revision, prepare_update_change_revision, publish_persisted_change,
     publish_persisted_deprecate_change, publish_persisted_link_change,
     publish_persisted_supersede_change, publish_persisted_update_change,
@@ -4272,4 +4272,189 @@ fn publish_link_rejects_internally_inconsistent_prepared_change() {
         ChangeError::PublicationStateMismatch { expected, actual }
             if expected == expected_state_id && actual == tampered_state
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Step 6.1 — apply_unlink_element tests
+// ---------------------------------------------------------------------------
+
+struct SetupLinked {
+    dir: tempfile::TempDir,
+    repo: Repository,
+    e1: ElementId,
+    _e2: ElementId,
+    r1: RelationshipId,
+    r1v_id: ObjectId,
+    _pub_link: PublishedLinkChange,
+}
+
+fn repo_with_linked_elements() -> SetupLinked {
+    let setup = repo_with_decision_and_requirement();
+    let repo = setup.repo;
+    let ctx = prepare_change(&repo).unwrap();
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(9090));
+    let prepared = apply_link_element(
+        &repo,
+        ctx,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: setup.e1,
+            target_element_id: setup.e2,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+
+    let val = validate_link_element_invariants(validate_link_element_ontology(prepared).unwrap())
+        .unwrap();
+    let revision =
+        prepare_link_change_revision(val, ChangeId::from_uuid(Uuid::from_u128(9091)), None)
+            .unwrap();
+    let r1v_id = revision.link.relationship_version_id;
+    let persisted = persist_prepared_link_change(&repo, revision).unwrap();
+    let pub_link = publish_persisted_link_change(&repo, persisted).unwrap();
+
+    let reopened = open_repository(setup._dir.path()).unwrap();
+
+    SetupLinked {
+        dir: setup._dir,
+        repo: reopened,
+        e1: setup.e1,
+        _e2: setup.e2,
+        r1: rel_id,
+        r1v_id,
+        _pub_link: pub_link,
+    }
+}
+
+#[test]
+fn apply_unlink_element_removes_relationship_from_candidate_state() {
+    let setup = repo_with_linked_elements();
+    let repo = &setup.repo;
+    let ctx = prepare_change(repo).unwrap();
+
+    let prepared = apply_unlink_element(
+        repo,
+        ctx,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(prepared.relationship_id, setup.r1);
+    assert_eq!(prepared.expected_version, setup.r1v_id);
+    assert_eq!(prepared.previous_relationship_version_id, setup.r1v_id);
+    assert_eq!(prepared.previous_relationship.relationship_id, setup.r1);
+    assert_eq!(
+        prepared.previous_relationship.relationship_type,
+        "kat.core/addresses"
+    );
+    assert_eq!(prepared.candidate_state.relationships.len(), 0);
+    assert_eq!(prepared.candidate_state.elements.len(), 2);
+}
+
+#[test]
+fn apply_unlink_element_fails_when_relationship_not_found() {
+    let setup = repo_with_linked_elements();
+    let repo = &setup.repo;
+    let ctx = prepare_change(repo).unwrap();
+    let missing_r1 = RelationshipId::from_uuid(Uuid::from_u128(9999));
+
+    let err = apply_unlink_element(
+        repo,
+        ctx,
+        UnlinkElementInput {
+            relationship_id: missing_r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::RelationshipNotFound(id)) if id == missing_r1
+    ));
+}
+
+#[test]
+fn apply_unlink_element_fails_on_version_mismatch() {
+    let setup = repo_with_linked_elements();
+    let repo = &setup.repo;
+    let ctx = prepare_change(repo).unwrap();
+    let wrong_version = ObjectId::from_bytes([0xEE; 32]);
+
+    let err = apply_unlink_element(
+        repo,
+        ctx,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: wrong_version,
+        },
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::RelationshipVersionMismatch {
+            relationship_id,
+            expected,
+            actual,
+        }) if relationship_id == setup.r1 && expected == wrong_version && actual == setup.r1v_id
+    ));
+}
+
+#[test]
+fn apply_unlink_element_succeeds_when_endpoint_is_deprecated() {
+    let setup = repo_with_linked_elements();
+    let repo = &setup.repo;
+
+    // Deprecate source element e1
+    let ctx0 = prepare_change(repo).unwrap();
+    let e1_v1 = ctx0
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == setup.e1)
+        .unwrap()
+        .version;
+    let prep_dep = apply_deprecate_element(
+        repo,
+        ctx0,
+        DeprecateElementInput {
+            element_id: setup.e1,
+            expected_version: e1_v1,
+        },
+    )
+    .unwrap();
+    let val_dep = validate_deprecate_element_invariants(
+        validate_deprecate_element_ontology(prep_dep).unwrap(),
+    )
+    .unwrap();
+    let rev_dep = prepare_deprecate_change_revision(
+        val_dep,
+        ChangeId::from_uuid(Uuid::from_u128(9092)),
+        None,
+    )
+    .unwrap();
+    let pers_dep = persist_prepared_deprecate_change(repo, rev_dep).unwrap();
+    publish_persisted_deprecate_change(repo, pers_dep).unwrap();
+
+    let reopened = open_repository(setup.dir.path()).unwrap();
+    let ctx = prepare_change(&reopened).unwrap();
+
+    // Unlinking active relationship on deprecated endpoint succeeds!
+    let prepared = apply_unlink_element(
+        &reopened,
+        ctx,
+        UnlinkElementInput {
+            relationship_id: setup.r1,
+            expected_version: setup.r1v_id,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(prepared.candidate_state.relationships.len(), 0);
 }

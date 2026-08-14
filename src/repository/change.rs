@@ -106,6 +106,26 @@ pub enum PreconditionError {
         source_element_id: ElementId,
         target_element_id: ElementId,
     },
+    /// The relationship ID is not mapped in the base state.
+    #[error("relationship {0} was not found in the base state")]
+    RelationshipNotFound(RelationshipId),
+    /// The relationship version in the base state does not match the expected version.
+    #[error(
+        "expected relationship version {expected} for relationship {relationship_id}, but found {actual} in the base state"
+    )]
+    RelationshipVersionMismatch {
+        relationship_id: RelationshipId,
+        expected: ObjectId,
+        actual: ObjectId,
+    },
+    /// The loaded relationship object's ID does not match the requested relationship ID.
+    #[error(
+        "relationship version object maps to relationship {version_relationship_id}, expected {relationship_id}"
+    )]
+    RelationshipIdentityMismatch {
+        relationship_id: RelationshipId,
+        version_relationship_id: RelationshipId,
+    },
 }
 
 /// Error produced by the Change Engine.
@@ -1080,6 +1100,110 @@ pub fn apply_link_element(
         relationship_version_id,
         candidate_state,
         candidate_state_id,
+    })
+}
+
+/// Input for unlinking an active relationship.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnlinkElementInput {
+    /// The stable identity of the relationship to remove.
+    pub relationship_id: RelationshipId,
+    /// The expected version of the relationship in the base state.
+    pub expected_version: ObjectId,
+}
+
+/// The result of successfully applying [`UnlinkElementInput`] to a [`ChangeContext`].
+#[derive(Debug)]
+pub struct PreparedElementUnlinked {
+    /// The change context (base state, ontology, etc.).
+    pub context: ChangeContext,
+    /// The relationship ID being unlinked.
+    pub relationship_id: RelationshipId,
+    /// The expected relationship version ObjectId.
+    pub expected_version: ObjectId,
+    /// The resolved relationship version decoded from the repository.
+    pub previous_relationship: RelationshipVersion,
+    /// The resolved relationship version ObjectId in the base state.
+    pub previous_relationship_version_id: ObjectId,
+    /// The proposed candidate semantic state ($S_{n+1}$).
+    pub candidate_state: SemanticState,
+}
+
+/// Applies Step 6.1 of the Change Application Flow: unlinks an active relationship from base state.
+///
+/// Preconditions enforced:
+/// 1. Relationship `R1` exists in base state `relationships`.
+/// 2. Base state's mapped version for `R1` matches `input.expected_version`.
+/// 3. Loaded `R1V` from ObjectStore is a `RelationshipVersion` payload.
+/// 4. `R1V.relationship_id` matches `input.relationship_id`.
+///
+/// Endpoint lifecycle is intentionally NOT checked (unlinking is permitted on Deprecated/Superseded endpoints).
+pub fn apply_unlink_element(
+    repository: &Repository,
+    context: ChangeContext,
+    input: UnlinkElementInput,
+) -> Result<PreparedElementUnlinked, ChangeError> {
+    // 1. Find R1 in base state relationships
+    let base_rel_entry = context
+        .base_state
+        .relationships
+        .iter()
+        .find(|r| r.relationship_id == input.relationship_id)
+        .ok_or(ChangeError::Precondition(
+            PreconditionError::RelationshipNotFound(input.relationship_id),
+        ))?;
+
+    // 2. Require actual version == expected_version
+    if base_rel_entry.version != input.expected_version {
+        return Err(ChangeError::Precondition(
+            PreconditionError::RelationshipVersionMismatch {
+                relationship_id: input.relationship_id,
+                expected: input.expected_version,
+                actual: base_rel_entry.version,
+            },
+        ));
+    }
+
+    let previous_relationship_version_id = base_rel_entry.version;
+
+    // 3. Load & decode R1V from ObjectStore
+    let bytes = repository
+        .object_store()
+        .get(previous_relationship_version_id)
+        .map_err(ChangeError::ObjectStore)?;
+    let canonical = decode_canonical(&bytes)?;
+    let previous_relationship = match canonical.payload {
+        CanonicalPayload::RelationshipVersion(v) => v,
+        _ => {
+            return Err(ChangeError::Decoding(
+                crate::encoding::DecodingError::InvalidObjectShape,
+            ));
+        }
+    };
+
+    // 4. Defensive check: previous_relationship.relationship_id == input.relationship_id
+    if previous_relationship.relationship_id != input.relationship_id {
+        return Err(ChangeError::Precondition(
+            PreconditionError::RelationshipIdentityMismatch {
+                relationship_id: input.relationship_id,
+                version_relationship_id: previous_relationship.relationship_id,
+            },
+        ));
+    }
+
+    // 5. Candidate state: clone base state and remove R1 from relationships
+    let mut candidate_state = context.base_state.clone();
+    candidate_state
+        .relationships
+        .retain(|r| r.relationship_id != input.relationship_id);
+
+    Ok(PreparedElementUnlinked {
+        context,
+        relationship_id: input.relationship_id,
+        expected_version: input.expected_version,
+        previous_relationship,
+        previous_relationship_version_id,
+        candidate_state,
     })
 }
 

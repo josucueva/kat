@@ -20,6 +20,8 @@ An invariant describes a property of the model that must not be violated by a su
 * The source element of a new relationship must be Active in the base state.
 * The target element of a new relationship must exist in the base state and may be Active, Deprecated, or Superseded.
 * An accepted semantic state must contain at most one relationship entry for a given `(relationship_type, source_element_id, target_element_id)` triple.
+* Unlinking a relationship removes its stable relationship mapping from the accepted Semantic State but does not delete or mutate the referenced immutable RelationshipVersion.
+* Unlink eligibility is independent of endpoint lifecycle and current ontology conformance.
 * Every relationship must have a defined relationship type.
 * The source and target element types must be valid for the relationship according to the ontology.
 * A relationship that is no longer active may remain historically traceable.
