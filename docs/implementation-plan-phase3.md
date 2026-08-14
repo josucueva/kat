@@ -49,14 +49,8 @@ $$\text{PersistedDeprecateChange} \xrightarrow{\text{publish (CAS)}} \text{Publi
 - **Output**: `ValidatedElementDeprecation` typestate guard.
 
 ### Step 3.4 — Construct `DeprecateElement` `ChangeRevision Cn+1`
-- **Goal**: Implement `prepare_deprecate_change_revision(validated: ValidatedElementDeprecation, change_id: ChangeId, description: Option<String>) -> Result<PreparedDeprecateChangeRevision, ChangeError>`.
-- **Construction**:
-  - `Operation::DeprecateElement { element_id: E, expected_version: Vn, new_version: Vn+1 }`.
-  - `base_states = vec![context.base_state_id]`.
-  - `result_state = state_id` ($S_{n+1}$).
-  - `dependencies = context.accepted.change.into_iter().collect()`.
-  - Computes `change_revision_id` = $\text{canonical\_object\_id}(C_{n+1})$.
-- **Return**: `PreparedDeprecateChangeRevision`.
+- [x] **3.4 — Construct `DeprecateElement` `ChangeRevision Cn+1`.**
+      Notes: `src/repository/change.rs` — `PreparedDeprecateChangeRevision` and `prepare_deprecate_change_revision(ValidatedElementDeprecation, ChangeId, Option<String>) -> Result<PreparedDeprecateChangeRevision, ChangeError>`. Consumes `ValidatedElementDeprecation` (pipeline typestate guard), computes candidate `SemanticState` ObjectId `state_id`, dependencies from accepted head (`accepted.change.into_iter().collect()`), constructs `ChangeRevision` with single operation `DeprecateElement { element_id, expected_version: previous_version_id, new_version: element_version_id }`, derives `change_revision_id` via encode-then-hash. Returns `PreparedDeprecateChangeRevision`. Purely preparatory: nothing persisted to `ObjectStore` and accepted ref unchanged. Re-exported in `repository/mod.rs`. 1 new unit test (`tests/change.rs`). `cargo test` 236 pass, fmt/clippy clean.
 
 ### Step 3.5 — Persist Before Publication
 - **Goal**: Implement `persist_prepared_deprecate_change(repository: &Repository, prepared: PreparedDeprecateChangeRevision) -> Result<PersistedDeprecateChange, ChangeError>`.

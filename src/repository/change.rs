@@ -964,6 +964,66 @@ pub fn prepare_update_change_revision(
     })
 }
 
+/// A logically-prepared Deprecate ChangeRevision: the derived candidate-state
+/// ObjectId, the full `ChangeRevision`, and its content identity.
+///
+/// Still purely preparatory: Vn+1/Sn+1/Cn+1 ObjectIds are known but **no object
+/// is persisted** and the accepted ref is unchanged.
+#[derive(Debug)]
+pub struct PreparedDeprecateChangeRevision {
+    /// The prepared element deprecation this change wraps.
+    pub deprecation: PreparedElementDeprecation,
+    /// ObjectId of the candidate SemanticState (`Sn+1`).
+    pub state_id: ObjectId,
+    /// The ChangeRevision (`Cn+1`).
+    pub change: ChangeRevision,
+    /// ObjectId of `change`.
+    pub change_revision_id: ObjectId,
+}
+
+/// Constructs the `ChangeRevision` for a validated `DeprecateElement`, deriving
+/// all content identities. Step 3.4 remains **purely preparatory**.
+pub fn prepare_deprecate_change_revision(
+    validated: ValidatedElementDeprecation,
+    change_id: ChangeId,
+    description: Option<String>,
+) -> Result<PreparedDeprecateChangeRevision, ChangeError> {
+    let deprecation = validated.prepared;
+
+    // Sn+1 ObjectId derived from the candidate state's canonical bytes.
+    let state_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(deprecation.candidate_state.clone()),
+    })?;
+
+    // Dependencies = the accepted Change head.
+    let dependencies: Vec<ObjectId> = deprecation.context.accepted.change.into_iter().collect();
+
+    let change = ChangeRevision {
+        change_id,
+        base_states: vec![deprecation.context.base_state_id],
+        result_state: state_id,
+        operations: vec![Operation::DeprecateElement {
+            element_id: deprecation.element.element_id,
+            expected_version: deprecation.previous_version_id,
+            new_version: deprecation.element_version_id,
+        }],
+        dependencies,
+        description,
+    };
+
+    // Cn+1 ObjectId derived from the ChangeRevision's canonical bytes.
+    let change_revision_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(change.clone()),
+    })?;
+
+    Ok(PreparedDeprecateChangeRevision {
+        deprecation,
+        state_id,
+        change,
+        change_revision_id,
+    })
+}
+
 /// A prepared change whose immutable objects have been materialized into the
 /// ObjectStore (V1, S1, C1), but which has **not** been published.
 ///
