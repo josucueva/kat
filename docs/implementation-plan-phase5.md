@@ -65,8 +65,8 @@ Phase 5 introduces explicit relationship mutation into KAT. Up until Phase 4, re
 ## Step-by-Step Implementation Steps
 
 ### Step 5.1 — Candidate Application (`apply_link_element`)
-- [ ] **5.1 — Candidate application.**
-      Define `LinkElementInput` struct and errors `PreconditionError::DuplicateRelationshipTriple` / `PreconditionError::RelationshipAlreadyExists` in `src/repository/change.rs`. Implement `apply_link_element(context: ChangeContext, input: LinkElementInput) -> Result<PreparedElementLinked, ChangeError>`. Validate preconditions ($E_s$ exists & Active, $E_t$ exists, $R_1$ unique, `(type, source, target)` triple unique). Construct candidate state with inserted $R_1 \to R_{1}V$. Return `PreparedElementLinked` typestate guard. Re-export in `repository/mod.rs`. Unit tests in `tests/change.rs`.
+- [x] **5.1 — Candidate application.**
+      Notes: `src/repository/change.rs` — defined `LinkElementInput`, `PreparedElementLinked`, `apply_link_element(repository: &Repository, context: ChangeContext, input: LinkElementInput) -> Result<PreparedElementLinked, ChangeError>`. Enforces preconditions: $E_s$ exists & `Active`, $E_t$ exists (`Active`, `Deprecated`, or `Superseded`), $R_1$ identity unique (`PreconditionError::RelationshipAlreadyExists`), `(type, source, target)` semantic triple unique in $S_n$ (`PreconditionError::DuplicateRelationshipTriple`). Constructs candidate state with inserted $R_1 \to R_1V$ at canonical sorted position. Re-exported in `repository/mod.rs`. 2 unit tests in `tests/change.rs`. `cargo test` 270 pass, fmt/clippy clean.
 
 ### Step 5.2 — Ontology Validation (`validate_link_element_ontology`)
 - [ ] **5.2 — Ontology validation.**

@@ -27,12 +27,12 @@ use kat::encoding::canonical_bytes;
 use kat::encoding::canonical_object_id;
 use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
-    ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, PreconditionError,
-    PreparedElementUpdate, SupersedeElementInput, UpdateElementInput, apply_create_element,
-    apply_deprecate_element, apply_supersede_element, apply_update_element,
-    persist_prepared_change, persist_prepared_deprecate_change, persist_prepared_supersede_change,
-    persist_prepared_update_change, prepare_change, prepare_change_revision,
-    prepare_deprecate_change_revision, prepare_supersede_change_revision,
+    ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, LinkElementInput,
+    PreconditionError, PreparedElementUpdate, SupersedeElementInput, UpdateElementInput,
+    apply_create_element, apply_deprecate_element, apply_link_element, apply_supersede_element,
+    apply_update_element, persist_prepared_change, persist_prepared_deprecate_change,
+    persist_prepared_supersede_change, persist_prepared_update_change, prepare_change,
+    prepare_change_revision, prepare_deprecate_change_revision, prepare_supersede_change_revision,
     prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
     publish_persisted_supersede_change, publish_persisted_update_change,
     validate_create_element_invariants, validate_create_element_ontology,
@@ -3266,5 +3266,258 @@ fn publish_supersede_rejects_internally_inconsistent_prepared_change() {
         err,
         ChangeError::PublicationStateMismatch { expected, actual }
             if expected == expected_state_id && actual == tampered_state
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Step 5.1 — apply_link_element tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn apply_link_element_valid_candidate_is_preparatory_only() {
+    let setup = repo_with_two_elements();
+    let repo = &setup.repo;
+    let context = prepare_change(repo).unwrap();
+
+    let relationship_id = RelationshipId::from_uuid(Uuid::from_u128(9001));
+    let initial_objects = std::fs::read_dir(setup._dir.path().join(".kat/objects"))
+        .unwrap()
+        .count();
+
+    let prepared = apply_link_element(
+        repo,
+        context,
+        LinkElementInput {
+            relationship_id,
+            relationship_type_id: "kat.core/motivates".to_string(),
+            source_element_id: setup.e1,
+            target_element_id: setup.e2,
+            properties: vec![(
+                "note".into(),
+                PropertyValue::Text("Motivates design".into()),
+            )],
+        },
+    )
+    .unwrap();
+
+    assert_eq!(prepared.relationship_id, relationship_id);
+    assert_eq!(prepared.relationship.relationship_id, relationship_id);
+    assert_eq!(prepared.relationship.source_element_id, setup.e1);
+    assert_eq!(prepared.relationship.target_element_id, setup.e2);
+    assert_eq!(
+        prepared.relationship.relationship_type,
+        "kat.core/motivates"
+    );
+    assert_eq!(
+        prepared.relationship.properties,
+        vec![(
+            "note".into(),
+            PropertyValue::Text("Motivates design".into())
+        )]
+    );
+
+    // Candidate state contains previous elements + 1 relationship entry
+    assert_eq!(prepared.candidate_state.elements.len(), 2);
+    assert_eq!(prepared.candidate_state.relationships.len(), 1);
+    assert_eq!(
+        prepared.candidate_state.relationships[0].relationship_id,
+        relationship_id
+    );
+    assert_eq!(
+        prepared.candidate_state.relationships[0].version,
+        prepared.relationship_version_id
+    );
+
+    // No physical store mutations yet
+    let after_objects = std::fs::read_dir(setup._dir.path().join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(after_objects, initial_objects);
+    assert_eq!(
+        repo.ref_store().read_accepted().unwrap().state,
+        setup.repo.accepted.state
+    );
+}
+
+#[test]
+fn apply_link_element_precondition_failures() {
+    let setup = repo_with_two_elements();
+    let repo = &setup.repo;
+
+    let missing_id = ElementId::from_uuid(Uuid::from_u128(9999));
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(9002));
+
+    // 1. Missing source element -> ElementNotFound
+    let ctx1 = prepare_change(repo).unwrap();
+    let err1 = apply_link_element(
+        repo,
+        ctx1,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/motivates".into(),
+            source_element_id: missing_id,
+            target_element_id: setup.e2,
+            properties: vec![],
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err1,
+        ChangeError::Precondition(PreconditionError::ElementNotFound(id)) if id == missing_id
+    ));
+
+    // 2. Missing target element -> ElementNotFound
+    let ctx2 = prepare_change(repo).unwrap();
+    let err2 = apply_link_element(
+        repo,
+        ctx2,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/motivates".into(),
+            source_element_id: setup.e1,
+            target_element_id: missing_id,
+            properties: vec![],
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err2,
+        ChangeError::Precondition(PreconditionError::ElementNotFound(id)) if id == missing_id
+    ));
+
+    // Deprecate E1 to test non-active source element behavior
+    let ctx_dep = prepare_change(repo).unwrap();
+    let prep_dep = apply_deprecate_element(
+        repo,
+        ctx_dep,
+        DeprecateElementInput {
+            element_id: setup.e1,
+            expected_version: setup.v1,
+        },
+    )
+    .unwrap();
+    let val_dep = validate_deprecate_element_invariants(
+        validate_deprecate_element_ontology(prep_dep).unwrap(),
+    )
+    .unwrap();
+    let rev_dep = prepare_deprecate_change_revision(
+        val_dep,
+        ChangeId::from_uuid(Uuid::from_u128(9090)),
+        None,
+    )
+    .unwrap();
+    let pers_dep = persist_prepared_deprecate_change(repo, rev_dep).unwrap();
+    publish_persisted_deprecate_change(repo, pers_dep).unwrap();
+
+    let reopened = open_repository(setup._dir.path()).unwrap();
+
+    // 3. Non-active source element (E1 is deprecated) -> ElementNotActive
+    let ctx3 = prepare_change(&reopened).unwrap();
+    let err3 = apply_link_element(
+        &reopened,
+        ctx3,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/motivates".into(),
+            source_element_id: setup.e1,
+            target_element_id: setup.e2,
+            properties: vec![],
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err3,
+        ChangeError::Precondition(PreconditionError::ElementNotActive(id)) if id == setup.e1
+    ));
+
+    // 4. Non-active target element (linking from active E2 to deprecated E1) -> SUCCEEDS!
+    let ctx4 = prepare_change(&reopened).unwrap();
+    let res4 = apply_link_element(
+        &reopened,
+        ctx4,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/motivates".into(),
+            source_element_id: setup.e2,
+            target_element_id: setup.e1,
+            properties: vec![],
+        },
+    );
+    assert!(res4.is_ok());
+
+    // 5 & 6. Test RelationshipAlreadyExists & DuplicateRelationshipTriple via a superseded state setup
+    let setup_sup = repo_with_typed_element(501, 601, "kat.core/design-decision");
+    let repo_sup = &setup_sup.repo;
+
+    let replacement_id = ElementId::from_uuid(Uuid::from_u128(99999));
+    let relationship_id_sup = RelationshipId::from_uuid(Uuid::from_u128(88888));
+    let ctx_sup = prepare_change(repo_sup).unwrap();
+    let prep_sup = apply_supersede_element(
+        repo_sup,
+        ctx_sup,
+        SupersedeElementInput {
+            existing_element_id: setup_sup.element_id,
+            expected_existing_version: setup_sup.version_id,
+            replacement_element_id: replacement_id,
+            replacement_type_id: "kat.core/design-decision".into(),
+            replacement_properties: vec![],
+            relationship_id: relationship_id_sup,
+        },
+    )
+    .unwrap();
+    let val_sup_ont = validate_supersede_element_ontology(prep_sup).unwrap();
+    let val_sup_inv = validate_supersede_element_invariants(val_sup_ont).unwrap();
+    let rev_sup = prepare_supersede_change_revision(
+        val_sup_inv,
+        ChangeId::from_uuid(Uuid::from_u128(77777)),
+        None,
+    )
+    .unwrap();
+    let pers_sup = persist_prepared_supersede_change(repo_sup, rev_sup).unwrap();
+    publish_persisted_supersede_change(repo_sup, pers_sup).unwrap();
+
+    let reopened_sup = open_repository(setup_sup._dir.path()).unwrap();
+
+    // Relationship ID relationship_id_sup is now present in repo_sup's accepted state!
+    let ctx5 = prepare_change(&reopened_sup).unwrap();
+    let err5 = apply_link_element(
+        &reopened_sup,
+        ctx5,
+        LinkElementInput {
+            relationship_id: relationship_id_sup, // Already exists!
+            relationship_type_id: "kat.core/depends-on".into(),
+            source_element_id: replacement_id,
+            target_element_id: setup_sup.element_id,
+            properties: vec![],
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err5,
+        ChangeError::Precondition(PreconditionError::RelationshipAlreadyExists(id)) if id == relationship_id_sup
+    ));
+
+    // Semantic triple ("kat.core/supersedes", replacement_id, setup_sup.element_id) is now present!
+    let new_rel_id = RelationshipId::from_uuid(Uuid::from_u128(77711));
+    let ctx6 = prepare_change(&reopened_sup).unwrap();
+    let err6 = apply_link_element(
+        &reopened_sup,
+        ctx6,
+        LinkElementInput {
+            relationship_id: new_rel_id,
+            relationship_type_id: "kat.core/supersedes".into(), // Duplicate triple!
+            source_element_id: replacement_id,
+            target_element_id: setup_sup.element_id,
+            properties: vec![],
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err6,
+        ChangeError::Precondition(PreconditionError::DuplicateRelationshipTriple {
+            ref relationship_type,
+            source_element_id,
+            target_element_id,
+        }) if relationship_type == "kat.core/supersedes" && source_element_id == replacement_id && target_element_id == setup_sup.element_id
     ));
 }

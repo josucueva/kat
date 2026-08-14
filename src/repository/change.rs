@@ -97,6 +97,15 @@ pub enum PreconditionError {
     /// The RelationshipId already appears in the base state.
     #[error("relationship {0} already exists in the base state")]
     RelationshipAlreadyExists(RelationshipId),
+    /// A relationship of the same type between the same source and target elements already exists in the base state.
+    #[error(
+        "relationship of type '{relationship_type}' already exists between source element {source_element_id} and target element {target_element_id} in the base state"
+    )]
+    DuplicateRelationshipTriple {
+        relationship_type: String,
+        source_element_id: ElementId,
+        target_element_id: ElementId,
+    },
 }
 
 /// Error produced by the Change Engine.
@@ -891,6 +900,172 @@ pub fn apply_supersede_element(
         relationship,
         relationship_version_id,
         candidate_state,
+    })
+}
+
+/// Application-level input for a `Link` operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LinkElementInput {
+    pub relationship_id: RelationshipId,
+    pub relationship_type_id: String,
+    pub source_element_id: ElementId,
+    pub target_element_id: ElementId,
+    pub properties: Vec<(String, PropertyValue)>,
+}
+
+/// Typestate guard proving a `LinkElementInput` was successfully validated
+/// against base-state preconditions and candidate state constructed.
+#[derive(Debug)]
+pub struct PreparedElementLinked {
+    pub context: ChangeContext,
+    pub relationship_id: RelationshipId,
+    pub relationship: RelationshipVersion,
+    pub relationship_version_id: ObjectId,
+    pub candidate_state: SemanticState,
+    pub candidate_state_id: ObjectId,
+}
+
+/// Applies a single `Link` to `context`, producing a candidate state only.
+///
+/// Preconditions (in order):
+/// 1. Source element `Es` exists in base state.
+/// 2. Target element `Et` exists in base state.
+/// 3. Source element `Es` current lifecycle == `Active`.
+/// 4. Relationship `R1` does NOT exist in base state.
+/// 5. Relationship triple `(type, source, target)` does NOT already exist in base state.
+///
+/// Constructs:
+/// - `R1Version`: relationship `R1` linking `Es -> Et` with type `relationship_type_id`.
+/// - Candidate `SemanticState`: inserts `R1 -> R1Version` at canonical sorted location.
+pub fn apply_link_element(
+    repository: &Repository,
+    context: ChangeContext,
+    input: LinkElementInput,
+) -> Result<PreparedElementLinked, ChangeError> {
+    let base_state = &context.base_state;
+
+    // 1. Precondition: source element Es must exist in base state.
+    let source_entry = base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == input.source_element_id)
+        .ok_or(ChangeError::Precondition(
+            PreconditionError::ElementNotFound(input.source_element_id),
+        ))?;
+
+    // 2. Precondition: target element Et must exist in base state.
+    let _target_entry = base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == input.target_element_id)
+        .ok_or(ChangeError::Precondition(
+            PreconditionError::ElementNotFound(input.target_element_id),
+        ))?;
+
+    // 3. Precondition: source element Es lifecycle must be Active.
+    let source_element = match load_typed(
+        repository.object_store(),
+        source_entry.version,
+        ObjectKind::KnowledgeElementVersion,
+    )?
+    .payload
+    {
+        CanonicalPayload::KnowledgeElementVersion(element) => element,
+        _ => unreachable!("kind verified by load_typed"),
+    };
+
+    if source_element.lifecycle != Lifecycle::Active {
+        return Err(ChangeError::Precondition(
+            PreconditionError::ElementNotActive(input.source_element_id),
+        ));
+    }
+
+    // Target element lifecycle may be Active, Deprecated, or Superseded (allowed).
+
+    // 4. Precondition: relationship R1 does NOT already exist in base state.
+    if base_state
+        .relationships
+        .iter()
+        .any(|r| r.relationship_id == input.relationship_id)
+    {
+        return Err(ChangeError::Precondition(
+            PreconditionError::RelationshipAlreadyExists(input.relationship_id),
+        ));
+    }
+
+    // 5. Precondition: semantic triple (type, source, target) does NOT already exist in base state.
+    for rel_entry in &base_state.relationships {
+        let rel_v = match load_typed(
+            repository.object_store(),
+            rel_entry.version,
+            ObjectKind::RelationshipVersion,
+        )?
+        .payload
+        {
+            CanonicalPayload::RelationshipVersion(v) => v,
+            _ => unreachable!("kind verified by load_typed"),
+        };
+
+        if rel_v.relationship_type == input.relationship_type_id
+            && rel_v.source_element_id == input.source_element_id
+            && rel_v.target_element_id == input.target_element_id
+        {
+            return Err(ChangeError::Precondition(
+                PreconditionError::DuplicateRelationshipTriple {
+                    relationship_type: input.relationship_type_id.clone(),
+                    source_element_id: input.source_element_id,
+                    target_element_id: input.target_element_id,
+                },
+            ));
+        }
+    }
+
+    // Canonicalize properties
+    let properties = normalize_properties(input.properties)?;
+
+    // Construct RelationshipVersion
+    let relationship = RelationshipVersion {
+        relationship_id: input.relationship_id,
+        source_element_id: input.source_element_id,
+        relationship_type: input.relationship_type_id,
+        target_element_id: input.target_element_id,
+        properties,
+    };
+
+    let relationship_version_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::RelationshipVersion(relationship.clone()),
+    })?;
+
+    // Candidate SemanticState: insert R1 -> R1Version at canonical sorted location.
+    let entry = RelationshipStateEntry {
+        relationship_id: input.relationship_id,
+        version: relationship_version_id,
+    };
+    let mut relationships = base_state.relationships.clone();
+    let pos =
+        match relationships.binary_search_by(|r| r.relationship_id.cmp(&entry.relationship_id)) {
+            Ok(_) => unreachable!("relationship_id uniqueness checked above"),
+            Err(p) => p,
+        };
+    relationships.insert(pos, entry);
+
+    let candidate_state = SemanticState {
+        ontology_version: base_state.ontology_version,
+        elements: base_state.elements.clone(),
+        relationships,
+    };
+
+    let candidate_state_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(candidate_state.clone()),
+    })?;
+
+    Ok(PreparedElementLinked {
+        context,
+        relationship_id: input.relationship_id,
+        relationship,
+        relationship_version_id,
+        candidate_state,
+        candidate_state_id,
     })
 }
 
