@@ -1575,6 +1575,98 @@ pub fn persist_prepared_deprecate_change(
     Ok(PersistedDeprecateChange { prepared })
 }
 
+/// A prepared supersede change whose immutable objects have been materialized into
+/// the ObjectStore (`V1_next`, `V2_initial`, `R1_initial`, `Sn+1`, `Cn+1`), but which
+/// has **not** been published.
+#[derive(Debug)]
+pub struct PersistedSupersedeChange {
+    /// The prepared supersede change whose objects were just persisted.
+    pub prepared: PreparedSupersedeChangeRevision,
+}
+
+/// Materializes a prepared, validated supersede change's immutable objects into
+/// the ObjectStore in reference dependency order:
+/// `V1_next` -> `V2_initial` -> `R1_initial` -> `Sn+1` -> `Cn+1`.
+///
+/// Leaves `refs/accepted` untouched.
+pub fn persist_prepared_supersede_change(
+    repository: &Repository,
+    prepared: PreparedSupersedeChangeRevision,
+) -> Result<PersistedSupersedeChange, ChangeError> {
+    let store = repository.object_store();
+
+    // 1. V1_next (superseded existing element version)
+    let v1_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(
+            prepared.supersede.existing_element.clone(),
+        ),
+    })?;
+    let v1_next_id = store.put(&v1_next_bytes)?;
+    if v1_next_id != prepared.supersede.new_existing_version_id {
+        return Err(identity_mismatch(
+            ObjectKind::KnowledgeElementVersion,
+            prepared.supersede.new_existing_version_id,
+            v1_next_id,
+        ));
+    }
+
+    // 2. V2_initial (replacement element version)
+    let v2_initial_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::KnowledgeElementVersion(
+            prepared.supersede.replacement_element.clone(),
+        ),
+    })?;
+    let v2_initial_id = store.put(&v2_initial_bytes)?;
+    if v2_initial_id != prepared.supersede.replacement_version_id {
+        return Err(identity_mismatch(
+            ObjectKind::KnowledgeElementVersion,
+            prepared.supersede.replacement_version_id,
+            v2_initial_id,
+        ));
+    }
+
+    // 3. R1_initial (superseding relationship version)
+    let r1_initial_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::RelationshipVersion(prepared.supersede.relationship.clone()),
+    })?;
+    let r1_initial_id = store.put(&r1_initial_bytes)?;
+    if r1_initial_id != prepared.supersede.relationship_version_id {
+        return Err(identity_mismatch(
+            ObjectKind::RelationshipVersion,
+            prepared.supersede.relationship_version_id,
+            r1_initial_id,
+        ));
+    }
+
+    // 4. Sn+1 (candidate SemanticState)
+    let s_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(prepared.supersede.candidate_state.clone()),
+    })?;
+    let s_next_id = store.put(&s_next_bytes)?;
+    if s_next_id != prepared.state_id {
+        return Err(identity_mismatch(
+            ObjectKind::SemanticState,
+            prepared.state_id,
+            s_next_id,
+        ));
+    }
+
+    // 5. Cn+1 (ChangeRevision)
+    let c_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
+    })?;
+    let c_next_id = store.put(&c_next_bytes)?;
+    if c_next_id != prepared.change_revision_id {
+        return Err(identity_mismatch(
+            ObjectKind::ChangeRevision,
+            prepared.change_revision_id,
+            c_next_id,
+        ));
+    }
+
+    Ok(PersistedSupersedeChange { prepared })
+}
+
 /// A persisted update change that has been atomically published as the
 /// repository's accepted head (step 2.6).
 ///
