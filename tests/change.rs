@@ -32,14 +32,15 @@ use kat::repository::change::{
     apply_create_element, apply_deprecate_element, apply_link_element, apply_supersede_element,
     apply_update_element, persist_prepared_change, persist_prepared_deprecate_change,
     persist_prepared_supersede_change, persist_prepared_update_change, prepare_change,
-    prepare_change_revision, prepare_deprecate_change_revision, prepare_supersede_change_revision,
-    prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
-    publish_persisted_supersede_change, publish_persisted_update_change,
-    validate_create_element_invariants, validate_create_element_ontology,
-    validate_deprecate_element_invariants, validate_deprecate_element_ontology,
-    validate_link_element_invariants, validate_link_element_ontology,
-    validate_supersede_element_invariants, validate_supersede_element_ontology,
-    validate_update_element_invariants, validate_update_element_ontology,
+    prepare_change_revision, prepare_deprecate_change_revision, prepare_link_change_revision,
+    prepare_supersede_change_revision, prepare_update_change_revision, publish_persisted_change,
+    publish_persisted_deprecate_change, publish_persisted_supersede_change,
+    publish_persisted_update_change, validate_create_element_invariants,
+    validate_create_element_ontology, validate_deprecate_element_invariants,
+    validate_deprecate_element_ontology, validate_link_element_invariants,
+    validate_link_element_ontology, validate_supersede_element_invariants,
+    validate_supersede_element_ontology, validate_update_element_invariants,
+    validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
@@ -3862,4 +3863,125 @@ fn link_invariants_tampering_rejections() {
         err9,
         ChangeError::Invariant(InvariantError::OntologyVersionChanged)
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Step 5.4 — prepare_link_change_revision tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn prepare_link_change_revision_end_to_end_is_preparatory_only() {
+    let setup = repo_with_decision_and_requirement();
+    let repo = &setup.repo;
+    let initial_objects = std::fs::read_dir(setup._dir.path().join(".kat/objects"))
+        .unwrap()
+        .count();
+
+    let ctx = prepare_change(repo).unwrap();
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(9015));
+    let prepared = apply_link_element(
+        repo,
+        ctx,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: setup.e1,
+            target_element_id: setup.e2,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+
+    let ont_val = validate_link_element_ontology(prepared).unwrap();
+    let val = validate_link_element_invariants(ont_val).unwrap();
+
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(9016));
+    let description = Some("Link decision to requirement".to_string());
+
+    let revision = prepare_link_change_revision(val, change_id, description.clone()).unwrap();
+
+    // Verify operations: single Operation::Link with new_relationship_version matching prepared
+    assert_eq!(revision.change.operations.len(), 1);
+    match &revision.change.operations[0] {
+        kat::domain::operation::Operation::Link {
+            new_relationship_version,
+        } => {
+            assert_eq!(
+                *new_relationship_version,
+                revision.link.relationship_version_id
+            );
+        }
+        _ => panic!("expected Operation::Link"),
+    }
+
+    // Verify revision properties
+    assert_eq!(revision.change.change_id, change_id);
+    assert_eq!(
+        revision.change.base_states,
+        vec![revision.link.context.base_state_id]
+    );
+    assert_eq!(revision.change.result_state, revision.state_id);
+    assert_eq!(
+        revision.change.dependencies,
+        revision
+            .link
+            .context
+            .accepted
+            .change
+            .into_iter()
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(revision.change.description, description);
+
+    // Verify state_id and change_revision_id derivations
+    let expected_state_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(revision.link.candidate_state.clone()),
+    })
+    .unwrap();
+    assert_eq!(revision.state_id, expected_state_id);
+
+    let expected_change_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(revision.change.clone()),
+    })
+    .unwrap();
+    assert_eq!(revision.change_revision_id, expected_change_id);
+
+    // Verify physical store and accepted ref are untouched
+    let after_objects = std::fs::read_dir(setup._dir.path().join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(after_objects, initial_objects);
+    assert_eq!(
+        repo.ref_store().read_accepted().unwrap().state,
+        setup.repo.accepted.state
+    );
+}
+
+#[test]
+fn prepare_link_change_revision_preserves_none_description() {
+    let setup = repo_with_decision_and_requirement();
+    let repo = &setup.repo;
+
+    let ctx = prepare_change(repo).unwrap();
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(9017));
+    let prepared = apply_link_element(
+        repo,
+        ctx,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: setup.e1,
+            target_element_id: setup.e2,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+
+    let val = validate_link_element_invariants(validate_link_element_ontology(prepared).unwrap())
+        .unwrap();
+
+    let change_id = ChangeId::from_uuid(Uuid::from_u128(9018));
+    let revision = prepare_link_change_revision(val, change_id, None).unwrap();
+
+    assert_eq!(revision.change.description, None);
 }
