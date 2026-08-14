@@ -93,8 +93,8 @@ Phase 5 introduces explicit relationship mutation into KAT. Up until Phase 4, re
       Notes: `src/main.rs` — implemented `kat link <relationship-type> <source-element-id> <target-element-id> [--description "..."]`. Implemented `resolve_relationship_type` for short-name lookup (`addresses` $\to$ `kat.core/addresses`) against base ontology. CLI generates `RelationshipId` and `ChangeId`. Added 8 CLI integration tests in `tests/cli.rs` (valid link end-to-end, short and qualified relationship type resolution, unknown relationship type error, forbidden ontology direction error, missing endpoints errors, non-active source error, link to deprecated target success, duplicate relationship triple CLI error, malformed flags, outside repository). `cargo test` 288 pass, fmt/clippy clean.
 
 ### Step 5.8 — Acceptance Verification & Phase 5 Closure
-- [ ] **5.8 — Acceptance verification & Phase 5 closure.**
-      Add `phase5_acceptance_cli_flow_end_to_end` in `tests/cli.rs`. Verify physical object count progression (init=2 $\to$ create E1=5 $\to$ create E2=8 $\to$ link=11), fresh reopen accepted ref $\{S_3, C_3\}$, $S_3$ containing $R_1 \to R_{1}V$, history $C_3 \to C_2 \to C_1$, duplicate link rejection, non-active source rejection, and link to deprecated target success. Update `docs/cli.md` and freeze Phase 5.
+- [x] **5.8 — Acceptance verification & Phase 5 closure.**
+      Notes: `tests/cli.rs` — added `phase5_acceptance_cli_flow_end_to_end`. Verified 3-object materialization (init=2 $\to$ create requirement=5 $\to$ create decision=8 $\to$ link=11 total objects), fresh process reopen accepted ref $\{S_3, C_3\}$, state maps $R_1 \to R_{1}V$ ($E_{\text{decision}} \xrightarrow{\text{addresses}} E_{\text{requirement}}$), $C_3$ operation `Link { new_relationship_version }`, history $C_3 \to C_2 \to C_1$, duplicate link rejection, non-active source rejection, link to deprecated target success, and byte-for-byte endpoint element immutability. Updated `docs/cli.md` and `docs/invariants.md`. **Phase 5 Frozen.** `cargo test` 289 pass, fmt/clippy clean.
 
 ---
 

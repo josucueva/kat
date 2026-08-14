@@ -1454,3 +1454,206 @@ fn kat_link_outside_repository_fails() {
     assert!(!ok);
     assert!(err.contains("no KAT repository found"));
 }
+
+// ---------------------------------------------------------------------------
+// Step 5.8 — Acceptance Verification & Phase 5 Closure
+// ---------------------------------------------------------------------------
+
+#[test]
+fn phase5_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. kat init
+    let (out, err, ok) = run_kat(root, &["init"]);
+    assert!(ok, "kat init failed: {err}\n{out}");
+
+    let count0 = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(
+        count0, 2,
+        "init must materialize exactly 2 objects (O1, S0)"
+    );
+
+    // 2. kat create requirement --title "User must authenticate"
+    let (c1_out, c1_err, ok) = run_kat(
+        root,
+        &["create", "requirement", "--title", "User must authenticate"],
+    );
+    assert!(ok, "kat create requirement failed: {c1_err}\n{c1_out}");
+    let e_req = ElementId::from_str(id_line(&c1_out, "element_id")).unwrap();
+    let v_req_id = ObjectId::from_str(id_line(&c1_out, "version_id")).unwrap();
+    let s1_id = ObjectId::from_str(id_line(&c1_out, "state_id")).unwrap();
+    let c1_change_id = ChangeId::from_str(id_line(&c1_out, "change_id")).unwrap();
+    let c1_rev_id = ObjectId::from_str(id_line(&c1_out, "change_revision_id")).unwrap();
+
+    let count1 = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(
+        count1, 5,
+        "create requirement must increase objects by 3 (V1, S1, C1)"
+    );
+
+    // 3. kat create design-decision --title "Use OAuth2"
+    let (c2_out, c2_err, ok) = run_kat(
+        root,
+        &["create", "design-decision", "--title", "Use OAuth2"],
+    );
+    assert!(ok, "kat create design-decision failed: {c2_err}\n{c2_out}");
+    let e_dec = ElementId::from_str(id_line(&c2_out, "element_id")).unwrap();
+    let v_dec_id = ObjectId::from_str(id_line(&c2_out, "version_id")).unwrap();
+    let s2_id = ObjectId::from_str(id_line(&c2_out, "state_id")).unwrap();
+    let c2_change_id = ChangeId::from_str(id_line(&c2_out, "change_id")).unwrap();
+    let c2_rev_id = ObjectId::from_str(id_line(&c2_out, "change_revision_id")).unwrap();
+
+    let count2 = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(
+        count2, 8,
+        "create design-decision must increase objects by 3 (V2, S2, C2)"
+    );
+
+    // Save endpoint version bytes prior to link
+    let repo0 = open_repository(root).unwrap();
+    let v_req_bytes = repo0.object_store().get(v_req_id).unwrap();
+    let v_dec_bytes = repo0.object_store().get(v_dec_id).unwrap();
+
+    // 4. kat link addresses <e_dec> <e_req>
+    let (link_out, link_err, ok) = run_kat(
+        root,
+        &[
+            "link",
+            "addresses",
+            &e_dec.to_string(),
+            &e_req.to_string(),
+            "--description",
+            "OAuth2 addresses user authentication",
+        ],
+    );
+    assert!(ok, "kat link failed: {link_err}\n{link_out}");
+
+    let r1 = RelationshipId::from_str(id_line(&link_out, "relationship_id")).unwrap();
+    let r1v_id = ObjectId::from_str(id_line(&link_out, "relationship_version_id")).unwrap();
+    let s3_id = ObjectId::from_str(id_line(&link_out, "state_id")).unwrap();
+    let c3_change_id = ChangeId::from_str(id_line(&link_out, "change_id")).unwrap();
+    let c3_rev_id = ObjectId::from_str(id_line(&link_out, "change_revision_id")).unwrap();
+
+    let count3 = std::fs::read_dir(root.join(".kat/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(
+        count3, 11,
+        "link must increase objects by EXACTLY 3 (R1V, S3, C3)"
+    );
+
+    // 5. Fresh process reopen verification
+    let reopened = open_repository(root).unwrap();
+    assert_eq!(reopened.accepted.state, s3_id);
+    assert_eq!(reopened.accepted.change, Some(c3_rev_id));
+
+    let context = prepare_change(&reopened).unwrap();
+    assert_eq!(context.base_state_id, s3_id);
+
+    // Verify elements in S3 are byte-for-byte identical to S2
+    assert_eq!(context.base_state.elements.len(), 2);
+    let req_entry = context
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == e_req)
+        .unwrap();
+    let dec_entry = context
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == e_dec)
+        .unwrap();
+    assert_eq!(req_entry.version, v_req_id);
+    assert_eq!(dec_entry.version, v_dec_id);
+
+    // Verify endpoint bytes in ObjectStore remain unchanged
+    assert_eq!(reopened.object_store().get(v_req_id).unwrap(), v_req_bytes);
+    assert_eq!(reopened.object_store().get(v_dec_id).unwrap(), v_dec_bytes);
+
+    // Verify relationship in S3
+    assert_eq!(context.base_state.relationships.len(), 1);
+    let rel_r1 = &context.base_state.relationships[0];
+    assert_eq!(rel_r1.relationship_id, r1);
+    assert_eq!(rel_r1.version, r1v_id);
+
+    // Verify R1V relationship payload object
+    let r1v_bytes = reopened.object_store().get(r1v_id).unwrap();
+    let r1v_obj = decode_canonical(&r1v_bytes).unwrap();
+    let rel_v_payload = match r1v_obj.payload {
+        CanonicalPayload::RelationshipVersion(v) => v,
+        _ => panic!("expected RelationshipVersion payload"),
+    };
+    assert_eq!(rel_v_payload.relationship_id, r1);
+    assert_eq!(rel_v_payload.relationship_type, "kat.core/addresses");
+    assert_eq!(rel_v_payload.source_element_id, e_dec);
+    assert_eq!(rel_v_payload.target_element_id, e_req);
+
+    // 6. History verification (C3 -> C2 -> C1)
+    let entries = history(&reopened).unwrap();
+    assert_eq!(entries.len(), 3);
+
+    // C3: Link
+    assert_eq!(entries[0].revision_id, c3_rev_id);
+    assert_eq!(entries[0].change.change_id, c3_change_id);
+    assert_eq!(entries[0].change.result_state, s3_id);
+    assert_eq!(entries[0].change.base_states, vec![s2_id]);
+    assert_eq!(entries[0].change.dependencies, vec![c2_rev_id]);
+    assert_eq!(
+        entries[0].change.operations,
+        vec![Operation::Link {
+            new_relationship_version: r1v_id,
+        }]
+    );
+
+    // C2: Create decision
+    assert_eq!(entries[1].revision_id, c2_rev_id);
+    assert_eq!(entries[1].change.change_id, c2_change_id);
+    assert_eq!(entries[1].change.result_state, s2_id);
+    assert_eq!(entries[1].change.base_states, vec![s1_id]);
+    assert_eq!(entries[1].change.dependencies, vec![c1_rev_id]);
+
+    // C1: Create requirement
+    assert_eq!(entries[2].revision_id, c1_rev_id);
+    assert_eq!(entries[2].change.change_id, c1_change_id);
+    assert_eq!(entries[2].change.result_state, s1_id);
+    assert_eq!(entries[2].change.dependencies, vec![]);
+
+    // 7. CLI output queries
+    let (show_req_out, _, ok_req) = run_kat(root, &["show", &e_req.to_string()]);
+    assert!(ok_req);
+    assert!(show_req_out.contains(&format!("version_id: {v_req_id}")));
+    assert!(show_req_out.contains("lifecycle: active"));
+
+    let (show_dec_out, _, ok_dec) = run_kat(root, &["show", &e_dec.to_string()]);
+    assert!(ok_dec);
+    assert!(show_dec_out.contains(&format!("version_id: {v_dec_id}")));
+    assert!(show_dec_out.contains("lifecycle: active"));
+
+    let (hist_out, _, ok_hist) = run_kat(root, &["history"]);
+    assert!(ok_hist);
+    assert!(hist_out.contains(&format!("link {r1v_id}")));
+
+    // 8. Duplicate link attempt MUST fail
+    let (dup_out, dup_err, ok_dup) = run_kat(
+        root,
+        &["link", "addresses", &e_dec.to_string(), &e_req.to_string()],
+    );
+    assert!(!ok_dup, "duplicate link should fail:\n{dup_out}");
+    assert!(dup_err.contains("already exists between source element"));
+
+    // 9. Reversed link direction MUST fail ontology validation
+    let (rev_out, rev_err, ok_rev) = run_kat(
+        root,
+        &["link", "addresses", &e_req.to_string(), &e_dec.to_string()],
+    );
+    assert!(!ok_rev, "reversed direction link should fail:\n{rev_out}");
+    assert!(rev_err.contains("does not allow source element type"));
+}
