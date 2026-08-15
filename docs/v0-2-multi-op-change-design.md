@@ -32,47 +32,104 @@ Phase 13 establishes the design for **staging multiple operations into one atomi
 
 ---
 
-## 2. Core Architectural Decisions
+## 2. Frozen Architectural Decisions
 
-### 2.1 Storage & Persistence of Open Drafts
-- **Location**: Local draft session state is stored in `.kat/draft.json`.
-- **Private & Non-Canonical**: The draft file is local, private to the workspace, and explicitly **non-canonical** (stored as standard JSON, not CBOR). It is never referenced by `refs/accepted` or stored in `.kat/objects`.
-- **Single-Draft Invariant**: At most **one** open draft transaction is permitted per KAT repository at any time. Attempting `kat change begin` while a draft is already open returns an error.
+### 2.1 Storage & Persistence of Open Draft Sessions
+- **Location**: Draft session state is persisted locally on disk at `.kat/work/change/session.json` (inside a dedicated `.kat/work/change/` directory outside `.kat/objects`).
+- **Private, Non-Canonical & Crash-Safe**: Session files are local, private, non-canonical, not content-addressed, and not part of accepted history. Session file updates use crash-safe atomic replacement (temporary file $\to$ `fsync`/flush $\to$ atomic rename).
+- **Session Locking & Single-Draft Invariant**: At most **one** open change session per repository is permitted. Mutation operations on open sessions acquire an exclusive local session lock to prevent concurrent KAT processes from corrupting the session.
+- **Session Metadata Anchors**: Persists `base_state` (`ObjectId`), `base_change` (`ObjectId | None`), `created_at` timestamp, `description`, `operations` vector, and `working_state`.
 
 ### 2.2 Working Candidate State ($S_{\text{working}}$)
-- Upon `kat change begin`, the working candidate state is initialized to the current accepted state: $S_{\text{working}} = S_n$.
-- Each staged operation ($O_1, O_2, \dots, O_m$) is applied sequentially to $S_{\text{working}}$.
+- Upon `kat change begin`, candidate state is initialized to $S_{\text{working}} = S_n$.
+- Staged operations ($O_1, O_2, \dots, O_m$) apply sequentially to $S_{\text{working}}$.
 - Preconditions and `expected_version` resolution for operation $O_k$ evaluate against $S_{\text{working}}$ (the candidate state produced by operations $O_1 \dots O_{k-1}$).
+- **Create-then-Reference Composition**: Staging supports composing newly created elements (e.g. $O_1$ creates $E_2$, $O_2$ links $E_1 \to E_2$, $O_3$ updates $E_2$).
 
-### 2.3 Transient Object Construction (Zero Store Pollution)
-- Staged element versions, relationship versions, and candidate states exist **only** in memory / `.kat/draft.json` during staging.
-- **No draft objects are written to `.kat/objects`** until `kat change commit` succeeds. If a draft is aborted or rejected, `.kat/objects` remains completely unpolluted.
+### 2.3 Operation Ordering & Precondition Validity
+- **Operation Order**: Operations preserve successful staging order exactly (no sorting or re-ordering).
+- **Existing Preconditions**: Validity is determined strictly by $S_{\text{working}}$ + existing operation preconditions. Operations on the same element within one draft (e.g. `update E`, then `deprecate E`) are valid as long as each operation's preconditions hold against $S_{\text{working}}$.
 
-### 2.4 Atomicity & Publication
+### 2.4 Transient Object Storage (Zero Store Pollution)
+- Staged element versions, relationship versions, and candidate state snapshots exist purely in `.kat/work/change/*` during staging.
+- **No draft objects are written to `.kat/objects`** until `kat change commit` succeeds. If a draft is aborted or rejected, `.kat/objects` remains unpolluted.
+
+### 2.5 Single Atomic Accepted-State Publication
 - At `kat change commit`:
-  1. The complete candidate state $S_{\text{working}}$ undergoes whole-candidate validation (ontology + invariants).
-  2. A single `ChangeRevision` is constructed with `operations = [O_1, O_2, \dots, O_m]`.
-  3. All new canonical objects ($V_{\text{new}}, S_{\text{new}}, C_{\text{new}}$) are persisted to `.kat/objects`.
-  4. Single CAS update advances `refs/accepted` from $S_n \to S_{\text{new}}$.
-  5. `.kat/draft.json` is removed upon successful CAS.
+  1. Complete candidate state $S_{\text{working}}$ undergoes whole-candidate validation (ontology + invariants).
+  2. Materializes canonical immutable objects ($V_{\text{new}}, S_{\text{new}}, C_{\text{new}}$) and persists them to `.kat/objects`.
+  3. Constructs single `ChangeRevision` with `operations = [O_1, O_2, \dots, O_m]`.
+  4. Performs single CAS update on `refs/accepted` ($S_n \to S_{\text{new}}$).
+  5. Removes `.kat/work/change/session.json` upon successful publication.
 
-### 2.5 Failure & Conflict Semantics
-- **Failed Operation Staging**: If an operation fails preconditions mid-draft, staging is rejected; `.kat/draft.json` is unchanged.
-- **Commit Validation Failure**: If whole-candidate validation fails during `commit`, commit is aborted; the draft remains open for inspection or correction.
-- **CAS Conflict**: If `refs/accepted` moved since `begin` (concurrent writer won), commit fails with `Conflict`; the draft remains open on disk (no automatic silent rebase in v0.2.0).
-- **Abort (`kat change abort`)**: Deletes `.kat/draft.json`; repository accepted state and object store remain untouched.
+### 2.6 Failure & Stale Session Semantics
+- **Failed Operation Staging**: If a staged operation fails preconditions, the operation has no effect (candidate remains $C_{k-1}$, operation list unchanged). The draft session remains open and usable.
+- **Commit Invariant Failure**: If whole-candidate validation fails during `commit`, commit is aborted; the draft session remains open for user inspection or correction.
+- **CAS Conflict & Stale Session State**: If `refs/accepted` moved since `begin` (`accepted != session.base_state`), commit rejects with `Conflict`. The session is marked **stale**:
+  - A stale session may be inspected (`kat change status`) or aborted (`kat change abort`).
+  - A stale session **may NOT** be committed, staged onto, or silently rebased (no `rebase` command in v0.2).
 
-### 2.6 Dual-Mode Command Behavior (Auto-Staging vs Auto-Commit)
-- **Draft Open**: When `.kat/draft.json` exists, mutation commands (`create`, `update`, `deprecate`, `supersede`, `link`, `unlink`) automatically append their operation to the active draft instead of publishing.
-- **No Draft Open**: When no draft exists, mutation commands maintain single-operation auto-commit behavior for v0.1 backward compatibility.
+### 2.7 Dual-Mode Command Behavior (Staged vs Accepted Output)
+- **Draft Open**: Mutation commands (`create`, `update`, `deprecate`, `supersede`, `link`, `unlink`) automatically stage onto the open draft, outputting distinct staged status (e.g. `staged update element 7af83d1c / change operations: 2`).
+- **No Draft Open**: Mutation commands execute single-operation auto-commit for v0.1 backward compatibility.
 
-### 2.7 Read Query Isolation
+### 2.8 Read Query Isolation
 - **Accepted State Only**: Standard read commands (`status`, `list`, `show`, `history`, `trace`, `impact`, `validate`, `artifacts`) **always** inspect accepted state ($S_n$).
-- **Draft Inspection via `kat change status`**: Draft contents and candidate validation preview are inspected explicitly via `kat change status`. Standard queries remain completely deterministic and independent of uncommitted drafts.
+- **Draft Inspection via `kat change status`**: Draft metadata, staged operations, and candidate summary are inspected explicitly via `kat change status`.
 
 ---
 
-## 3. CLI Command Surface
+## 3. Frozen Summary Matrix
+
+```text
+Session
+  persisted locally (.kat/work/change/session.json)
+  one per repository
+  mutable and non-canonical
+  stored outside ObjectStore
+  based on explicit accepted state + change
+
+Reads
+  ordinary read commands see accepted state only
+  change status inspects draft/candidate
+
+Operations
+  applied sequentially to candidate
+  successful staging order preserved
+  failed operation has no effect
+  existing operation preconditions remain authoritative
+
+Commit
+  validate complete candidate
+  materialize canonical objects
+  create exactly one ChangeRevision
+  create exactly one resulting SemanticState
+  publish via one accepted-ref CAS
+
+Validation failure
+  preserve session
+
+Persistence failure
+  preserve session when recoverable
+  accepted ref unchanged
+
+Conflict
+  no merge
+  no automatic rebase
+  mark session stale
+  allow inspection/abort only
+
+Abort
+  remove working session
+  no canonical ChangeRevision
+
+Canonical format
+  unchanged
+```
+
+---
+
+## 4. CLI Command Surface
 
 ### `kat change begin [--description "..."]`
 Opens a new draft change session on the current accepted state $S_n$.
@@ -80,15 +137,17 @@ Opens a new draft change session on the current accepted state $S_n$.
 ### `kat change status`
 Displays draft session status:
 ```text
-Draft change session
-  base_state:   abd76d8bd634
-  description:  Implement WebAuthn authentication
-  created_at:   2026-08-15T14:50:00Z
+Change session
+  state:        open
+  description:  Add reduced-motion support
+  base_state:   31acb18e09d4
+  base_change:  aec57b12ea19
+  operations:   3
 
-Staged operations (3)
-  1. create element      design-decision  "Use WebAuthn"
-  2. update element      requirement      7af83d1c "User authentication"
-  3. link                addresses        7af83d1c -> bc18a910
+Operations
+  1. update element       7af83d1c  Responsive requirement
+  2. update element       b72aa941  Responsive implementation
+  3. deprecate element    e9ca1182  Mobile validation
 
 Working state preview
   elements:       12 (+1)
@@ -97,37 +156,10 @@ Working state preview
 ```
 
 ### `kat change commit`
-Validates $S_{\text{working}}$, persists canonical objects, publishes single `ChangeRevision` via CAS, and cleans up `.kat/draft.json`.
+Validates $S_{\text{working}}$, persists canonical objects, publishes single `ChangeRevision` via CAS, and cleans up `.kat/work/change/session.json`.
 
 ### `kat change abort`
-Discards active `.kat/draft.json` session.
-
----
-
-## 4. Draft Session File Schema (`.kat/draft.json`)
-
-```json
-{
-  "schema_version": 1,
-  "base_state_id": "abd76d8bd6344211a7b89234567890abcdef1234567890abcdef1234567890ab",
-  "created_at": "2026-08-15T14:50:00Z",
-  "description": "Implement WebAuthn authentication",
-  "operations": [
-    {
-      "kind": "CreateElement",
-      "new_version": {
-        "element_id": "bc18a910-0000-4000-8000-000000000000",
-        "version": 1,
-        "type_id": "kat.core/design-decision",
-        "lifecycle": "active",
-        "properties": {
-          "title": "Use WebAuthn"
-        }
-      }
-    }
-  ]
-}
-```
+Discards active `.kat/work/change/session.json` session.
 
 ---
 

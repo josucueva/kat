@@ -56,7 +56,7 @@ Detailed, per-phase plans live in dedicated files so this master stays a lean tr
 | ------------------------------------------------------ | ---------------------------------------------------------------- | ------- |
 | Phase 11 — Discovery (`kat list`, ID prefixes, `show`) | [implementation-plan-phase11.md](implementation-plan-phase11.md) | **complete** |
 | Phase 12 — Output Modes (compact/full rendering)       | [implementation-plan-phase12.md](implementation-plan-phase12.md) | **complete** |
-| Phase 13 — Multi-Operation Change Design               | [implementation-plan-phase13.md](implementation-plan-phase13.md) | **design complete** |
+| Phase 13 — Multi-Operation Change Design               | [implementation-plan-phase13.md](implementation-plan-phase13.md) | **complete** |
 | Phase 14 — Multi-Operation Changes (`kat change`)      | [implementation-plan-phase14.md](implementation-plan-phase14.md) | planned |
 | Phase 15 — Artifact Re-accountability (`kat account`)  | [implementation-plan-phase15.md](implementation-plan-phase15.md) | planned |
 | Phase 16 — Real-Project Evaluation                     | [implementation-plan-phase16.md](implementation-plan-phase16.md) | planned |
@@ -77,7 +77,7 @@ Phase ordering rationale: Discovery (11) fixes the biggest UX pain first and is 
 | 2026-08-15 | Step 12.1 — Shared output-mode CLI flags | Added `--compact` flag across all read subcommands (`status`, `show`, `history`, `trace`, `impact`, `validate`, `artifacts`). |
 | 2026-08-15 | Step 12.2 — `kat history` options | Added `--oneline`, `--limit N`, `--element <id-or-prefix>` flags with `history_entry_touches_element` filter in `src/repository/query.rs`. |
 | 2026-08-15 | Step 12.3–12.6 — Compact renderers & Phase 12 closure | Implemented compact renderers across read commands and added `phase12_acceptance_cli_flow_end_to_end` in `tests/cli.rs`. 255 tests passing. |
-| 2026-08-15 | Phase 13 — Multi-Operation Change Design | Authored `docs/v0-2-multi-op-change-design.md` detailing staging, candidate state $S_{\text{working}}$, `.kat/draft.json` storage, failure modes, read query isolation, and CLI UX. |
+| 2026-08-15 | Phase 13 Closure — Multi-Operation Change Design | Authored `docs/v0-2-multi-op-change-design.md`. Frozen all architectural decisions (on-disk `.kat/work/change/session.json` storage, crash-safe replacement, stale session state on CAS conflict, read query isolation, exact operation ordering). **Design Approved & Phase 13 Frozen.** |
 
 ## v0.2 Non-Goals (do not build yet)
 

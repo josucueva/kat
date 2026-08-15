@@ -108,5 +108,5 @@ A reader can answer, from the design doc alone:
 - [x] `docs/v0-2-multi-op-change-design.md` written and covers: staging model, transaction lifecycle, atomicity, failure semantics, engine API, CLI UX, session persistence, operation interaction rules.
 - [x] Canonical format impact confirmed NONE (or blocker surfaced for approval).
 - [x] `docs/change-model.md`, `docs/operations.md`, `docs/cli.md` updated to the frozen design.
-- [ ] Design approved before Phase 14 begins.
+- [x] Design approved before Phase 14 begins.
 - [x] No `src/` changes in Phase 13.
