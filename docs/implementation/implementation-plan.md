@@ -1,8 +1,10 @@
-# KAT v0.1 Implementation Plan
+# KAT Implementation Plan
 
-This document is the working plan and progress tracker for implementing the KAT v0.1 prototype in Rust. It follows the implementation workflow and the phasing defined in `prototype-design.md` (Phase 0: Canonical Repository Substrate; Phase 1: First Semantic Vertical Slice; Phase 2: `UpdateElement` vertical slice). Per-phase detail lives in dedicated files linked from the [Phases](#phases) index; this file is the master tracker.
+This document is the master tracker for implementing KAT in Rust, following the workflow and phasing defined in `prototype-design.md`. Per-phase detail lives in dedicated files linked from the [Phases](#phases) index. **v0.1** (Phases 0–10) is complete and released — its plans live in `v0.1/`. **v0.2** (Phases 11–16) is in planning — its plans live in `v0.2/` with the [v0.2 master tracker](v0.2/implementation-plan.md).
 
-Status: **v0.1 complete and released** — all ten phases (0–10) are implemented, tested, and frozen, and the project has shipped as **`v0.1.0`** (full semantic repository) and **`v0.1.1`** (CLI UX polish: clap v4 CLI with 14 subcommands, UNIX man pages, shell completions, `install.sh`/`uninstall.sh`, `kat status`). Every mutation (`create` / `update` / `deprecate` / `supersede` / `link` / `unlink`) runs the full engine pipeline — prepare → apply → ontology → invariants → revision → persist → CAS publish — and the read-side commands (`show` / `history` / `trace` / `impact` / `validate` / `artifacts`) operate on the accepted head. `cargo test` (346 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. Release acceptance was verified in `docs/v0-1-release-acceptance-review.md` (all requirements PASS, v0.1 semantics frozen). `origin/main` is in sync at `524b96d` ("Unify read-side CLI presentation"); Cargo version and `version.txt` are `0.1.1`.
+Status (v0.1): **complete and released** — all ten phases (0–10) are implemented, tested, and frozen, and the project has shipped as **`v0.1.0`** (full semantic repository) and **`v0.1.1`** (CLI UX polish: clap v4 CLI with 14 subcommands, UNIX man pages, shell completions, `install.sh`/`uninstall.sh`, `kat status`). Every mutation (`create` / `update` / `deprecate` / `supersede` / `link` / `unlink`) runs the full engine pipeline — prepare → apply → ontology → invariants → revision → persist → CAS publish — and the read-side commands (`show` / `history` / `trace` / `impact` / `validate` / `artifacts`) operate on the accepted head. `cargo test` (346 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. Release acceptance was verified in `docs/v0-1-release-acceptance-review.md` (all requirements PASS, v0.1 semantics frozen). `origin/main` is in sync at `524b96d` ("Unify read-side CLI presentation"); Cargo version and `version.txt` are `0.1.1`.
+
+Status (v0.2): **in planning** — v0.2.0 planning documents are drafted in `docs/implementation/v0.2/`; no v0.2 code has been written yet. v0.2.0 theme: _make semantic repositories substantially easier to navigate, evolve, and operate while preserving v0.1's explicit, deterministic semantics_ — discovery (`kat list`, unique-prefix ID resolution, relationship-aware `kat show`), shared compact/full output modes, multi-operation Changes (`kat change begin/status/commit/abort`), and first-class artifact re-accountability (`kat account`).
 
 Toolchain: Rust **stable**, pinned via `rust-toolchain.toml` (`channel = "stable"`); it resolves to each host's default target on both Linux and Windows. Machine-local toolchain flavour is set with `rustup override` and is not committed.
 
@@ -37,21 +39,34 @@ The minimal fixture is a `KnowledgeElementVersion` with a fixed UUID, `kat.core/
 
 ## Phases
 
-Detailed, per-phase plans live in dedicated files so this master stays a lean tracker; each phase file links back here.
+Detailed, per-phase plans live in dedicated files so this master stays a lean tracker; each phase file links back here. v0.1 phase plans live in `v0.1/`; v0.2 phase plans live in `v0.2/`.
 
-| Phase                                                | File                                                             | Status       |
-| ---------------------------------------------------- | ---------------------------------------------------------------- | ------------ |
-| Phase 0 — Canonical Repository Substrate             | [implementation-plan-phase0.md](implementation-plan-phase0.md)   | **complete** |
-| Phase 1 — First Semantic Vertical Slice              | [implementation-plan-phase1.md](implementation-plan-phase1.md)   | **complete** |
-| Phase 2 — UpdateElement vertical slice               | [implementation-plan-phase2.md](implementation-plan-phase2.md)   | **complete** |
-| Phase 3 — `DeprecateElement`                         | [implementation-plan-phase3.md](implementation-plan-phase3.md)   | **complete** |
-| Phase 4 — `SupersedeElement`                         | [implementation-plan-phase4.md](implementation-plan-phase4.md)   | **complete** |
-| Phase 5 — `LinkKnowledgeElements`                    | [implementation-plan-phase5.md](implementation-plan-phase5.md)   | **complete** |
-| Phase 6 — `UnlinkKnowledgeElements`                  | [implementation-plan-phase6.md](implementation-plan-phase6.md)   | **complete** |
-| Phase 7 — Trace Origin (`kat trace`)                 | [implementation-plan-phase7.md](implementation-plan-phase7.md)   | **complete** |
-| Phase 8 — Impact Analysis (`kat impact`)             | [implementation-plan-phase8.md](implementation-plan-phase8.md)   | **complete** |
-| Phase 9 — Validate Consistency (`kat validate`)      | [implementation-plan-phase9.md](implementation-plan-phase9.md)   | **complete** |
-| Phase 10 — Artifact Accountability (`kat artifacts`) | [implementation-plan-phase10.md](implementation-plan-phase10.md) | **complete** |
+### v0.1 (Phases 0–10) — complete and released
+
+| Phase                                                | File                                                                  | Status       |
+| ---------------------------------------------------- | --------------------------------------------------------------------- | ------------ |
+| Phase 0 — Canonical Repository Substrate             | [implementation-plan-phase0.md](v0.1/implementation-plan-phase0.md)   | **complete** |
+| Phase 1 — First Semantic Vertical Slice              | [implementation-plan-phase1.md](v0.1/implementation-plan-phase1.md)   | **complete** |
+| Phase 2 — UpdateElement vertical slice               | [implementation-plan-phase2.md](v0.1/implementation-plan-phase2.md)   | **complete** |
+| Phase 3 — `DeprecateElement`                         | [implementation-plan-phase3.md](v0.1/implementation-plan-phase3.md)   | **complete** |
+| Phase 4 — `SupersedeElement`                         | [implementation-plan-phase4.md](v0.1/implementation-plan-phase4.md)   | **complete** |
+| Phase 5 — `LinkKnowledgeElements`                    | [implementation-plan-phase5.md](v0.1/implementation-plan-phase5.md)   | **complete** |
+| Phase 6 — `UnlinkKnowledgeElements`                  | [implementation-plan-phase6.md](v0.1/implementation-plan-phase6.md)   | **complete** |
+| Phase 7 — Trace Origin (`kat trace`)                 | [implementation-plan-phase7.md](v0.1/implementation-plan-phase7.md)   | **complete** |
+| Phase 8 — Impact Analysis (`kat impact`)             | [implementation-plan-phase8.md](v0.1/implementation-plan-phase8.md)   | **complete** |
+| Phase 9 — Validate Consistency (`kat validate`)      | [implementation-plan-phase9.md](v0.1/implementation-plan-phase9.md)   | **complete** |
+| Phase 10 — Artifact Accountability (`kat artifacts`) | [implementation-plan-phase10.md](v0.1/implementation-plan-phase10.md) | **complete** |
+
+### v0.2 (Phases 11–16) — in planning
+
+| Phase                                                  | File                                                                  | Status  |
+| ------------------------------------------------------ | --------------------------------------------------------------------- | ------- |
+| Phase 11 — Discovery (`kat list`, ID prefixes, `show`) | [implementation-plan-phase11.md](v0.2/implementation-plan-phase11.md) | planned |
+| Phase 12 — Output Modes (compact/full rendering)       | [implementation-plan-phase12.md](v0.2/implementation-plan-phase12.md) | planned |
+| Phase 13 — Multi-Operation Change Design               | [implementation-plan-phase13.md](v0.2/implementation-plan-phase13.md) | planned |
+| Phase 14 — Multi-Operation Changes (`kat change`)      | [implementation-plan-phase14.md](v0.2/implementation-plan-phase14.md) | planned |
+| Phase 15 — Artifact Re-accountability (`kat account`)  | [implementation-plan-phase15.md](v0.2/implementation-plan-phase15.md) | planned |
+| Phase 16 — Real-Project Evaluation                     | [implementation-plan-phase16.md](v0.2/implementation-plan-phase16.md) | planned |
 
 ## Progress Log
 
@@ -89,7 +104,7 @@ Detailed, per-phase plans live in dedicated files so this master stays a lean tr
 
 ## Phase 3 Implementation Plan — `DeprecateElement`
 
-See [`docs/implementation-plan-phase3.md`](implementation-plan-phase3.md) for full step-by-step specifications.
+See [`docs/implementation-plan-phase3.md`](v0.1/implementation-plan-phase3.md) for full step-by-step specifications.
 
 | Date       | Target Step                                                                | Summary & Key Decisions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | :--------- | :------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -148,4 +163,6 @@ See [`docs/implementation-plan-phase3.md`](implementation-plan-phase3.md) for fu
 
 ## Non-goals during this work (do not build yet)
 
-Remote repositories, network synchronization, distributed collaboration, branching, automatic merge/conflict resolution, CRDTs, artifact generation, materialization, persistent query databases, graph databases, object packing, garbage collection, compression, AI integration, plugins, and architecture-specific modeling. See `docs/prototype-design.md` → v0.1 Non-Goals.
+**v0.1** — Remote repositories, network synchronization, distributed collaboration, branching, automatic merge/conflict resolution, CRDTs, artifact generation, materialization, persistent query databases, graph databases, object packing, garbage collection, compression, AI integration, plugins, and architecture-specific modeling. See `docs/prototype-design.md` → v0.1 Non-Goals.
+
+**v0.2** — Everything in the v0.1 list above, plus: source parsing, filesystem watchers, automatic artifact reconciliation, new architecture-specific ontology, generic graph query languages, and plugin systems. Structured output (`--json`) and executable constraint evaluation are explicitly deferred (P2/P3); see `v0.2/implementation-plan.md` → v0.2 Non-Goals.

@@ -1,4 +1,5 @@
-> Part of the master plan: [docs/implementation-plan.md](implementation-plan.md).
+> Part of the [master plan](../implementation-plan.md).
+
 ## Phase 1: First Semantic Vertical Slice
 
 Per `prototype-design.md`, this milestone proves the semantic-evolution hypothesis. Move here immediately after Phase 0 rather than polishing the object store. The slice is complete only when all of the following work end to end:

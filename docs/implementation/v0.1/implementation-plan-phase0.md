@@ -1,4 +1,5 @@
-> Part of the master plan: [docs/implementation-plan.md](implementation-plan.md).
+> Part of the [master plan](../implementation-plan.md).
+
 ## Phase 0: Canonical Repository Substrate
 
 The substrate proves the repository-format mechanics. Per `prototype-design.md`, it is **not** a successful prototype milestone by itself. It must not add object fan-out, packfiles, garbage collection, compression, persistent indexes, verify-every-object-on-every-read, or remote exchange.

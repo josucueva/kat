@@ -1,4 +1,4 @@
-> Part of the master plan: [docs/implementation-plan.md](implementation-plan.md).
+> Part of the [master plan](../implementation-plan.md).
 
 ## Phase 2: `UpdateElement` vertical slice (design)
 
