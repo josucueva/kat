@@ -2366,7 +2366,7 @@ fn kat_status_fresh_repository_succeeds() {
     assert!(out.contains("change:      none"));
     assert!(out.contains("Knowledge"));
     assert!(out.contains("elements:       0"));
-    assert!(out.contains("active:       0"));
+    assert!(out.contains("active:        0"));
     assert!(out.contains("relationships:  0"));
     assert!(out.contains("Consistency"));
     assert!(out.contains("violations:             0"));
@@ -2401,5 +2401,5 @@ fn kat_status_evolved_repository_displays_counts_and_latest_change() {
     assert!(out.contains("Latest change"));
     assert!(out.contains("operation:   create_element"));
     assert!(out.contains("elements:       1"));
-    assert!(out.contains("active:       1"));
+    assert!(out.contains("active:        1"));
 }

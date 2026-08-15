@@ -132,24 +132,33 @@ fn run_status() -> ExitCode {
 }
 
 fn print_repository_status(status: &RepositoryStatus) {
+    let abbreviate = |id: &ObjectId| -> String {
+        let s = id.to_string();
+        if s.len() >= 12 {
+            s[..12].to_string()
+        } else {
+            s
+        }
+    };
+
     println!("KAT repository");
     println!();
     println!("Repository");
     println!("  repository:  {}", status.repository_id);
     println!("  software:    {}", status.software_id);
-    println!("  state:       {}", status.state_id);
+    println!("  state:       {}", abbreviate(&status.state_id));
 
     if let Some(change_id) = status.change_id {
-        println!("  change:      {}", change_id);
+        println!("  change:      {}", abbreviate(&change_id));
     } else {
         println!("  change:      none");
     }
-    println!("  ontology:    {}", status.ontology_id);
+    println!("  ontology:    {}", abbreviate(&status.ontology_id));
 
     if let Some(ref latest) = status.latest_change {
         println!();
         println!("Latest change");
-        println!("  revision:    {}", latest.revision_id);
+        println!("  revision:    {}", abbreviate(&latest.revision_id));
         println!("  operation:   {}", latest.operation_kind);
         println!(
             "  description: {}",
@@ -160,9 +169,15 @@ fn print_repository_status(status: &RepositoryStatus) {
     println!();
     println!("Knowledge");
     println!("  elements:       {}", status.knowledge.total_elements);
-    println!("    active:       {}", status.knowledge.active_elements);
-    println!("    deprecated:   {}", status.knowledge.deprecated_elements);
-    println!("    superseded:   {}", status.knowledge.superseded_elements);
+    println!("    active:        {}", status.knowledge.active_elements);
+    println!(
+        "    deprecated:    {}",
+        status.knowledge.deprecated_elements
+    );
+    println!(
+        "    superseded:    {}",
+        status.knowledge.superseded_elements
+    );
     println!("  relationships:  {}", status.knowledge.total_relationships);
 
     println!();
@@ -178,10 +193,9 @@ fn print_repository_status(status: &RepositoryStatus) {
 
     println!();
     println!("Accountability");
-    println!("  artifacts:");
-    println!("    current:      {}", status.accountability.current);
-    println!("    stale:        {}", status.accountability.stale);
-    println!("    unaccounted:  {}", status.accountability.unaccounted);
+    println!("  current:      {}", status.accountability.current);
+    println!("  stale:        {}", status.accountability.stale);
+    println!("  unaccounted:  {}", status.accountability.unaccounted);
 }
 
 /// Parsed `kat create` arguments.
