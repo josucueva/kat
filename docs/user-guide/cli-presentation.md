@@ -32,7 +32,7 @@ Presentation controls representation only. It must not alter which semantic reco
 
 ### Identity Formatting
 - **Content-Addressed `ObjectId`s**: Displayed as the **first 12 hex characters** in standard read commands (e.g., `state: abd76d8bd634`, `version: b8db0be458a9`).
-- **Stable Semantic `UUID`s**: Rendered in **full 36-character hyphenated UUID format** (e.g., `ElementId`, `RelationshipId`, `RepositoryId`, `SoftwareId`) to preserve unambiguous cross-tool identity.
+- **Stable Semantic `UUID`s**: Rendered in **full 36-character hyphenated UUID format** in detailed section views. Compact tabular views (`list`, relationship neighborhoods) may use standard 8-character hex prefixes for visual scannability.
 
 ### Operation Naming Vocabulary
 - `CreateElement` $\to$ `create element`
@@ -112,7 +112,7 @@ or for multi-operation revisions:
 ```text
 Latest change
   revision:    aec57b12ea19
-  operation:   3 operations
+  operations:  3
   description: Refactor authentication requirements
 ```
 
@@ -172,12 +172,12 @@ Revision aec57b12ea19
   description:   Account artifact styles.css
   operations:
     account artifact
-      artifact:     00000000-0000-0000-0000-000000000001
-      reconciled:   1 relationship
-        relationship_id: 00000000-0000-0000-0000-000000000002
-        expected:        030303030303
-        target_element:  00000000-0000-0000-0000-000000000003
-        reconciled:      040404040404
+      artifact:           00000000-0000-0000-0000-000000000001
+      reconciled:         1 relationship
+        relationship_id:    00000000-0000-0000-0000-000000000002
+        expected:           030303030303
+        target_element:     00000000-0000-0000-0000-000000000003
+        reconciled_version: 040404040404
 ```
 
 ---
