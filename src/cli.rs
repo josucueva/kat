@@ -182,4 +182,30 @@ pub enum Command {
         #[arg(long)]
         compact: bool,
     },
+
+    /// Manage multi-operation change transactions
+    Change {
+        #[command(subcommand)]
+        command: ChangeCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ChangeCommands {
+    /// Open a new multi-operation change transaction
+    Begin {
+        /// Optional change description
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Inspect status and staged operations of the open change transaction
+    Status {
+        /// Display compact summary
+        #[arg(long)]
+        compact: bool,
+    },
+    /// Commit all staged operations into a single ChangeRevision and publish
+    Commit,
+    /// Abort the open change transaction and discard all staged operations
+    Abort,
 }

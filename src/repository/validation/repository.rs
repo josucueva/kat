@@ -61,11 +61,11 @@ pub struct ValidationReport {
     pub unverified_constraints: Vec<UnverifiedConstraint>,
 }
 
+use crate::domain::element::KnowledgeElementVersion;
+use crate::domain::relationship::RelationshipVersion;
+use crate::domain::state::SemanticState;
+
 /// Performs repository-wide semantic consistency validation over the current accepted state.
-///
-/// Runs after successful `open_repository()`. Inspects accepted `SemanticState` $S_n$ and
-/// active `OntologyVersion` $O_n$, accumulating all mechanical violations repository-wide
-/// without stopping at the first error or mutating state.
 pub fn validate_repository(repository: &Repository) -> Result<ValidationReport, QueryError> {
     let accepted = repository.ref_store().read_accepted()?;
 
@@ -80,8 +80,18 @@ pub fn validate_repository(repository: &Repository) -> Result<ValidationReport, 
         _ => unreachable!("kind verified by load_typed"),
     };
 
+    validate_repository_state(repository.object_store(), &state, &[], &[])
+}
+
+/// Performs semantic consistency validation over a given SemanticState (accepted or candidate working state).
+pub fn validate_repository_state(
+    store: &ObjectStore,
+    state: &SemanticState,
+    staged_elements: &[KnowledgeElementVersion],
+    staged_relationships: &[RelationshipVersion],
+) -> Result<ValidationReport, QueryError> {
     let ontology = match load_typed(
-        repository.object_store(),
+        store,
         state.ontology_version,
         ObjectKind::OntologyVersion,
     )?
@@ -111,36 +121,54 @@ pub fn validate_repository(repository: &Repository) -> Result<ValidationReport, 
         element_type_map.insert(short_name.to_string(), el_def.clone());
     }
 
-    // Load all element versions in state
+    // Load all element versions in state (overlaying staged versions)
+    let staged_elem_map: HashMap<ElementId, KnowledgeElementVersion> = staged_elements
+        .iter()
+        .map(|e| (e.element_id, e.clone()))
+        .collect();
+
     let mut loaded_elements = HashMap::new();
     for entry in &state.elements {
-        let elem = match load_typed(
-            repository.object_store(),
-            entry.version,
-            ObjectKind::KnowledgeElementVersion,
-        )?
-        .payload
-        {
-            CanonicalPayload::KnowledgeElementVersion(elem) => elem,
-            _ => unreachable!("kind verified by load_typed"),
-        };
-        loaded_elements.insert(entry.element_id, elem);
+        if let Some(staged) = staged_elem_map.get(&entry.element_id) {
+            loaded_elements.insert(entry.element_id, staged.clone());
+        } else {
+            let elem = match load_typed(
+                store,
+                entry.version,
+                ObjectKind::KnowledgeElementVersion,
+            )?
+            .payload
+            {
+                CanonicalPayload::KnowledgeElementVersion(elem) => elem,
+                _ => unreachable!("kind verified by load_typed"),
+            };
+            loaded_elements.insert(entry.element_id, elem);
+        }
     }
 
-    // Load all relationship versions in state
+    // Load all relationship versions in state (overlaying staged versions)
+    let staged_rel_map: HashMap<RelationshipId, RelationshipVersion> = staged_relationships
+        .iter()
+        .map(|r| (r.relationship_id, r.clone()))
+        .collect();
+
     let mut loaded_relationships = HashMap::new();
     for entry in &state.relationships {
-        let rel = match load_typed(
-            repository.object_store(),
-            entry.version,
-            ObjectKind::RelationshipVersion,
-        )?
-        .payload
-        {
-            CanonicalPayload::RelationshipVersion(rel) => rel,
-            _ => unreachable!("kind verified by load_typed"),
-        };
-        loaded_relationships.insert(entry.relationship_id, rel);
+        if let Some(staged) = staged_rel_map.get(&entry.relationship_id) {
+            loaded_relationships.insert(entry.relationship_id, staged.clone());
+        } else {
+            let rel = match load_typed(
+                store,
+                entry.version,
+                ObjectKind::RelationshipVersion,
+            )?
+            .payload
+            {
+                CanonicalPayload::RelationshipVersion(rel) => rel,
+                _ => unreachable!("kind verified by load_typed"),
+            };
+            loaded_relationships.insert(entry.relationship_id, rel);
+        }
     }
 
     let mut violations = Vec::new();

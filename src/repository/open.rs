@@ -18,7 +18,7 @@
 //! strict as the encoder; this module checks that referenced objects exist
 //! and have exactly the canonical kinds the repository structure requires.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::domain::identity::ObjectId;
 use crate::encoding::decode_canonical;
@@ -31,6 +31,8 @@ use crate::repository::ref_store::{AcceptedRef, FileRefStore, RefStore};
 /// An opened KAT repository.
 #[derive(Debug)]
 pub struct Repository {
+    /// Workspace root directory.
+    root: PathBuf,
     /// The validated repository metadata.
     pub metadata: RepositoryMetadata,
     /// The accepted repository head (SemanticState + optional ChangeRevision).
@@ -42,6 +44,11 @@ pub struct Repository {
 }
 
 impl Repository {
+    /// The workspace root directory containing `.kat/`.
+    pub fn root_dir(&self) -> &Path {
+        &self.root
+    }
+
     /// The content-addressed object store of this repository.
     pub fn object_store(&self) -> &ObjectStore {
         &self.store
@@ -127,6 +134,7 @@ pub fn open_repository(path: &Path) -> Result<Repository, RepositoryError> {
     }
 
     Ok(Repository {
+        root: path.to_path_buf(),
         metadata,
         accepted,
         store,

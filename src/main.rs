@@ -47,6 +47,14 @@ use kat::repository::query::{
 use kat::repository::resolve::{ResolveError, resolve_element_id, resolve_relationship_id};
 use kat::repository::validation::repository::{ValidationReport, validate_repository};
 
+use kat::repository::session::{
+    DraftSessionError, abort_draft_session, begin_draft_session, has_draft_session,
+    read_draft_session,
+};
+use kat::repository::change::{
+    StagedOperationInput, commit_draft_session, stage_operation_into_session,
+};
+
 pub mod cli;
 
 use clap::Parser;
@@ -114,6 +122,7 @@ fn main() -> ExitCode {
         } => run_impact(element_id, compact),
         Command::Validate { compact } => cmd_validate(compact),
         Command::Artifacts { compact } => cmd_artifacts(compact),
+        Command::Change { command } => cmd_change(command),
     }
 }
 
@@ -570,6 +579,45 @@ fn run_create(type_arg: String, title: String, description: Option<String>) -> E
         }
     };
 
+    if has_draft_session(repository.root_dir()) {
+        let mut session = match read_draft_session(repository.root_dir()) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("kat create: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let element_id = ElementId::new();
+        let mut properties = Vec::new();
+        properties.push(("title".to_string(), PropertyValue::Text(parsed.title)));
+        if let Some(desc) = parsed.description {
+            properties.push(("description".to_string(), PropertyValue::Text(desc)));
+        }
+        let input = CreateElementInput {
+            element_id,
+            type_id,
+            properties,
+        };
+
+        let op = match stage_operation_into_session(
+            &repository,
+            &mut session,
+            StagedOperationInput::CreateElement(input),
+        ) {
+            Ok(op) => op,
+            Err(err) => return fail_create(err),
+        };
+
+        println!("staged create element");
+        println!("  element_id:        {element_id}");
+        if let Operation::CreateElement { new_version } = op {
+            println!("  version_id:        {new_version}");
+        }
+        println!("  change operations: {}", session.operations.len());
+        return ExitCode::SUCCESS;
+    }
+
     let published = match create_pipeline(&repository, context, type_id, &parsed) {
         Ok(published) => published,
         Err(error) => return fail_create(error),
@@ -680,6 +728,66 @@ fn run_update(
         }
     };
 
+    if has_draft_session(repository.root_dir()) {
+        let mut session = match read_draft_session(repository.root_dir()) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("kat update: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let previous_version_id = match session
+            .working_state
+            .elements
+            .iter()
+            .find(|e| e.element_id == parsed.element_id)
+        {
+            Some(entry) => entry.version,
+            None => {
+                eprintln!(
+                    "kat update: element {} not found in base state",
+                    parsed.element_id
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let mut properties = Vec::new();
+        if let Some(title) = &parsed.title {
+            properties.push(("title".to_string(), PropertyValue::Text(title.clone())));
+        }
+        if let Some(description) = &parsed.description {
+            properties.push((
+                "description".to_string(),
+                PropertyValue::Text(description.clone()),
+            ));
+        }
+
+        let input = UpdateElementInput {
+            element_id: parsed.element_id,
+            expected_version: previous_version_id,
+            properties,
+        };
+
+        let op = match stage_operation_into_session(
+            &repository,
+            &mut session,
+            StagedOperationInput::UpdateElement(input),
+        ) {
+            Ok(op) => op,
+            Err(err) => return fail_update(err),
+        };
+
+        println!("staged update element");
+        println!("  element_id:        {}", parsed.element_id);
+        if let Operation::UpdateElement { new_version, .. } = op {
+            println!("  version_id:        {new_version}");
+        }
+        println!("  change operations: {}", session.operations.len());
+        return ExitCode::SUCCESS;
+    }
+
     let context = match prepare_change(&repository) {
         Ok(context) => context,
         Err(error) => return fail_update(error),
@@ -787,12 +895,60 @@ fn run_deprecate(element_id_str: String) -> ExitCode {
         Err(code) => return code,
     };
 
+    let parsed = DeprecateArgs { element_id };
+
+    if has_draft_session(repository.root_dir()) {
+        let mut session = match read_draft_session(repository.root_dir()) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("kat deprecate: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let expected_version = match session
+            .working_state
+            .elements
+            .iter()
+            .find(|e| e.element_id == parsed.element_id)
+        {
+            Some(entry) => entry.version,
+            None => {
+                eprintln!(
+                    "kat deprecate: element {} not found in base state",
+                    parsed.element_id
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let input = DeprecateElementInput {
+            element_id: parsed.element_id,
+            expected_version,
+        };
+
+        let op = match stage_operation_into_session(
+            &repository,
+            &mut session,
+            StagedOperationInput::DeprecateElement(input),
+        ) {
+            Ok(op) => op,
+            Err(err) => return fail_deprecate(err),
+        };
+
+        println!("staged deprecate element");
+        println!("  element_id:        {}", parsed.element_id);
+        if let Operation::DeprecateElement { new_version, .. } = op {
+            println!("  version_id:        {new_version}");
+        }
+        println!("  change operations: {}", session.operations.len());
+        return ExitCode::SUCCESS;
+    }
+
     let context = match prepare_change(&repository) {
         Ok(context) => context,
         Err(error) => return fail_deprecate(error),
     };
-
-    let parsed = DeprecateArgs { element_id };
 
     let expected_version = match context
         .base_state
@@ -937,6 +1093,64 @@ fn run_supersede(
                 return ExitCode::FAILURE;
             }
         };
+
+    if has_draft_session(repository.root_dir()) {
+        let mut session = match read_draft_session(repository.root_dir()) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("kat supersede: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let expected_existing_version = match session
+            .working_state
+            .elements
+            .iter()
+            .find(|e| e.element_id == parsed.existing_element_id)
+        {
+            Some(entry) => entry.version,
+            None => {
+                eprintln!(
+                    "kat supersede: element {} not found in candidate working state",
+                    parsed.existing_element_id
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let replacement_element_id = ElementId::new();
+        let relationship_id = RelationshipId::new();
+        let mut replacement_properties = Vec::new();
+        replacement_properties.push(("title".to_string(), PropertyValue::Text(parsed.title)));
+        if let Some(desc) = parsed.description {
+            replacement_properties.push(("description".to_string(), PropertyValue::Text(desc)));
+        }
+
+        let input = SupersedeElementInput {
+            existing_element_id: parsed.existing_element_id,
+            expected_existing_version,
+            replacement_element_id,
+            replacement_type_id,
+            replacement_properties,
+            relationship_id,
+        };
+
+        let _op = match stage_operation_into_session(
+            &repository,
+            &mut session,
+            StagedOperationInput::SupersedeElement(input),
+        ) {
+            Ok(op) => op,
+            Err(err) => return fail_supersede(err),
+        };
+
+        println!("staged supersede element");
+        println!("  existing_element_id:    {}", parsed.existing_element_id);
+        println!("  replacement_element_id: {replacement_element_id}");
+        println!("  change operations:      {}", session.operations.len());
+        return ExitCode::SUCCESS;
+    }
 
     let published = match supersede_pipeline(
         &repository,
@@ -1097,6 +1311,39 @@ fn run_link(
             }
         };
 
+    if has_draft_session(repository.root_dir()) {
+        let mut session = match read_draft_session(repository.root_dir()) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("kat link: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let relationship_id = RelationshipId::new();
+        let input = LinkElementInput {
+            relationship_id,
+            relationship_type_id,
+            source_element_id: parsed.source_element_id,
+            target_element_id: parsed.target_element_id,
+            properties: vec![],
+        };
+
+        let _op = match stage_operation_into_session(
+            &repository,
+            &mut session,
+            StagedOperationInput::LinkElement(input),
+        ) {
+            Ok(op) => op,
+            Err(err) => return fail_link(err),
+        };
+
+        println!("staged link");
+        println!("  relationship_id:   {relationship_id}");
+        println!("  change operations: {}", session.operations.len());
+        return ExitCode::SUCCESS;
+    }
+
     let relationship_id = RelationshipId::new();
     let change_id = ChangeId::new();
 
@@ -1203,13 +1450,50 @@ fn run_unlink(relationship_id_str: String, description: Option<String>) -> ExitC
         description,
     };
 
-    let repository = match open_repository(Path::new(".")) {
-        Ok(repository) => repository,
-        Err(error) => {
-            eprintln!("kat unlink: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
+    if has_draft_session(repository.root_dir()) {
+        let mut session = match read_draft_session(repository.root_dir()) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("kat unlink: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let expected_version = match session
+            .working_state
+            .relationships
+            .iter()
+            .find(|r| r.relationship_id == parsed.relationship_id)
+        {
+            Some(entry) => entry.version,
+            None => {
+                eprintln!(
+                    "kat unlink: relationship {} not found in base state",
+                    parsed.relationship_id
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let input = UnlinkElementInput {
+            relationship_id: parsed.relationship_id,
+            expected_version,
+        };
+
+        let _op = match stage_operation_into_session(
+            &repository,
+            &mut session,
+            StagedOperationInput::UnlinkElement(input),
+        ) {
+            Ok(op) => op,
+            Err(err) => return fail_unlink(err),
+        };
+
+        println!("staged unlink");
+        println!("  relationship_id:   {}", parsed.relationship_id);
+        println!("  change operations: {}", session.operations.len());
+        return ExitCode::SUCCESS;
+    }
 
     let context = match prepare_change(&repository) {
         Ok(context) => context,
@@ -2194,6 +2478,178 @@ fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport) {
     println!("  current:      {current_count}");
     println!("  stale:        {stale_count}");
     println!("  unaccounted:  {unaccounted_count}");
+}
+
+fn cmd_change(command: cli::ChangeCommands) -> ExitCode {
+    match command {
+        cli::ChangeCommands::Begin { description } => cmd_change_begin(description),
+        cli::ChangeCommands::Status { compact } => cmd_change_status(compact),
+        cli::ChangeCommands::Commit => cmd_change_commit(),
+        cli::ChangeCommands::Abort => cmd_change_abort(),
+    }
+}
+
+fn cmd_change_begin(description: Option<String>) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("kat change begin: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match begin_draft_session(&repository, description) {
+        Ok(session) => {
+            println!("opened draft change transaction");
+            println!("  base_state: {}", short_object_id(&session.base_state_id));
+            println!("  created_at: {}", session.created_at);
+            if let Some(desc) = &session.description {
+                println!("  description: {}", desc);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("kat change begin: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn cmd_change_status(compact: bool) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("kat change status: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let session = match read_draft_session(repository.root_dir()) {
+        Ok(s) => s,
+        Err(DraftSessionError::NotFound) => {
+            if compact {
+                println!("draft status: none");
+            } else {
+                println!("no open draft change transaction found at .kat/work/change/session.json");
+            }
+            return ExitCode::SUCCESS;
+        }
+        Err(err) => {
+            eprintln!("kat change status: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if compact {
+        println!(
+            "draft status: {} / base_state: {} / operations: {}",
+            session.status.as_str(),
+            short_object_id(&session.base_state_id),
+            session.operations.len()
+        );
+        return ExitCode::SUCCESS;
+    }
+
+    println!("Draft Change Transaction");
+    println!("  status:       {}", session.status.as_str());
+    println!("  base_state:   {}", short_object_id(&session.base_state_id));
+    if let Some(c) = session.base_change_id {
+        println!("  base_change:  {}", short_object_id(&c));
+    }
+    println!("  created_at:   {}", session.created_at);
+    if let Some(desc) = &session.description {
+        println!("  description:  {desc}");
+    }
+    println!("  operations:   {}", session.operations.len());
+
+    println!();
+    println!("Staged Operations");
+    if session.operations.is_empty() {
+        println!("  (none)");
+    } else {
+        for (idx, op) in session.operations.iter().enumerate() {
+            let num = idx + 1;
+            match op {
+                Operation::CreateElement { new_version } => {
+                    println!("  {num}. create element (version: {})", short_object_id(new_version));
+                }
+                Operation::UpdateElement { element_id, new_version, .. } => {
+                    let short_id = &element_id.to_string()[..8];
+                    println!("  {num}. update element {short_id} (version: {})", short_object_id(new_version));
+                }
+                Operation::DeprecateElement { element_id, new_version, .. } => {
+                    let short_id = &element_id.to_string()[..8];
+                    println!("  {num}. deprecate element {short_id} (version: {})", short_object_id(new_version));
+                }
+                Operation::Supersede { existing_element, replacement_element, .. } => {
+                    let ex_short = &existing_element.to_string()[..8];
+                    let rep_short = &replacement_element.to_string()[..8];
+                    println!("  {num}. supersede element {ex_short} -> {rep_short}");
+                }
+                Operation::Link { new_relationship_version } => {
+                    println!("  {num}. link (relationship version: {})", short_object_id(new_relationship_version));
+                }
+                Operation::Unlink { relationship_id, .. } => {
+                    let short_id = &relationship_id.to_string()[..8];
+                    println!("  {num}. unlink relationship {short_id}");
+                }
+            }
+        }
+    }
+
+    println!();
+    println!("Candidate Summary");
+    println!("  elements:      {}", session.working_state.elements.len());
+    println!("  relationships: {}", session.working_state.relationships.len());
+
+    ExitCode::SUCCESS
+}
+
+fn cmd_change_commit() -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("kat change commit: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match commit_draft_session(&repository) {
+        Ok(published) => {
+            let prepared = &published.persisted.prepared;
+            println!("committed change transaction");
+            println!("  change_id:          {}", prepared.change.change_id);
+            println!("  change_revision_id: {}", prepared.change_revision_id);
+            println!("  state_id:           {}", prepared.state_id);
+            println!("  operations:         {}", prepared.change.operations.len());
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("kat change commit: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn cmd_change_abort() -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("kat change abort: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match abort_draft_session(repository.root_dir()) {
+        Ok(()) => {
+            println!("aborted draft change transaction");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("kat change abort: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 #[cfg(test)]

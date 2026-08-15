@@ -151,6 +151,86 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(change)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_kat__subcmd__change_commands" \
+"*::: :->change" \
+&& ret=0
+
+    case $state in
+    (change)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-change-command-$line[1]:"
+        case $line[1] in
+            (begin)
+_arguments "${_arguments_options[@]}" : \
+'--description=[Optional change description]:DESCRIPTION:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'--compact[Display compact summary]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(commit)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(abort)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_kat__subcmd__change__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-change-help-command-$line[1]:"
+        case $line[1] in
+            (begin)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(commit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(abort)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 ":: :_kat__subcmd__help_commands" \
@@ -223,6 +303,38 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(change)
+_arguments "${_arguments_options[@]}" : \
+":: :_kat__subcmd__help__subcmd__change_commands" \
+"*::: :->change" \
+&& ret=0
+
+    case $state in
+    (change)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-help-change-command-$line[1]:"
+        case $line[1] in
+            (begin)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(commit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(abort)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -254,6 +366,7 @@ _kat_commands() {
 'impact:Analyze potential impact and consequences of changing an element' \
 'validate:Run mechanical consistency validation across the current accepted state' \
 'artifacts:Evaluate artifact accountability baselines against accepted state' \
+'change:Manage multi-operation change transactions' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'kat commands' commands "$@"
@@ -262,6 +375,73 @@ _kat_commands() {
 _kat__subcmd__artifacts_commands() {
     local commands; commands=()
     _describe -t commands 'kat artifacts commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__change_commands] )) ||
+_kat__subcmd__change_commands() {
+    local commands; commands=(
+'begin:Open a new multi-operation change transaction' \
+'status:Inspect status and staged operations of the open change transaction' \
+'commit:Commit all staged operations into a single ChangeRevision and publish' \
+'abort:Abort the open change transaction and discard all staged operations' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'kat change commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__change__subcmd__abort_commands] )) ||
+_kat__subcmd__change__subcmd__abort_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat change abort commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__change__subcmd__begin_commands] )) ||
+_kat__subcmd__change__subcmd__begin_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat change begin commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__change__subcmd__commit_commands] )) ||
+_kat__subcmd__change__subcmd__commit_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat change commit commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__change__subcmd__help_commands] )) ||
+_kat__subcmd__change__subcmd__help_commands() {
+    local commands; commands=(
+'begin:Open a new multi-operation change transaction' \
+'status:Inspect status and staged operations of the open change transaction' \
+'commit:Commit all staged operations into a single ChangeRevision and publish' \
+'abort:Abort the open change transaction and discard all staged operations' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'kat change help commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__change__subcmd__help__subcmd__abort_commands] )) ||
+_kat__subcmd__change__subcmd__help__subcmd__abort_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat change help abort commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__change__subcmd__help__subcmd__begin_commands] )) ||
+_kat__subcmd__change__subcmd__help__subcmd__begin_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat change help begin commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__change__subcmd__help__subcmd__commit_commands] )) ||
+_kat__subcmd__change__subcmd__help__subcmd__commit_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat change help commit commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__change__subcmd__help__subcmd__help_commands] )) ||
+_kat__subcmd__change__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat change help help commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__change__subcmd__help__subcmd__status_commands] )) ||
+_kat__subcmd__change__subcmd__help__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat change help status commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__change__subcmd__status_commands] )) ||
+_kat__subcmd__change__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat change status commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__create_commands] )) ||
 _kat__subcmd__create_commands() {
@@ -291,6 +471,7 @@ _kat__subcmd__help_commands() {
 'impact:Analyze potential impact and consequences of changing an element' \
 'validate:Run mechanical consistency validation across the current accepted state' \
 'artifacts:Evaluate artifact accountability baselines against accepted state' \
+'change:Manage multi-operation change transactions' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'kat help commands' commands "$@"
@@ -299,6 +480,36 @@ _kat__subcmd__help_commands() {
 _kat__subcmd__help__subcmd__artifacts_commands() {
     local commands; commands=()
     _describe -t commands 'kat help artifacts commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__change_commands] )) ||
+_kat__subcmd__help__subcmd__change_commands() {
+    local commands; commands=(
+'begin:Open a new multi-operation change transaction' \
+'status:Inspect status and staged operations of the open change transaction' \
+'commit:Commit all staged operations into a single ChangeRevision and publish' \
+'abort:Abort the open change transaction and discard all staged operations' \
+    )
+    _describe -t commands 'kat help change commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__change__subcmd__abort_commands] )) ||
+_kat__subcmd__help__subcmd__change__subcmd__abort_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help change abort commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__change__subcmd__begin_commands] )) ||
+_kat__subcmd__help__subcmd__change__subcmd__begin_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help change begin commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__change__subcmd__commit_commands] )) ||
+_kat__subcmd__help__subcmd__change__subcmd__commit_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help change commit commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__change__subcmd__status_commands] )) ||
+_kat__subcmd__help__subcmd__change__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help change status commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__help__subcmd__create_commands] )) ||
 _kat__subcmd__help__subcmd__create_commands() {

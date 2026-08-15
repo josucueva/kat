@@ -57,7 +57,7 @@ Detailed, per-phase plans live in dedicated files so this master stays a lean tr
 | Phase 11 — Discovery (`kat list`, ID prefixes, `show`) | [implementation-plan-phase11.md](implementation-plan-phase11.md) | **complete** |
 | Phase 12 — Output Modes (compact/full rendering)       | [implementation-plan-phase12.md](implementation-plan-phase12.md) | **complete** |
 | Phase 13 — Multi-Operation Change Design               | [implementation-plan-phase13.md](implementation-plan-phase13.md) | **complete** |
-| Phase 14 — Multi-Operation Changes (`kat change`)      | [implementation-plan-phase14.md](implementation-plan-phase14.md) | planned |
+| Phase 14 — Multi-Operation Changes (`kat change`)      | [implementation-plan-phase14.md](implementation-plan-phase14.md) | **complete** |
 | Phase 15 — Artifact Re-accountability (`kat account`)  | [implementation-plan-phase15.md](implementation-plan-phase15.md) | planned |
 | Phase 16 — Real-Project Evaluation                     | [implementation-plan-phase16.md](implementation-plan-phase16.md) | planned |
 

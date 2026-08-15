@@ -118,6 +118,12 @@ pub enum PreconditionError {
         expected: ObjectId,
         actual: ObjectId,
     },
+    /// No active draft session was found.
+    #[error("no open draft change transaction found at .kat/work/change/session.json")]
+    DraftNotFound,
+    /// Attempted to commit a draft change transaction with no staged operations.
+    #[error("cannot commit a draft change transaction with zero staged operations")]
+    EmptyDraftCommit,
     /// The loaded relationship object's ID does not match the requested relationship ID.
     #[error(
         "relationship version object maps to relationship {version_relationship_id}, expected {relationship_id}"
@@ -185,6 +191,9 @@ pub enum ChangeError {
     /// A ref store failure during publication, other than a CAS conflict.
     #[error("ref store error: {0}")]
     RefStore(#[from] RefStoreError),
+    /// A query or validation scan error.
+    #[error("query error: {0}")]
+    Query(#[from] crate::repository::query::QueryError),
     /// The prepared change is internally inconsistent at the publication
     /// boundary: its `ChangeRevision.result_state` does not match the prepared
     /// `state_id`. Construction (1.5) and persistence (1.6) guarantee these
@@ -2667,6 +2676,297 @@ fn merge_property_patch(
     }
     merged.sort_by(|a, b| cmp_encoded_text(&a.0, &b.0));
     Ok(merged)
+}
+
+use crate::repository::session::{
+    DraftSession, DraftSessionState, abort_draft_session, mark_draft_session_stale,
+    read_draft_session, write_draft_session_atomic,
+};
+
+/// Input variants for staging a semantic mutation operation into a draft change session.
+#[derive(Debug, Clone)]
+pub enum StagedOperationInput {
+    /// Create a new knowledge element.
+    CreateElement(CreateElementInput),
+    /// Update an existing knowledge element.
+    UpdateElement(UpdateElementInput),
+    /// Deprecate an existing knowledge element.
+    DeprecateElement(DeprecateElementInput),
+    /// Supersede an existing knowledge element with a replacement element.
+    SupersedeElement(SupersedeElementInput),
+    /// Link two knowledge elements with a relationship.
+    LinkElement(LinkElementInput),
+    /// Unlink an existing relationship.
+    UnlinkElement(UnlinkElementInput),
+}
+
+/// Stages one mutation operation onto the working candidate of an open draft change session.
+pub fn stage_operation_into_session(
+    repository: &Repository,
+    session: &mut DraftSession,
+    input: StagedOperationInput,
+) -> Result<Operation, ChangeError> {
+    if session.status == DraftSessionState::Stale {
+        return Err(ChangeError::Conflict);
+    }
+
+    let store = repository.object_store();
+    let ontology_bytes = store.get(session.working_state.ontology_version)?;
+    let ontology_canonical = decode_canonical(&ontology_bytes)?;
+    let ontology = match ontology_canonical.payload {
+        CanonicalPayload::OntologyVersion(o) => o,
+        _ => {
+            return Err(ChangeError::UnexpectedObjectKind {
+                expected: ObjectKind::OntologyVersion,
+                actual: ontology_canonical.object_kind(),
+            });
+        }
+    };
+
+    let context = ChangeContext {
+        accepted: AcceptedRef {
+            state: session.base_state_id,
+            change: session.base_change_id,
+        },
+        base_state_id: session.base_state_id,
+        base_state: session.working_state.clone(),
+        ontology,
+    };
+
+    let (op, candidate_state) = match input {
+        StagedOperationInput::CreateElement(in_val) => {
+            let prep = apply_create_element(context, in_val)?;
+            let ont = validate_create_element_ontology(prep)?;
+            let val = validate_create_element_invariants(ont)?;
+            session
+                .staged_element_versions
+                .push(val.prepared.element.clone());
+            let op = Operation::CreateElement {
+                new_version: val.prepared.element_version_id,
+            };
+            (op, val.prepared.candidate_state)
+        }
+        StagedOperationInput::UpdateElement(in_val) => {
+            let prep = apply_update_element(repository, context, in_val)?;
+            let ont = validate_update_element_ontology(prep)?;
+            let val = validate_update_element_invariants(ont)?;
+            session
+                .staged_element_versions
+                .push(val.prepared.element.clone());
+            let op = Operation::UpdateElement {
+                element_id: val.prepared.element.element_id,
+                expected_version: val.prepared.previous_version_id,
+                new_version: val.prepared.element_version_id,
+            };
+            (op, val.prepared.candidate_state)
+        }
+        StagedOperationInput::DeprecateElement(in_val) => {
+            let prep = apply_deprecate_element(repository, context, in_val)?;
+            let ont = validate_deprecate_element_ontology(prep)?;
+            let val = validate_deprecate_element_invariants(ont)?;
+            session
+                .staged_element_versions
+                .push(val.prepared.element.clone());
+            let op = Operation::DeprecateElement {
+                element_id: val.prepared.element.element_id,
+                expected_version: val.prepared.previous_version_id,
+                new_version: val.prepared.element_version_id,
+            };
+            (op, val.prepared.candidate_state)
+        }
+        StagedOperationInput::SupersedeElement(in_val) => {
+            let prep = apply_supersede_element(repository, context, in_val)?;
+            let ont = validate_supersede_element_ontology(prep)?;
+            let val = validate_supersede_element_invariants(ont)?;
+            session
+                .staged_element_versions
+                .push(val.prepared.existing_element.clone());
+            session
+                .staged_element_versions
+                .push(val.prepared.replacement_element.clone());
+            session
+                .staged_relationship_versions
+                .push(val.prepared.relationship.clone());
+            let op = Operation::Supersede {
+                existing_element: val.prepared.existing_element_id,
+                expected_existing_version: val.prepared.expected_existing_version,
+                replacement_element: val.prepared.replacement_element_id,
+                replacement_version: val.prepared.replacement_version_id,
+                superseding_relationship: val.prepared.relationship_version_id,
+            };
+            (op, val.prepared.candidate_state)
+        }
+        StagedOperationInput::LinkElement(in_val) => {
+            let prep = apply_link_element(repository, context, in_val)?;
+            let ont = validate_link_element_ontology(prep)?;
+            let val = validate_link_element_invariants(ont)?;
+            session
+                .staged_relationship_versions
+                .push(val.prepared.relationship.clone());
+            let op = Operation::Link {
+                new_relationship_version: val.prepared.relationship_version_id,
+            };
+            (op, val.prepared.candidate_state)
+        }
+        StagedOperationInput::UnlinkElement(in_val) => {
+            let prep = apply_unlink_element(repository, context, in_val)?;
+            let val = validate_unlink_element_invariants(prep)?;
+            let op = Operation::Unlink {
+                relationship_id: val.prepared.relationship_id,
+                expected_version: val.prepared.expected_version,
+            };
+            (op, val.prepared.candidate_state)
+        }
+    };
+
+    session.operations.push(op.clone());
+    session.working_state = candidate_state;
+    write_draft_session_atomic(repository.root_dir(), session).map_err(|e| {
+        ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
+            e.to_string(),
+        ))
+    })?;
+
+    Ok(op)
+}
+
+/// Commits an open draft change session, performing whole-candidate validation,
+/// materializing canonical objects, and publishing via atomic CAS.
+pub fn commit_draft_session(repository: &Repository) -> Result<PublishedChange, ChangeError> {
+    let root = repository.root_dir();
+    let session = read_draft_session(root)
+        .map_err(|_| ChangeError::Precondition(PreconditionError::DraftNotFound))?;
+
+    if session.status == DraftSessionState::Stale {
+        return Err(ChangeError::Conflict);
+    }
+
+    let current_accepted = repository
+        .ref_store()
+        .read_accepted()
+        .map_err(ChangeError::RefStore)?;
+
+    if current_accepted.state != session.base_state_id {
+        let _ = mark_draft_session_stale(root);
+        return Err(ChangeError::Conflict);
+    }
+
+    if session.operations.is_empty() {
+        return Err(ChangeError::Precondition(PreconditionError::EmptyDraftCommit));
+    }
+
+    let store = repository.object_store();
+
+    // Whole-candidate validation preview
+    let report = crate::repository::validation::repository::validate_repository_state(
+        store,
+        &session.working_state,
+        &session.staged_element_versions,
+        &session.staged_relationship_versions,
+    )?;
+    if !report.violations.is_empty() {
+        return Err(ChangeError::Precondition(PreconditionError::EmptyDraftCommit));
+    }
+
+    // Materialize all staged element versions
+    for ev in &session.staged_element_versions {
+        let obj = CanonicalObject {
+            payload: CanonicalPayload::KnowledgeElementVersion(ev.clone()),
+        };
+        let bytes = canonical_bytes(&obj)?;
+        store.put(&bytes)?;
+    }
+
+    // Materialize all staged relationship versions
+    for rv in &session.staged_relationship_versions {
+        let obj = CanonicalObject {
+            payload: CanonicalPayload::RelationshipVersion(rv.clone()),
+        };
+        let bytes = canonical_bytes(&obj)?;
+        store.put(&bytes)?;
+    }
+
+    // Materialize candidate SemanticState
+    let state_obj = CanonicalObject {
+        payload: CanonicalPayload::SemanticState(session.working_state.clone()),
+    };
+    let state_bytes = canonical_bytes(&state_obj)?;
+    let result_state_id = store.put(&state_bytes)?;
+
+    // Construct single ChangeRevision
+    let change_id = ChangeId::new();
+    let change_revision = ChangeRevision {
+        change_id,
+        result_state: result_state_id,
+        base_states: vec![session.base_state_id],
+        dependencies: current_accepted.change.into_iter().collect(),
+        description: session.description.clone(),
+        operations: session.operations.clone(),
+    };
+
+    let change_obj = CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(change_revision.clone()),
+    };
+    let change_bytes = canonical_bytes(&change_obj)?;
+    let change_revision_id = store.put(&change_bytes)?;
+
+    // Perform atomic CAS
+    let new_accepted = AcceptedRef {
+        state: result_state_id,
+        change: Some(change_revision_id),
+    };
+
+    match repository
+        .ref_store()
+        .compare_and_swap_accepted(&current_accepted, &new_accepted)
+    {
+        Ok(()) => {
+            let _ = abort_draft_session(root);
+
+            let ontology_bytes = store.get(session.working_state.ontology_version)?;
+            let ontology_canonical = decode_canonical(&ontology_bytes)?;
+            let ontology = match ontology_canonical.payload {
+                CanonicalPayload::OntologyVersion(o) => o,
+                _ => unreachable!(),
+            };
+
+            let dummy_creation = PreparedElementCreation {
+                context: ChangeContext {
+                    accepted: current_accepted,
+                    base_state_id: session.base_state_id,
+                    base_state: session.working_state.clone(),
+                    ontology,
+                },
+                element: KnowledgeElementVersion {
+                    element_id: ElementId::from_uuid(uuid::Uuid::nil()),
+                    type_id: "kat.core/requirement".into(),
+                    lifecycle: crate::domain::element::Lifecycle::Active,
+                    properties: vec![],
+                },
+                element_version_id: result_state_id,
+                candidate_state: session.working_state,
+            };
+
+            let prepared = PreparedChangeRevision {
+                creation: dummy_creation,
+                state_id: result_state_id,
+                change_revision_id,
+                change: change_revision,
+            };
+
+            let persisted = PersistedChange { prepared };
+
+            Ok(PublishedChange {
+                persisted,
+                accepted: new_accepted,
+            })
+        }
+        Err(RefStoreError::Conflict) => {
+            let _ = mark_draft_session_stale(root);
+            Err(ChangeError::Conflict)
+        }
+        Err(e) => Err(ChangeError::RefStore(e)),
+    }
 }
 
 #[cfg(test)]

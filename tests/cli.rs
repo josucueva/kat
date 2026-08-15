@@ -2834,3 +2834,93 @@ fn phase12_acceptance_cli_flow_end_to_end() {
     assert!(ok6);
     assert!(artifacts_c.contains("STATUS       ARTIFACT"));
 }
+
+#[test]
+fn phase14_acceptance_cli_flow_end_to_end() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+
+    // 1. Initialize repository
+    let (_, _, ok) = run_kat(root, &["init"]);
+    assert!(ok);
+
+    // 2. Open multi-operation change transaction
+    let (begin_out, _, ok) = run_kat(
+        root,
+        &[
+            "change",
+            "begin",
+            "--description",
+            "Multi-operation change transaction",
+        ],
+    );
+    assert!(ok);
+    assert!(begin_out.contains("opened draft change transaction"));
+
+    // 3. Stage 2 operations onto open draft
+    let (c1_out, c1_err, ok1) = run_kat(
+        root,
+        &["create", "requirement", "--title", "User authentication"],
+    );
+    assert!(ok1, "c1_out: {c1_out}, c1_err: {c1_err}");
+    assert!(c1_out.contains("staged create element"));
+    assert!(c1_out.contains("change operations: 1"));
+
+    let (c2_out, _, ok2) = run_kat(
+        root,
+        &["create", "design-decision", "--title", "Use WebAuthn"],
+    );
+    assert!(ok2);
+    assert!(c2_out.contains("staged create element"));
+    assert!(c2_out.contains("change operations: 2"));
+
+    // 4. Inspect status of draft change transaction
+    let (status_out, _, ok_st) = run_kat(root, &["change", "status"]);
+    assert!(ok_st);
+    assert!(status_out.contains("Draft Change Transaction"));
+    assert!(status_out.contains("status:       open"));
+    assert!(status_out.contains("operations:   2"));
+    assert!(status_out.contains("1. create element"));
+    assert!(status_out.contains("2. create element"));
+
+    let (status_compact, _, ok_c) = run_kat(root, &["change", "status", "--compact"]);
+    assert!(ok_c);
+    assert!(status_compact.contains("draft status: open"));
+    assert!(status_compact.contains("operations: 2"));
+
+    // 5. Commit open draft transaction
+    let (commit_out, _, ok_cm) = run_kat(root, &["change", "commit"]);
+    assert!(ok_cm);
+    assert!(commit_out.contains("committed change transaction"));
+    assert!(commit_out.contains("operations:         2"));
+
+    // 6. Verify single ChangeRevision in history containing both operations
+    let (history_out, _, ok_h) = run_kat(root, &["history", "--oneline"]);
+    assert!(ok_h);
+    let history_lines: Vec<&str> = history_out.lines().collect();
+    assert_eq!(history_lines.len(), 1);
+    assert!(history_lines[0].contains("2 operations"));
+
+    // 7. Verify elements in accepted state
+    let (list_out, _, ok_l) = run_kat(root, &["list"]);
+    assert!(ok_l);
+    assert!(list_out.contains("User authentication"));
+    assert!(list_out.contains("Use WebAuthn"));
+
+    // 8. Test kat change abort
+    let (_, _, ok_b2) = run_kat(root, &["change", "begin"]);
+    assert!(ok_b2);
+    let (_, _, ok_stg) = run_kat(
+        root,
+        &["create", "constraint", "--title", "Must complete in 1s"],
+    );
+    assert!(ok_stg);
+
+    let (abort_out, _, ok_ab) = run_kat(root, &["change", "abort"]);
+    assert!(ok_ab);
+    assert!(abort_out.contains("aborted draft change transaction"));
+
+    // Verify aborted staged operation was discarded
+    let (list_after, _, _) = run_kat(root, &["list"]);
+    assert!(!list_after.contains("Must complete in 1s"));
+}
