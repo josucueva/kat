@@ -215,7 +215,7 @@ pub enum ChangeError {
 ///
 /// Carrying the loaded base state and ontology avoids re-reading and
 /// re-decoding them for each operation in the change.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChangeContext {
     /// The accepted repository head this change is based on. This is also the
     /// `expected` value later passed to the CAS publication step.
@@ -226,6 +226,10 @@ pub struct ChangeContext {
     pub base_state: SemanticState,
     /// The OntologyVersion that interprets the base state.
     pub ontology: OntologyVersion,
+    /// Staged element versions from active draft transaction (if any).
+    pub staged_element_versions: Vec<KnowledgeElementVersion>,
+    /// Staged relationship versions from active draft transaction (if any).
+    pub staged_relationship_versions: Vec<RelationshipVersion>,
 }
 
 /// Resolves the accepted repository head and loads the base SemanticState and
@@ -264,7 +268,49 @@ pub fn prepare_change(repository: &Repository) -> Result<ChangeContext, ChangeEr
         base_state_id,
         base_state,
         ontology,
+        staged_element_versions: Vec::new(),
+        staged_relationship_versions: Vec::new(),
     })
+}
+
+fn load_element_version_context(
+    context: &ChangeContext,
+    store: &ObjectStore,
+    version_id: ObjectId,
+) -> Result<KnowledgeElementVersion, ChangeError> {
+    for ev in &context.staged_element_versions {
+        let obj = CanonicalObject {
+            payload: CanonicalPayload::KnowledgeElementVersion(ev.clone()),
+        };
+        if crate::encoding::hash::canonical_object_id(&obj).ok() == Some(version_id) {
+            return Ok(ev.clone());
+        }
+    }
+
+    match load_typed(store, version_id, ObjectKind::KnowledgeElementVersion)?.payload {
+        CanonicalPayload::KnowledgeElementVersion(ev) => Ok(ev),
+        _ => unreachable!("kind verified by load_typed"),
+    }
+}
+
+fn load_relationship_version_context(
+    context: &ChangeContext,
+    store: &ObjectStore,
+    version_id: ObjectId,
+) -> Result<RelationshipVersion, ChangeError> {
+    for rv in &context.staged_relationship_versions {
+        let obj = CanonicalObject {
+            payload: CanonicalPayload::RelationshipVersion(rv.clone()),
+        };
+        if crate::encoding::hash::canonical_object_id(&obj).ok() == Some(version_id) {
+            return Ok(rv.clone());
+        }
+    }
+
+    match load_typed(store, version_id, ObjectKind::RelationshipVersion)?.payload {
+        CanonicalPayload::RelationshipVersion(rv) => Ok(rv),
+        _ => unreachable!("kind verified by load_typed"),
+    }
 }
 
 /// Loads `id` from the store (hash verified by `ObjectStore::get`), decodes
@@ -503,18 +549,8 @@ pub fn apply_update_element(
         ));
     }
 
-    // Precondition: the current version loads, decodes canonically, and is a
-    // KnowledgeElementVersion (missing -> NotFound; wrong kind -> rejected).
-    let previous_element = match load_typed(
-        repository.object_store(),
-        previous_version_id,
-        ObjectKind::KnowledgeElementVersion,
-    )?
-    .payload
-    {
-        CanonicalPayload::KnowledgeElementVersion(element) => element,
-        _ => unreachable!("kind verified by load_typed"),
-    };
+    let previous_element =
+        load_element_version_context(&context, repository.object_store(), previous_version_id)?;
 
     // Precondition: the current lifecycle is Active.
     if previous_element.lifecycle != Lifecycle::Active {
@@ -651,17 +687,8 @@ pub fn apply_deprecate_element(
         ));
     }
 
-    // Precondition: load and decode current version.
-    let previous_element = match load_typed(
-        repository.object_store(),
-        previous_version_id,
-        ObjectKind::KnowledgeElementVersion,
-    )?
-    .payload
-    {
-        CanonicalPayload::KnowledgeElementVersion(element) => element,
-        _ => unreachable!("kind verified by load_typed"),
-    };
+    let previous_element =
+        load_element_version_context(&context, repository.object_store(), previous_version_id)?;
 
     // Precondition: current lifecycle must be Active.
     if previous_element.lifecycle != Lifecycle::Active {
@@ -829,16 +856,11 @@ pub fn apply_supersede_element(
     }
 
     // 5. Precondition: load and decode E1's current version V1.
-    let previous_existing_element = match load_typed(
+    let previous_existing_element = load_element_version_context(
+        &context,
         repository.object_store(),
         previous_existing_version_id,
-        ObjectKind::KnowledgeElementVersion,
-    )?
-    .payload
-    {
-        CanonicalPayload::KnowledgeElementVersion(element) => element,
-        _ => unreachable!("kind verified by load_typed"),
-    };
+    )?;
 
     // 6. Precondition: E1's current lifecycle must be Active.
     if previous_existing_element.lifecycle != Lifecycle::Active {
@@ -994,16 +1016,8 @@ pub fn apply_link_element(
         ))?;
 
     // 3. Precondition: source element Es lifecycle must be Active.
-    let source_element = match load_typed(
-        repository.object_store(),
-        source_entry.version,
-        ObjectKind::KnowledgeElementVersion,
-    )?
-    .payload
-    {
-        CanonicalPayload::KnowledgeElementVersion(element) => element,
-        _ => unreachable!("kind verified by load_typed"),
-    };
+    let source_element =
+        load_element_version_context(&context, repository.object_store(), source_entry.version)?;
 
     if source_element.lifecycle != Lifecycle::Active {
         return Err(ChangeError::Precondition(
@@ -1012,16 +1026,8 @@ pub fn apply_link_element(
     }
 
     // Load target element (target lifecycle may be Active, Deprecated, or Superseded).
-    let target_element = match load_typed(
-        repository.object_store(),
-        target_entry.version,
-        ObjectKind::KnowledgeElementVersion,
-    )?
-    .payload
-    {
-        CanonicalPayload::KnowledgeElementVersion(element) => element,
-        _ => unreachable!("kind verified by load_typed"),
-    };
+    let target_element =
+        load_element_version_context(&context, repository.object_store(), target_entry.version)?;
 
     // 4. Precondition: relationship R1 does NOT already exist in base state.
     if base_state
@@ -1036,16 +1042,11 @@ pub fn apply_link_element(
 
     // 5. Precondition: semantic triple (type, source, target) does NOT already exist in base state.
     for rel_entry in &base_state.relationships {
-        let rel_v = match load_typed(
+        let rel_v = load_relationship_version_context(
+            &context,
             repository.object_store(),
             rel_entry.version,
-            ObjectKind::RelationshipVersion,
-        )?
-        .payload
-        {
-            CanonicalPayload::RelationshipVersion(v) => v,
-            _ => unreachable!("kind verified by load_typed"),
-        };
+        )?;
 
         if rel_v.relationship_type == input.relationship_type_id
             && rel_v.source_element_id == input.source_element_id
@@ -1175,20 +1176,11 @@ pub fn apply_unlink_element(
 
     let previous_relationship_version_id = base_rel_entry.version;
 
-    // 3. Load & decode R1V from ObjectStore
-    let bytes = repository
-        .object_store()
-        .get(previous_relationship_version_id)
-        .map_err(ChangeError::ObjectStore)?;
-    let canonical = decode_canonical(&bytes)?;
-    let previous_relationship = match canonical.payload {
-        CanonicalPayload::RelationshipVersion(v) => v,
-        _ => {
-            return Err(ChangeError::Decoding(
-                crate::encoding::DecodingError::InvalidObjectShape,
-            ));
-        }
-    };
+    let previous_relationship = load_relationship_version_context(
+        &context,
+        repository.object_store(),
+        previous_relationship_version_id,
+    )?;
 
     // 4. Defensive check: previous_relationship.relationship_id == input.relationship_id
     if previous_relationship.relationship_id != input.relationship_id {
@@ -2731,6 +2723,8 @@ pub fn stage_operation_into_session(
         base_state_id: session.base_state_id,
         base_state: session.working_state.clone(),
         ontology,
+        staged_element_versions: session.staged_element_versions.clone(),
+        staged_relationship_versions: session.staged_relationship_versions.clone(),
     };
 
     let (op, candidate_state) = match input {
@@ -2852,7 +2846,9 @@ pub fn commit_draft_session(repository: &Repository) -> Result<PublishedChange, 
     }
 
     if session.operations.is_empty() {
-        return Err(ChangeError::Precondition(PreconditionError::EmptyDraftCommit));
+        return Err(ChangeError::Precondition(
+            PreconditionError::EmptyDraftCommit,
+        ));
     }
 
     let store = repository.object_store();
@@ -2865,7 +2861,9 @@ pub fn commit_draft_session(repository: &Repository) -> Result<PublishedChange, 
         &session.staged_relationship_versions,
     )?;
     if !report.violations.is_empty() {
-        return Err(ChangeError::Precondition(PreconditionError::EmptyDraftCommit));
+        return Err(ChangeError::Precondition(
+            PreconditionError::EmptyDraftCommit,
+        ));
     }
 
     // Materialize all staged element versions
@@ -2936,6 +2934,8 @@ pub fn commit_draft_session(repository: &Repository) -> Result<PublishedChange, 
                     base_state_id: session.base_state_id,
                     base_state: session.working_state.clone(),
                     ontology,
+                    staged_element_versions: session.staged_element_versions.clone(),
+                    staged_relationship_versions: session.staged_relationship_versions.clone(),
                 },
                 element: KnowledgeElementVersion {
                     element_id: ElementId::from_uuid(uuid::Uuid::nil()),
@@ -3017,6 +3017,8 @@ mod tests {
             base_state_id: object_id(1),
             base_state,
             ontology,
+            staged_element_versions: Vec::new(),
+            staged_relationship_versions: Vec::new(),
         }
     }
 

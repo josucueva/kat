@@ -2,6 +2,12 @@
 //!
 //! Stores private, local, non-canonical state for open multi-operation change
 //! transactions (`kat change begin/status/commit/abort`).
+//!
+//! NORMATIVE CONTRACT & FORMAT BOUNDARY:
+//! `.kat/work/change/session.json` is strictly private, local, and non-canonical.
+//! Future KAT versions may alter, extend, or replace its internal representation
+//! without repository-format compatibility obligations. Canonical immutable objects
+//! reside exclusively in `.kat/objects/` under deterministic SHA-256 addresses.
 
 use std::fs::{self, File};
 use std::io::Write;
@@ -58,7 +64,9 @@ pub enum DraftSessionError {
     #[error("no open draft change transaction found at .kat/work/change/session.json")]
     NotFound,
     /// Attempted to modify or commit a stale session.
-    #[error("draft session is stale because accepted head moved since begin; use 'kat change abort' to clear")]
+    #[error(
+        "draft session is stale because accepted head moved since begin; use 'kat change abort' to clear"
+    )]
     StaleSession,
     /// An underlying filesystem failure.
     #[error("draft session I/O error: {0}")]
@@ -118,9 +126,10 @@ pub fn begin_draft_session(
         return Err(DraftSessionError::AlreadyExists);
     }
 
-    let accepted = repository.ref_store().read_accepted().map_err(|e| {
-        DraftSessionError::Invalid(format!("failed to read accepted ref: {e}"))
-    })?;
+    let accepted = repository
+        .ref_store()
+        .read_accepted()
+        .map_err(|e| DraftSessionError::Invalid(format!("failed to read accepted ref: {e}")))?;
     let store = repository.object_store();
 
     // Load current accepted SemanticState
@@ -251,9 +260,8 @@ fn format_draft_session_json(session: &DraftSession) -> Result<String, DraftSess
     let obj = CanonicalObject {
         payload: CanonicalPayload::SemanticState(session.working_state.clone()),
     };
-    let state_bytes = canonical_bytes(&obj).map_err(|e| {
-        DraftSessionError::Invalid(format!("failed to encode working state: {e}"))
-    })?;
+    let state_bytes = canonical_bytes(&obj)
+        .map_err(|e| DraftSessionError::Invalid(format!("failed to encode working state: {e}")))?;
     let state_hex = hex::encode(state_bytes);
 
     let desc_str = match &session.description {
@@ -445,8 +453,7 @@ fn extract_json_nullable_string(
     let rest = &json[pos + pattern.len()..].trim_start();
     if rest.starts_with("null") {
         Ok(None)
-    } else if rest.starts_with('"') {
-        let rest = &rest[1..];
+    } else if let Some(rest) = rest.strip_prefix('"') {
         let end = rest.find('"').ok_or_else(|| {
             DraftSessionError::Invalid(format!("unterminated string for '{key}'"))
         })?;

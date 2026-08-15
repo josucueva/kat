@@ -2924,3 +2924,202 @@ fn phase14_acceptance_cli_flow_end_to_end() {
     let (list_after, _, _) = run_kat(root, &["list"]);
     assert!(!list_after.contains("Must complete in 1s"));
 }
+
+/// Extracts the value of a key from staged CLI stdout lines (ignoring leading whitespace).
+fn staged_id_line<'a>(out: &'a str, key: &str) -> &'a str {
+    out.lines()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            let prefix = format!("{key}:");
+            if trimmed.starts_with(&prefix) {
+                Some(trimmed[prefix.len()..].trim())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| panic!("staged output must contain a '{key}: ...' line:\n{out}"))
+}
+
+#[test]
+fn kat_change_read_isolation() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+
+    run_kat(root, &["init"]);
+
+    // Publish base element to S1
+    let (c1, _, ok1) = run_kat(
+        root,
+        &[
+            "create",
+            "requirement",
+            "--title",
+            "Accepted Base Requirement",
+        ],
+    );
+    assert!(ok1);
+    let base_id = id_line(&c1, "element_id");
+    let base_short = &base_id[..8];
+
+    // Begin draft session and stage a new requirement
+    run_kat(root, &["change", "begin"]);
+    let (c2, _, ok2) = run_kat(
+        root,
+        &[
+            "create",
+            "requirement",
+            "--title",
+            "Staged Draft Requirement",
+        ],
+    );
+    assert!(ok2);
+    let staged_id = staged_id_line(&c2, "element_id");
+    let staged_short = &staged_id[..8];
+
+    // 1. Normal read commands inspect accepted state S1 ONLY
+    let (list_out, _, _) = run_kat(root, &["list"]);
+    assert!(list_out.contains("Accepted Base Requirement"));
+    assert!(!list_out.contains("Staged Draft Requirement"));
+
+    let (status_out, _, _) = run_kat(root, &["status"]);
+    assert!(status_out.contains("active:"), "status_out: {status_out}");
+
+    let (_show_staged, show_staged_err, show_staged_ok) = run_kat(root, &["show", staged_short]);
+    assert!(!show_staged_ok);
+    assert!(show_staged_err.contains("not found"));
+
+    let (show_base, _, show_base_ok) = run_kat(root, &["show", base_short]);
+    assert!(show_base_ok);
+    assert!(show_base.contains("Accepted Base Requirement"));
+
+    // 2. kat change status inspects working draft candidate state S_working
+    let (change_status, _, _) = run_kat(root, &["change", "status"]);
+    assert!(change_status.contains("status:       open"));
+    assert!(change_status.contains("operations:   1"));
+    assert!(change_status.contains("elements:      2"));
+}
+
+#[test]
+fn kat_change_sequential_composition_dependency_chain() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+
+    run_kat(root, &["init"]);
+
+    run_kat(
+        root,
+        &[
+            "change",
+            "begin",
+            "--description",
+            "Sequential multi-operation dependency chain",
+        ],
+    );
+
+    // O1: Create Requirement R
+    let (c1, _, ok1) = run_kat(root, &["create", "requirement", "--title", "Requirement R"]);
+    assert!(ok1);
+    let r_id = staged_id_line(&c1, "element_id");
+    let r_short = &r_id[..8];
+
+    // O2: Create Design Decision D
+    let (c2, _, ok2) = run_kat(
+        root,
+        &["create", "design-decision", "--title", "Design Decision D"],
+    );
+    assert!(ok2);
+    let d_id = staged_id_line(&c2, "element_id");
+    let d_short = &d_id[..8];
+
+    // O3: Link D --addresses--> R (references newly staged elements D and R)
+    let (link_out, link_err, ok3) = run_kat(root, &["link", "addresses", d_short, r_short]);
+    assert!(ok3, "link failed: out={link_out}, err={link_err}");
+
+    // O4: Update R (modifies newly staged element R)
+    let (up_out, _, ok4) = run_kat(
+        root,
+        &["update", r_short, "--title", "Requirement R Updated"],
+    );
+    assert!(ok4, "update failed: {up_out}");
+
+    // O5: Deprecate R (lifecycle transition on newly staged element R)
+    let (dep_out, _, ok5) = run_kat(root, &["deprecate", r_short]);
+    assert!(ok5, "deprecate failed: {dep_out}");
+
+    // Verify 5 operations staged
+    let (status_out, _, _) = run_kat(root, &["change", "status"]);
+    assert!(status_out.contains("operations:   5"));
+
+    // Commit single atomic revision
+    let (commit_out, _, ok_cm) = run_kat(root, &["change", "commit"]);
+    assert!(ok_cm, "commit failed: {commit_out}");
+    assert!(commit_out.contains("operations:         5"));
+
+    // Verify history contains exactly 1 revision with 5 operations
+    let (history_out, _, _) = run_kat(root, &["history", "--oneline"]);
+    let h_lines: Vec<&str> = history_out.lines().collect();
+    assert_eq!(h_lines.len(), 1);
+    assert!(h_lines[0].contains("5 operations"));
+
+    // Inspect R in accepted state
+    let (show_r, _, ok_r) = run_kat(root, &["show", r_short]);
+    assert!(ok_r);
+    assert!(show_r.contains("deprecated"));
+    assert!(show_r.contains("Requirement R Updated"));
+}
+
+#[test]
+fn kat_change_cas_conflict_stale_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+
+    run_kat(root, &["init"]);
+
+    // 1. Begin draft session at S0
+    run_kat(root, &["change", "begin"]);
+    run_kat(
+        root,
+        &["create", "requirement", "--title", "Staged in Session"],
+    );
+
+    // 2. Simulate concurrent publisher moving accepted head from S0 to S1 directly in engine
+    let repository = open_repository(root).unwrap();
+    let context = prepare_change(&repository).unwrap();
+    let input = CreateElementInput {
+        element_id: ElementId::new(),
+        type_id: "kat.core/requirement".to_string(),
+        properties: vec![(
+            "title".to_string(),
+            PropertyValue::Text("Concurrent Publication".to_string()),
+        )],
+    };
+    let prep = apply_create_element(context, input).unwrap();
+    let ont = validate_create_element_ontology(prep).unwrap();
+    let val = validate_create_element_invariants(ont).unwrap();
+    let rev = prepare_change_revision(val, ChangeId::new(), None).unwrap();
+    let pers = persist_prepared_change(&repository, rev).unwrap();
+    publish_persisted_change(&repository, pers).unwrap();
+
+    // 3. Attempt committing session -> fails due to CAS conflict
+    let (commit_out, commit_err, ok_cm) = run_kat(root, &["change", "commit"]);
+    assert!(!ok_cm);
+    assert!(
+        commit_err.contains("accepted ref changed concurrently")
+            || commit_err.contains("accepted repository state changed")
+            || commit_out.contains("accepted repository state changed"),
+        "commit_err: {commit_err}, commit_out: {commit_out}"
+    );
+
+    // 4. Inspect session status -> marked stale
+    let (status_out, _, ok_st) = run_kat(root, &["change", "status"]);
+    assert!(ok_st);
+    assert!(status_out.contains("status:       stale"));
+
+    // 5. Verify abort cleans up stale session
+    let (abort_out, _, ok_ab) = run_kat(root, &["change", "abort"]);
+    assert!(ok_ab);
+    assert!(abort_out.contains("aborted draft change transaction"));
+
+    let (status_after, _, _) = run_kat(root, &["change", "status"]);
+    assert!(status_after.contains("no open draft change transaction found"));
+}

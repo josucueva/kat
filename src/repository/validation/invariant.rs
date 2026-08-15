@@ -897,6 +897,8 @@ mod tests {
             base_state_id: object_id(1),
             base_state: base,
             ontology: initial_core_ontology(OntologyId::from_uuid(Uuid::nil())),
+            staged_element_versions: Vec::new(),
+            staged_relationship_versions: Vec::new(),
         }
     }
 

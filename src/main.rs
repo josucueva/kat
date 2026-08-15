@@ -44,15 +44,18 @@ use kat::repository::query::{
     analyze_artifact_accountability, analyze_impact, history, history_entry_touches_element,
     list_elements, repository_status, show_element, trace_origin,
 };
-use kat::repository::resolve::{ResolveError, resolve_element_id, resolve_relationship_id};
+use kat::repository::resolve::{
+    ResolveError, resolve_element_id, resolve_element_in_state, resolve_relationship_id,
+    resolve_relationship_in_state,
+};
 use kat::repository::validation::repository::{ValidationReport, validate_repository};
 
+use kat::repository::change::{
+    StagedOperationInput, commit_draft_session, stage_operation_into_session,
+};
 use kat::repository::session::{
     DraftSessionError, abort_draft_session, begin_draft_session, has_draft_session,
     read_draft_session,
-};
-use kat::repository::change::{
-    StagedOperationInput, commit_draft_session, stage_operation_into_session,
 };
 
 pub mod cli;
@@ -290,12 +293,29 @@ fn print_element_list(elements: &[ElementView]) {
     }
 }
 
+fn is_mutation_cmd(cmd: &str) -> bool {
+    matches!(
+        cmd,
+        "update" | "deprecate" | "supersede" | "link" | "unlink"
+    )
+}
+
 fn resolve_cli_element_id(
     repository: &Repository,
     input: &str,
     cmd: &str,
 ) -> Result<ElementId, ExitCode> {
-    match resolve_element_id(repository, input) {
+    let res = if is_mutation_cmd(cmd) && has_draft_session(repository.root_dir()) {
+        if let Ok(session) = read_draft_session(repository.root_dir()) {
+            resolve_element_in_state(&session.working_state, input)
+        } else {
+            resolve_element_id(repository, input)
+        }
+    } else {
+        resolve_element_id(repository, input)
+    };
+
+    match res {
         Ok(id) => Ok(id),
         Err(ResolveError::Ambiguous {
             input, candidates, ..
@@ -357,7 +377,17 @@ fn resolve_cli_relationship_id(
     input: &str,
     cmd: &str,
 ) -> Result<RelationshipId, ExitCode> {
-    match resolve_relationship_id(repository, input) {
+    let res = if is_mutation_cmd(cmd) && has_draft_session(repository.root_dir()) {
+        if let Ok(session) = read_draft_session(repository.root_dir()) {
+            resolve_relationship_in_state(&session.working_state, input)
+        } else {
+            resolve_relationship_id(repository, input)
+        }
+    } else {
+        resolve_relationship_id(repository, input)
+    };
+
+    match res {
         Ok(id) => Ok(id),
         Err(ResolveError::Ambiguous {
             input, candidates, ..
@@ -2552,7 +2582,10 @@ fn cmd_change_status(compact: bool) -> ExitCode {
 
     println!("Draft Change Transaction");
     println!("  status:       {}", session.status.as_str());
-    println!("  base_state:   {}", short_object_id(&session.base_state_id));
+    println!(
+        "  base_state:   {}",
+        short_object_id(&session.base_state_id)
+    );
     if let Some(c) = session.base_change_id {
         println!("  base_change:  {}", short_object_id(&c));
     }
@@ -2571,25 +2604,53 @@ fn cmd_change_status(compact: bool) -> ExitCode {
             let num = idx + 1;
             match op {
                 Operation::CreateElement { new_version } => {
-                    println!("  {num}. create element (version: {})", short_object_id(new_version));
+                    println!(
+                        "  {num}. create element (version: {})",
+                        short_object_id(new_version)
+                    );
                 }
-                Operation::UpdateElement { element_id, new_version, .. } => {
+                Operation::UpdateElement {
+                    element_id,
+                    new_version,
+                    ..
+                } => {
                     let short_id = &element_id.to_string()[..8];
-                    println!("  {num}. update element {short_id} (version: {})", short_object_id(new_version));
+                    println!(
+                        "  {num}. update element {short_id} (version: {})",
+                        short_object_id(new_version)
+                    );
                 }
-                Operation::DeprecateElement { element_id, new_version, .. } => {
+                Operation::DeprecateElement {
+                    element_id,
+                    new_version,
+                    ..
+                } => {
                     let short_id = &element_id.to_string()[..8];
-                    println!("  {num}. deprecate element {short_id} (version: {})", short_object_id(new_version));
+                    println!(
+                        "  {num}. deprecate element {short_id} (version: {})",
+                        short_object_id(new_version)
+                    );
                 }
-                Operation::Supersede { existing_element, replacement_element, .. } => {
+                Operation::Supersede {
+                    existing_element,
+                    replacement_element,
+                    ..
+                } => {
                     let ex_short = &existing_element.to_string()[..8];
                     let rep_short = &replacement_element.to_string()[..8];
                     println!("  {num}. supersede element {ex_short} -> {rep_short}");
                 }
-                Operation::Link { new_relationship_version } => {
-                    println!("  {num}. link (relationship version: {})", short_object_id(new_relationship_version));
+                Operation::Link {
+                    new_relationship_version,
+                } => {
+                    println!(
+                        "  {num}. link (relationship version: {})",
+                        short_object_id(new_relationship_version)
+                    );
                 }
-                Operation::Unlink { relationship_id, .. } => {
+                Operation::Unlink {
+                    relationship_id, ..
+                } => {
                     let short_id = &relationship_id.to_string()[..8];
                     println!("  {num}. unlink relationship {short_id}");
                 }
@@ -2600,7 +2661,10 @@ fn cmd_change_status(compact: bool) -> ExitCode {
     println!();
     println!("Candidate Summary");
     println!("  elements:      {}", session.working_state.elements.len());
-    println!("  relationships: {}", session.working_state.relationships.len());
+    println!(
+        "  relationships: {}",
+        session.working_state.relationships.len()
+    );
 
     ExitCode::SUCCESS
 }

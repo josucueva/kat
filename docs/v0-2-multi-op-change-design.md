@@ -36,7 +36,7 @@ Phase 13 establishes the design for **staging multiple operations into one atomi
 
 ### 2.1 Storage & Persistence of Open Draft Sessions
 - **Location**: Draft session state is persisted locally on disk at `.kat/work/change/session.json` (inside a dedicated `.kat/work/change/` directory outside `.kat/objects`).
-- **Private, Non-Canonical & Crash-Safe**: Session files are local, private, non-canonical, not content-addressed, and not part of accepted history. Session file updates use crash-safe atomic replacement (temporary file $\to$ `fsync`/flush $\to$ atomic rename).
+- **Private, Non-Canonical & Crash-Safe**: Session files are local, private, non-canonical, not content-addressed, and not part of accepted history. Future KAT versions are free to alter, extend, or replace its internal representation without repository-format compatibility or backward-compatibility obligations. Canonical immutable objects reside exclusively in `.kat/objects/` under SHA-256 addresses. Session file updates use crash-safe atomic replacement (temporary file $\to$ `fsync`/flush $\to$ atomic rename).
 - **Session Locking & Single-Draft Invariant**: At most **one** open change session per repository is permitted. Mutation operations on open sessions acquire an exclusive local session lock to prevent concurrent KAT processes from corrupting the session.
 - **Session Metadata Anchors**: Persists `base_state` (`ObjectId`), `base_change` (`ObjectId | None`), `created_at` timestamp, `description`, `operations` vector, and `working_state`.
 

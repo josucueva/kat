@@ -90,16 +90,11 @@ pub fn validate_repository_state(
     staged_elements: &[KnowledgeElementVersion],
     staged_relationships: &[RelationshipVersion],
 ) -> Result<ValidationReport, QueryError> {
-    let ontology = match load_typed(
-        store,
-        state.ontology_version,
-        ObjectKind::OntologyVersion,
-    )?
-    .payload
-    {
-        CanonicalPayload::OntologyVersion(ontology) => ontology,
-        _ => unreachable!("kind verified by load_typed"),
-    };
+    let ontology =
+        match load_typed(store, state.ontology_version, ObjectKind::OntologyVersion)?.payload {
+            CanonicalPayload::OntologyVersion(ontology) => ontology,
+            _ => unreachable!("kind verified by load_typed"),
+        };
 
     // Build lookup map of ontology relationship types by type_id and short name
     let mut ontology_rel_map = HashMap::new();
@@ -132,12 +127,8 @@ pub fn validate_repository_state(
         if let Some(staged) = staged_elem_map.get(&entry.element_id) {
             loaded_elements.insert(entry.element_id, staged.clone());
         } else {
-            let elem = match load_typed(
-                store,
-                entry.version,
-                ObjectKind::KnowledgeElementVersion,
-            )?
-            .payload
+            let elem = match load_typed(store, entry.version, ObjectKind::KnowledgeElementVersion)?
+                .payload
             {
                 CanonicalPayload::KnowledgeElementVersion(elem) => elem,
                 _ => unreachable!("kind verified by load_typed"),
@@ -157,16 +148,11 @@ pub fn validate_repository_state(
         if let Some(staged) = staged_rel_map.get(&entry.relationship_id) {
             loaded_relationships.insert(entry.relationship_id, staged.clone());
         } else {
-            let rel = match load_typed(
-                store,
-                entry.version,
-                ObjectKind::RelationshipVersion,
-            )?
-            .payload
-            {
-                CanonicalPayload::RelationshipVersion(rel) => rel,
-                _ => unreachable!("kind verified by load_typed"),
-            };
+            let rel =
+                match load_typed(store, entry.version, ObjectKind::RelationshipVersion)?.payload {
+                    CanonicalPayload::RelationshipVersion(rel) => rel,
+                    _ => unreachable!("kind verified by load_typed"),
+                };
             loaded_relationships.insert(entry.relationship_id, rel);
         }
     }

@@ -58,8 +58,13 @@ fn matches_prefix(candidate_uuid_str: &str, input_prefix: &str) -> bool {
     cand.starts_with(&pref)
 }
 
-/// Resolves string input to a full `ElementId` in the current accepted `SemanticState`.
-pub fn resolve_element_id(repository: &Repository, input: &str) -> Result<ElementId, ResolveError> {
+use crate::domain::state::SemanticState;
+
+/// Resolves string input to a full `ElementId` in a given `SemanticState`.
+pub fn resolve_element_in_state(
+    state: &SemanticState,
+    input: &str,
+) -> Result<ElementId, ResolveError> {
     let trimmed = input.trim();
     let hex_count =
         count_and_validate_hex_digits(trimmed).map_err(|_| ResolveError::InvalidIdentifier {
@@ -72,22 +77,6 @@ pub fn resolve_element_id(repository: &Repository, input: &str) -> Result<Elemen
         });
     }
 
-    let accepted = repository
-        .ref_store()
-        .read_accepted()
-        .map_err(|e| ResolveError::Repository(e.to_string()))?;
-    let state_bytes = repository
-        .object_store()
-        .get(accepted.state)
-        .map_err(|e| ResolveError::Repository(e.to_string()))?;
-    let state_obj =
-        decode_canonical(&state_bytes).map_err(|e| ResolveError::Repository(e.to_string()))?;
-    let state = match state_obj.payload {
-        CanonicalPayload::SemanticState(s) => s,
-        _ => unreachable!("kind checked"),
-    };
-
-    // Fast path: exact full 36-char UUID parse
     if trimmed.len() == 36 && hex_count == 32 {
         let Ok(id) = ElementId::from_str(trimmed) else {
             return Err(ResolveError::InvalidIdentifier {
@@ -133,9 +122,9 @@ pub fn resolve_element_id(repository: &Repository, input: &str) -> Result<Elemen
     }
 }
 
-/// Resolves string input to a full `RelationshipId` in the current accepted `SemanticState`.
-pub fn resolve_relationship_id(
-    repository: &Repository,
+/// Resolves string input to a full `RelationshipId` in a given `SemanticState`.
+pub fn resolve_relationship_in_state(
+    state: &SemanticState,
     input: &str,
 ) -> Result<RelationshipId, ResolveError> {
     let trimmed = input.trim();
@@ -150,22 +139,6 @@ pub fn resolve_relationship_id(
         });
     }
 
-    let accepted = repository
-        .ref_store()
-        .read_accepted()
-        .map_err(|e| ResolveError::Repository(e.to_string()))?;
-    let state_bytes = repository
-        .object_store()
-        .get(accepted.state)
-        .map_err(|e| ResolveError::Repository(e.to_string()))?;
-    let state_obj =
-        decode_canonical(&state_bytes).map_err(|e| ResolveError::Repository(e.to_string()))?;
-    let state = match state_obj.payload {
-        CanonicalPayload::SemanticState(s) => s,
-        _ => unreachable!("kind checked"),
-    };
-
-    // Fast path: exact full 36-char UUID parse
     if trimmed.len() == 36 && hex_count == 32 {
         let Ok(id) = RelationshipId::from_str(trimmed) else {
             return Err(ResolveError::InvalidIdentifier {
@@ -209,4 +182,45 @@ pub fn resolve_relationship_id(
             })
         }
     }
+}
+
+/// Resolves string input to a full `ElementId` in the current accepted `SemanticState`.
+pub fn resolve_element_id(repository: &Repository, input: &str) -> Result<ElementId, ResolveError> {
+    let accepted = repository
+        .ref_store()
+        .read_accepted()
+        .map_err(|e| ResolveError::Repository(e.to_string()))?;
+    let state_bytes = repository
+        .object_store()
+        .get(accepted.state)
+        .map_err(|e| ResolveError::Repository(e.to_string()))?;
+    let state_obj =
+        decode_canonical(&state_bytes).map_err(|e| ResolveError::Repository(e.to_string()))?;
+    let state = match state_obj.payload {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => unreachable!("kind checked"),
+    };
+    resolve_element_in_state(&state, input)
+}
+
+/// Resolves string input to a full `RelationshipId` in the current accepted `SemanticState`.
+pub fn resolve_relationship_id(
+    repository: &Repository,
+    input: &str,
+) -> Result<RelationshipId, ResolveError> {
+    let accepted = repository
+        .ref_store()
+        .read_accepted()
+        .map_err(|e| ResolveError::Repository(e.to_string()))?;
+    let state_bytes = repository
+        .object_store()
+        .get(accepted.state)
+        .map_err(|e| ResolveError::Repository(e.to_string()))?;
+    let state_obj =
+        decode_canonical(&state_bytes).map_err(|e| ResolveError::Repository(e.to_string()))?;
+    let state = match state_obj.payload {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => unreachable!("kind checked"),
+    };
+    resolve_relationship_in_state(&state, input)
 }

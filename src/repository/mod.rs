@@ -14,9 +14,9 @@ pub mod session;
 pub mod validation;
 
 pub use session::{
-    DRAFT_SESSION_VERSION, DraftSession, DraftSessionError, DraftSessionState,
-    abort_draft_session, begin_draft_session, draft_session_dir, draft_session_path,
-    has_draft_session, mark_draft_session_stale, read_draft_session, write_draft_session_atomic,
+    DRAFT_SESSION_VERSION, DraftSession, DraftSessionError, DraftSessionState, abort_draft_session,
+    begin_draft_session, draft_session_dir, draft_session_path, has_draft_session,
+    mark_draft_session_stale, read_draft_session, write_draft_session_atomic,
 };
 
 pub use change::{
@@ -28,20 +28,20 @@ pub use change::{
     PreparedElementUpdate, PreparedLinkChangeRevision, PreparedSupersedeChangeRevision,
     PreparedUnlinkChangeRevision, PreparedUpdateChangeRevision, PublishedChange,
     PublishedDeprecateChange, PublishedLinkChange, PublishedSupersedeChange, PublishedUnlinkChange,
-    PublishedUpdateChange, StagedOperationInput, SupersedeElementInput, UnlinkElementInput, UpdateElementInput,
-    ValidatedElementCreation, ValidatedElementDeprecation, ValidatedElementLinked,
-    ValidatedElementSuperseded, ValidatedElementUnlinked, ValidatedElementUpdate,
-    apply_create_element, apply_deprecate_element, apply_link_element, apply_supersede_element,
-    apply_unlink_element, apply_update_element, commit_draft_session, persist_prepared_change,
-    persist_prepared_deprecate_change, persist_prepared_link_change,
+    PublishedUpdateChange, StagedOperationInput, SupersedeElementInput, UnlinkElementInput,
+    UpdateElementInput, ValidatedElementCreation, ValidatedElementDeprecation,
+    ValidatedElementLinked, ValidatedElementSuperseded, ValidatedElementUnlinked,
+    ValidatedElementUpdate, apply_create_element, apply_deprecate_element, apply_link_element,
+    apply_supersede_element, apply_unlink_element, apply_update_element, commit_draft_session,
+    persist_prepared_change, persist_prepared_deprecate_change, persist_prepared_link_change,
     persist_prepared_supersede_change, persist_prepared_unlink_change,
     persist_prepared_update_change, prepare_change, prepare_change_revision,
     prepare_deprecate_change_revision, prepare_link_change_revision,
     prepare_supersede_change_revision, prepare_unlink_change_revision,
     prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
     publish_persisted_link_change, publish_persisted_supersede_change,
-    publish_persisted_unlink_change, publish_persisted_update_change,
-    stage_operation_into_session, validate_create_element_invariants, validate_create_element_ontology,
+    publish_persisted_unlink_change, publish_persisted_update_change, stage_operation_into_session,
+    validate_create_element_invariants, validate_create_element_ontology,
     validate_deprecate_element_invariants, validate_deprecate_element_ontology,
     validate_link_element_invariants, validate_link_element_ontology,
     validate_supersede_element_invariants, validate_supersede_element_ontology,
