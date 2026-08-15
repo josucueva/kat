@@ -22,6 +22,9 @@ pub enum Command {
     /// Initialize a new KAT repository in the current directory
     Init,
 
+    /// Display a concise summary of current accepted repository status and health
+    Status,
+
     /// Create a new knowledge element
     Create {
         /// Type of element to create (e.g. requirement, constraint, design-decision, implementation, artifact)

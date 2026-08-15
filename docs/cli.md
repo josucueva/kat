@@ -87,6 +87,7 @@ All mutation commands must route through the Change Engine. The CLI must not byp
 
 ```text
 kat init
+kat status
 kat create <type> --title "..." [--description "..."]
 kat update <element-id> [--title "..."] [--description "..."]
 kat deprecate <element-id>

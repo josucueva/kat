@@ -34,6 +34,12 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
 (create)
 _arguments "${_arguments_options[@]}" : \
 '--title=[Title of the knowledge element]:TITLE:_default' \
@@ -142,6 +148,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (create)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -207,6 +217,7 @@ esac
 _kat_commands() {
     local commands; commands=(
 'init:Initialize a new KAT repository in the current directory' \
+'status:Display a concise summary of current accepted repository status and health' \
 'create:Create a new knowledge element' \
 'update:Update title or description of an existing active knowledge element' \
 'deprecate:Mark an active knowledge element as Deprecated' \
@@ -242,6 +253,7 @@ _kat__subcmd__deprecate_commands() {
 _kat__subcmd__help_commands() {
     local commands; commands=(
 'init:Initialize a new KAT repository in the current directory' \
+'status:Display a concise summary of current accepted repository status and health' \
 'create:Create a new knowledge element' \
 'update:Update title or description of an existing active knowledge element' \
 'deprecate:Mark an active knowledge element as Deprecated' \
@@ -303,6 +315,11 @@ _kat__subcmd__help__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'kat help show commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__help__subcmd__status_commands] )) ||
+_kat__subcmd__help__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help status commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__help__subcmd__supersede_commands] )) ||
 _kat__subcmd__help__subcmd__supersede_commands() {
     local commands; commands=()
@@ -352,6 +369,11 @@ _kat__subcmd__link_commands() {
 _kat__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'kat show commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__status_commands] )) ||
+_kat__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat status commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__supersede_commands] )) ||
 _kat__subcmd__supersede_commands() {

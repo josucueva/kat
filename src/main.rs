@@ -36,8 +36,8 @@ use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
 use kat::repository::query::{
     ArtifactAccountabilityReport, ArtifactAccountabilityStatus, HistoryEntry, ImpactResult,
-    QueryError, TraceResult, TraversalDirection, analyze_artifact_accountability, analyze_impact,
-    history, show_element, trace_origin,
+    QueryError, RepositoryStatus, TraceResult, TraversalDirection, analyze_artifact_accountability,
+    analyze_impact, history, repository_status, show_element, trace_origin,
 };
 use kat::repository::validation::repository::{ValidationReport, validate_repository};
 
@@ -50,6 +50,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Init => cmd_init(),
+        Command::Status => run_status(),
         Command::Create {
             element_type,
             title,
@@ -107,6 +108,80 @@ fn cmd_init() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn run_status() -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat status: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match repository_status(&repository) {
+        Ok(status) => {
+            print_repository_status(&status);
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("kat status: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn print_repository_status(status: &RepositoryStatus) {
+    println!("KAT repository");
+    println!();
+    println!("Repository");
+    println!("  repository:  {}", status.repository_id);
+    println!("  software:    {}", status.software_id);
+    println!("  state:       {}", status.state_id);
+
+    if let Some(change_id) = status.change_id {
+        println!("  change:      {}", change_id);
+    } else {
+        println!("  change:      none");
+    }
+    println!("  ontology:    {}", status.ontology_id);
+
+    if let Some(ref latest) = status.latest_change {
+        println!();
+        println!("Latest change");
+        println!("  revision:    {}", latest.revision_id);
+        println!("  operation:   {}", latest.operation_kind);
+        println!(
+            "  description: {}",
+            latest.description.as_deref().unwrap_or("none")
+        );
+    }
+
+    println!();
+    println!("Knowledge");
+    println!("  elements:       {}", status.knowledge.total_elements);
+    println!("    active:       {}", status.knowledge.active_elements);
+    println!("    deprecated:   {}", status.knowledge.deprecated_elements);
+    println!("    superseded:   {}", status.knowledge.superseded_elements);
+    println!("  relationships:  {}", status.knowledge.total_relationships);
+
+    println!();
+    println!("Consistency");
+    println!(
+        "  violations:             {}",
+        status.consistency.violations
+    );
+    println!(
+        "  unverified constraints: {}",
+        status.consistency.unverified_constraints
+    );
+
+    println!();
+    println!("Accountability");
+    println!("  artifacts:");
+    println!("    current:      {}", status.accountability.current);
+    println!("    stale:        {}", status.accountability.stale);
+    println!("    unaccounted:  {}", status.accountability.unaccounted);
 }
 
 /// Parsed `kat create` arguments.

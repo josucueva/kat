@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::domain::change::ChangeRevision;
 use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
-use crate::domain::identity::{ElementId, ObjectId, RelationshipId};
+use crate::domain::identity::{ElementId, ObjectId, RelationshipId, RepositoryId, SoftwareId};
 use crate::domain::property::PropertyValue;
 use crate::encoding::decode::DecodingError;
 use crate::encoding::decode_canonical;
@@ -25,6 +25,7 @@ use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use crate::repository::object_store::{ObjectStore, ObjectStoreError};
 use crate::repository::open::Repository;
 use crate::repository::ref_store::{RefStore, RefStoreError};
+use crate::repository::validation::repository::validate_repository;
 
 /// Direction traversed when following a relationship in an origin trace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -992,5 +993,181 @@ pub fn analyze_artifact_accountability(
 
     Ok(ArtifactAccountabilityReport {
         artifacts: artifact_records,
+    })
+}
+
+/// Breakdown of element and relationship counts in the accepted state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnowledgeCounts {
+    /// Total elements in the accepted state across all lifecycles.
+    pub total_elements: usize,
+    /// Number of active elements.
+    pub active_elements: usize,
+    /// Number of deprecated elements.
+    pub deprecated_elements: usize,
+    /// Number of superseded elements.
+    pub superseded_elements: usize,
+    /// Total relationships in the accepted state.
+    pub total_relationships: usize,
+}
+
+/// Breakdown of mechanical consistency rule checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsistencyCounts {
+    /// Total invariant or ontology rule violations detected.
+    pub violations: usize,
+    /// Number of unverified natural-language constraints.
+    pub unverified_constraints: usize,
+}
+
+/// Breakdown of artifact accountability divergence checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountabilityCounts {
+    /// Artifacts whose baseline relationships are current.
+    pub current: usize,
+    /// Artifacts with upstream knowledge version divergence.
+    pub stale: usize,
+    /// Active artifacts with no explicit accountability evidence.
+    pub unaccounted: usize,
+}
+
+/// Summary of the latest accepted change revision, if any change has been published.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LatestChangeSummary {
+    /// Object ID of the latest change revision.
+    pub revision_id: ObjectId,
+    /// Primary operation kind (e.g. `create_element`, `update_element`).
+    pub operation_kind: String,
+    /// Description associated with the change revision.
+    pub description: Option<String>,
+}
+
+/// Read-only snapshot summary of the repository's current accepted state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryStatus {
+    /// Repository identity.
+    pub repository_id: RepositoryId,
+    /// Software system identity.
+    pub software_id: SoftwareId,
+    /// Current accepted state Object ID.
+    pub state_id: ObjectId,
+    /// Current accepted change Object ID (if any).
+    pub change_id: Option<ObjectId>,
+    /// Base ontology Object ID.
+    pub ontology_id: ObjectId,
+    /// Summary of the latest change revision (if any).
+    pub latest_change: Option<LatestChangeSummary>,
+    /// Element and relationship counts.
+    pub knowledge: KnowledgeCounts,
+    /// Consistency validation counts.
+    pub consistency: ConsistencyCounts,
+    /// Artifact accountability counts.
+    pub accountability: AccountabilityCounts,
+}
+
+/// Computes a concise, read-only summary of the repository's current accepted state.
+pub fn repository_status(repository: &Repository) -> Result<RepositoryStatus, QueryError> {
+    let accepted = &repository.accepted;
+
+    let state_bytes = repository
+        .object_store()
+        .get(accepted.state)
+        .map_err(QueryError::ObjectStore)?;
+    let state_obj = decode_canonical(&state_bytes).map_err(QueryError::Decoding)?;
+    let state = match state_obj.payload {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => {
+            return Err(QueryError::ObjectStore(ObjectStoreError::NotFound(
+                accepted.state,
+            )));
+        }
+    };
+
+    let mut active_elements = 0;
+    let mut deprecated_elements = 0;
+    let mut superseded_elements = 0;
+
+    for element_entry in &state.elements {
+        let view = show_element(repository, element_entry.element_id)?;
+        match view.element.lifecycle {
+            Lifecycle::Active => active_elements += 1,
+            Lifecycle::Deprecated => deprecated_elements += 1,
+            Lifecycle::Superseded => superseded_elements += 1,
+        }
+    }
+
+    let knowledge = KnowledgeCounts {
+        total_elements: state.elements.len(),
+        active_elements,
+        deprecated_elements,
+        superseded_elements,
+        total_relationships: state.relationships.len(),
+    };
+
+    let val_report = validate_repository(repository)?;
+    let consistency = ConsistencyCounts {
+        violations: val_report.violations.len(),
+        unverified_constraints: val_report.unverified_constraints.len(),
+    };
+
+    let art_report = analyze_artifact_accountability(repository)?;
+    let mut current = 0;
+    let mut stale = 0;
+    let mut unaccounted = 0;
+
+    for artifact in &art_report.artifacts {
+        match artifact.status {
+            ArtifactAccountabilityStatus::Current => current += 1,
+            ArtifactAccountabilityStatus::Stale => stale += 1,
+            ArtifactAccountabilityStatus::Unaccounted => unaccounted += 1,
+        }
+    }
+
+    let accountability = AccountabilityCounts {
+        current,
+        stale,
+        unaccounted,
+    };
+
+    let latest_change = if accepted.change.is_some() {
+        let entries = history(repository)?;
+        entries.first().map(|head| {
+            let primary_op_kind = head
+                .change
+                .operations
+                .first()
+                .map(|op| match op {
+                    crate::domain::operation::Operation::CreateElement { .. } => "create_element",
+                    crate::domain::operation::Operation::UpdateElement { .. } => "update_element",
+                    crate::domain::operation::Operation::DeprecateElement { .. } => {
+                        "deprecate_element"
+                    }
+                    crate::domain::operation::Operation::Supersede { .. } => "supersede_element",
+                    crate::domain::operation::Operation::Link { .. } => "link_element",
+                    crate::domain::operation::Operation::Unlink { .. } => "unlink_element",
+                })
+                .unwrap_or("change")
+                .to_string();
+
+            LatestChangeSummary {
+                revision_id: head.revision_id,
+                operation_kind: primary_op_kind,
+                description: head.change.description.clone(),
+            }
+        })
+    } else {
+        None
+    };
+
+    Ok(RepositoryStatus {
+        repository_id: repository.metadata.repository_id,
+        software_id: repository.metadata.software_id,
+        state_id: accepted.state,
+        change_id: accepted.change,
+        ontology_id: state.ontology_version,
+        latest_change,
+        knowledge,
+        consistency,
+        accountability,
     })
 }

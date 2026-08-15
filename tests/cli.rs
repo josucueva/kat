@@ -2340,3 +2340,66 @@ fn phase10_acceptance_cli_flow_end_to_end() {
     assert_eq!(objects_after, objects_before);
     assert_eq!(refs_after, refs_before);
 }
+
+#[test]
+fn kat_status_without_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    let (out, err, ok) = run_kat(root, &["status"]);
+    assert!(!ok);
+    assert!(out.is_empty());
+    assert!(err.contains("no KAT repository found"));
+}
+
+#[test]
+fn kat_status_fresh_repository_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+
+    let (out, err, ok) = run_kat(root, &["status"]);
+    assert!(ok, "kat status failed: {err}\n{out}");
+    assert!(out.contains("KAT repository"));
+    assert!(out.contains("Repository"));
+    assert!(out.contains("change:      none"));
+    assert!(out.contains("Knowledge"));
+    assert!(out.contains("elements:       0"));
+    assert!(out.contains("active:       0"));
+    assert!(out.contains("relationships:  0"));
+    assert!(out.contains("Consistency"));
+    assert!(out.contains("violations:             0"));
+    assert!(out.contains("unverified constraints: 0"));
+    assert!(out.contains("Accountability"));
+    assert!(out.contains("current:      0"));
+}
+
+#[test]
+fn kat_status_evolved_repository_displays_counts_and_latest_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+
+    // Create a requirement element
+    let (create_out, create_err, ok) = run_kat(
+        root,
+        &[
+            "create",
+            "requirement",
+            "--title",
+            "Authentication Requirement",
+        ],
+    );
+    assert!(ok, "kat create failed: {create_err}\n{create_out}");
+
+    let (out, err, ok) = run_kat(root, &["status"]);
+    assert!(ok, "kat status failed: {err}\n{out}");
+
+    assert!(out.contains("KAT repository"));
+    assert!(out.contains("Latest change"));
+    assert!(out.contains("operation:   create_element"));
+    assert!(out.contains("elements:       1"));
+    assert!(out.contains("active:       1"));
+}

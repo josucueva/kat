@@ -108,6 +108,7 @@ kat history
 | Command | Description |
 |---|---|
 | `kat init` | Initialize a `.kat/` repository in the current directory. |
+| `kat status` | Display a concise summary of current accepted repository status and health. |
 | `kat create <type> --title "..."` | Create a new knowledge element (`requirement`, `constraint`, `design-decision`, `implementation`, `artifact`, etc.). |
 | `kat update <element-id> --title "..."` | Update properties on an existing active element (advances version ObjectId). |
 | `kat deprecate <element-id>` | Mark an active element as Deprecated. |

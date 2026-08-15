@@ -41,7 +41,7 @@ use kat::repository::object_store::ObjectStoreError;
 use kat::repository::open::open_repository;
 use kat::repository::query::{
     ArtifactAccountabilityStatus, QueryError, TraversalDirection, analyze_artifact_accountability,
-    analyze_impact, history, show_element, trace_origin,
+    analyze_impact, history, repository_status, show_element, trace_origin,
 };
 use kat::repository::ref_store::{AcceptedRef, RefStore};
 use kat::repository::validation::repository::{ValidationViolationKind, validate_repository};
@@ -2190,4 +2190,46 @@ fn accountability_stale_when_upstream_element_deprecated_or_superseded() {
         ArtifactAccountabilityStatus::Stale
     );
     assert!(report2.artifacts[0].baselines[0].is_stale);
+}
+
+// ---------------------------------------------------------------------------
+// repository_status tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn status_on_fresh_repository_returns_zero_counts_and_no_latest_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let status = repository_status(&repo).unwrap();
+
+    assert_eq!(status.knowledge.total_elements, 0);
+    assert_eq!(status.knowledge.active_elements, 0);
+    assert_eq!(status.knowledge.deprecated_elements, 0);
+    assert_eq!(status.knowledge.superseded_elements, 0);
+    assert_eq!(status.knowledge.total_relationships, 0);
+
+    assert_eq!(status.consistency.violations, 0);
+    assert_eq!(status.consistency.unverified_constraints, 0);
+
+    assert_eq!(status.accountability.current, 0);
+    assert_eq!(status.accountability.stale, 0);
+    assert_eq!(status.accountability.unaccounted, 0);
+
+    assert!(status.change_id.is_none());
+    assert!(status.latest_change.is_none());
+}
+
+#[test]
+fn status_does_not_mutate_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let s1 = repository_status(&repo).unwrap();
+    let s2 = repository_status(&repo).unwrap();
+    assert_eq!(s1, s2);
 }
