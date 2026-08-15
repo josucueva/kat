@@ -9,6 +9,7 @@ pub mod object_store;
 pub mod open;
 pub mod query;
 pub mod ref_store;
+pub mod resolve;
 pub mod validation;
 
 pub use change::{
@@ -44,10 +45,12 @@ pub use open::{Repository, open_repository};
 pub use query::{
     ArtifactAccountability, ArtifactAccountabilityReport, ArtifactAccountabilityStatus,
     ArtifactBaseline, ElementView, HistoryEntry, ImpactPath, ImpactResult, ImpactStep,
-    ImpactedElement, QueryError, TracePath, TraceResult, TraceStep, TraversalDirection,
-    analyze_artifact_accountability, analyze_impact, history, impact_propagation_direction,
+    ImpactedElement, ListFilter, QueryError, RelationshipNeighborhood, RelationshipView, TracePath,
+    TraceResult, TraceStep, TraversalDirection, analyze_artifact_accountability, analyze_impact,
+    history, history_entry_touches_element, impact_propagation_direction, list_elements,
     origin_traversal_direction, show_element, trace_origin,
 };
+pub use resolve::{ResolveError, resolve_element_id, resolve_relationship_id};
 pub use validation::invariant::InvariantError;
 pub mod validation_repository {
     pub use crate::repository::validation::repository::*;

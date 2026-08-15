@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use crate::domain::change::ChangeRevision;
 use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
 use crate::domain::identity::{ElementId, ObjectId, RelationshipId, RepositoryId, SoftwareId};
+use crate::domain::operation::Operation;
 use crate::domain::property::PropertyValue;
 use crate::encoding::decode::DecodingError;
 use crate::encoding::decode_canonical;
@@ -260,8 +261,34 @@ pub enum QueryError {
     HistoryCycle(ObjectId),
 }
 
-/// The currently accepted version of one element.
-#[derive(Debug)]
+/// Detailed view of a single relationship attached to an element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelationshipView {
+    /// Canonical relationship identity.
+    pub relationship_id: RelationshipId,
+    /// Fully qualified relationship type ID (e.g. `kat.core/addresses`).
+    pub relationship_type_id: String,
+    /// Source element ID of the relationship link.
+    pub source_element_id: ElementId,
+    /// Target element ID of the relationship link.
+    pub target_element_id: ElementId,
+    /// ID of the other endpoint connected to the queried element.
+    pub other_element_id: ElementId,
+    /// Title of the other endpoint element (if present in properties).
+    pub other_title: Option<String>,
+}
+
+/// 1-hop relationship neighborhood surrounding an element in the current accepted state.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RelationshipNeighborhood {
+    /// Incoming relationships (where target_element_id == queried element).
+    pub incoming: Vec<RelationshipView>,
+    /// Outgoing relationships (where source_element_id == queried element).
+    pub outgoing: Vec<RelationshipView>,
+}
+
+/// The currently accepted version of one element, including its local relationship neighborhood.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ElementView {
     /// Stable identity of the element (the queried ElementId).
     pub element_id: ElementId,
@@ -269,6 +296,35 @@ pub struct ElementView {
     pub version_id: ObjectId,
     /// The decoded, kind-verified KnowledgeElementVersion.
     pub element: KnowledgeElementVersion,
+    /// 1-hop incoming and outgoing relationships present in the accepted state.
+    pub relationships: RelationshipNeighborhood,
+}
+
+fn fetch_element_title(
+    store: &ObjectStore,
+    state: &crate::domain::state::SemanticState,
+    element_id: ElementId,
+) -> Option<String> {
+    let index = state
+        .elements
+        .binary_search_by(|e| e.element_id.cmp(&element_id))
+        .ok()?;
+    let entry = &state.elements[index];
+    let version = match load_typed(store, entry.version, ObjectKind::KnowledgeElementVersion)
+        .ok()?
+        .payload
+    {
+        CanonicalPayload::KnowledgeElementVersion(ev) => ev,
+        _ => return None,
+    };
+    version
+        .properties
+        .iter()
+        .find(|(k, _)| k == "title")
+        .and_then(|(_, v)| match v {
+            PropertyValue::Text(t) => Some(t.clone()),
+            _ => None,
+        })
 }
 
 /// Resolves the currently accepted version of `element_id` and decodes it.
@@ -324,11 +380,126 @@ pub fn show_element(
         _ => unreachable!("kind verified by load_typed"),
     };
 
+    let mut incoming = Vec::new();
+    let mut outgoing = Vec::new();
+
+    for rel_entry in &state.relationships {
+        let rel_ver = match load_typed(
+            repository.object_store(),
+            rel_entry.version,
+            ObjectKind::RelationshipVersion,
+        ) {
+            Ok(obj) => match obj.payload {
+                CanonicalPayload::RelationshipVersion(v) => v,
+                _ => continue,
+            },
+            Err(_) => continue,
+        };
+
+        if rel_ver.target_element_id == element_id {
+            let other_title =
+                fetch_element_title(repository.object_store(), &state, rel_ver.source_element_id);
+            incoming.push(RelationshipView {
+                relationship_id: rel_ver.relationship_id,
+                relationship_type_id: rel_ver.relationship_type.clone(),
+                source_element_id: rel_ver.source_element_id,
+                target_element_id: rel_ver.target_element_id,
+                other_element_id: rel_ver.source_element_id,
+                other_title,
+            });
+        }
+        if rel_ver.source_element_id == element_id {
+            let other_title =
+                fetch_element_title(repository.object_store(), &state, rel_ver.target_element_id);
+            outgoing.push(RelationshipView {
+                relationship_id: rel_ver.relationship_id,
+                relationship_type_id: rel_ver.relationship_type.clone(),
+                source_element_id: rel_ver.source_element_id,
+                target_element_id: rel_ver.target_element_id,
+                other_element_id: rel_ver.target_element_id,
+                other_title,
+            });
+        }
+    }
+
+    incoming.sort_by_key(|a| a.relationship_id);
+    outgoing.sort_by_key(|a| a.relationship_id);
+
     Ok(ElementView {
         element_id,
         version_id: entry.version,
         element,
+        relationships: RelationshipNeighborhood { incoming, outgoing },
     })
+}
+
+/// Criteria for filtering knowledge elements in [`list_elements`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ListFilter {
+    /// Optional filter by type ID (e.g. `kat.core/requirement`).
+    pub type_id: Option<String>,
+    /// Optional filter by element lifecycle state.
+    pub lifecycle: Option<crate::domain::element::Lifecycle>,
+}
+
+/// Enumerates knowledge elements present in the current accepted `SemanticState`,
+/// returning `ElementView`s ordered deterministically by `ElementId`.
+///
+/// Filters compose (`type_id` AND `lifecycle`). If both are `None`, all active,
+/// deprecated, and superseded elements are returned.
+///
+/// Read-only: objects and refs are never mutated.
+pub fn list_elements(
+    repository: &Repository,
+    filter: ListFilter,
+) -> Result<Vec<ElementView>, QueryError> {
+    let accepted = repository.ref_store().read_accepted()?;
+
+    let state = match load_typed(
+        repository.object_store(),
+        accepted.state,
+        ObjectKind::SemanticState,
+    )?
+    .payload
+    {
+        CanonicalPayload::SemanticState(state) => state,
+        _ => unreachable!("kind verified by load_typed"),
+    };
+
+    let mut views = Vec::new();
+    for entry in &state.elements {
+        let element = match load_typed(
+            repository.object_store(),
+            entry.version,
+            ObjectKind::KnowledgeElementVersion,
+        )?
+        .payload
+        {
+            CanonicalPayload::KnowledgeElementVersion(element) => element,
+            _ => unreachable!("kind verified by load_typed"),
+        };
+
+        if filter
+            .type_id
+            .as_ref()
+            .is_some_and(|t| element.type_id != *t)
+        {
+            continue;
+        }
+
+        if filter.lifecycle.is_some_and(|l| element.lifecycle != l) {
+            continue;
+        }
+
+        views.push(ElementView {
+            element_id: entry.element_id,
+            version_id: entry.version,
+            element,
+            relationships: RelationshipNeighborhood::default(),
+        });
+    }
+
+    Ok(views)
 }
 
 /// Loads `id` from the store (hash verified by `ObjectStore::get`), decodes
@@ -362,6 +533,54 @@ pub struct HistoryEntry {
     pub revision_id: ObjectId,
     /// The decoded, kind-verified ChangeRevision.
     pub change: ChangeRevision,
+}
+
+/// Determines if a [`HistoryEntry`] touches a specific element ID in any of its contained operations.
+pub fn history_entry_touches_element(
+    repository: &Repository,
+    entry: &HistoryEntry,
+    target_element_id: ElementId,
+) -> Result<bool, QueryError> {
+    let store = repository.object_store();
+    for op in &entry.change.operations {
+        let matches = match op {
+            Operation::CreateElement { new_version } => {
+                matches!(
+                    load_typed(store, *new_version, ObjectKind::KnowledgeElementVersion).map(|o| o.payload),
+                    Ok(CanonicalPayload::KnowledgeElementVersion(ev)) if ev.element_id == target_element_id
+                )
+            }
+            Operation::UpdateElement { element_id, .. }
+            | Operation::DeprecateElement { element_id, .. } => *element_id == target_element_id,
+            Operation::Supersede {
+                existing_element,
+                replacement_element,
+                ..
+            } => {
+                *existing_element == target_element_id || *replacement_element == target_element_id
+            }
+            Operation::Link {
+                new_relationship_version,
+            } => {
+                matches!(
+                    load_typed(store, *new_relationship_version, ObjectKind::RelationshipVersion).map(|o| o.payload),
+                    Ok(CanonicalPayload::RelationshipVersion(rv)) if rv.source_element_id == target_element_id || rv.target_element_id == target_element_id
+                )
+            }
+            Operation::Unlink {
+                expected_version, ..
+            } => {
+                matches!(
+                    load_typed(store, *expected_version, ObjectKind::RelationshipVersion).map(|o| o.payload),
+                    Ok(CanonicalPayload::RelationshipVersion(rv)) if rv.source_element_id == target_element_id || rv.target_element_id == target_element_id
+                )
+            }
+        };
+        if matches {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Reconstructs the accepted Change history by following ChangeRevision

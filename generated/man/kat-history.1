@@ -4,10 +4,22 @@
 .SH NAME
 history \- Reconstruct and display the accepted change revision graph
 .SH SYNOPSIS
-\fBhistory\fR [\fB\-h\fR|\fB\-\-help\fR] 
+\fBhistory\fR [\fB\-\-oneline\fR] [\fB\-\-limit\fR] [\fB\-\-element\fR] [\fB\-\-compact\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
 Reconstruct and display the accepted change revision graph
 .SH OPTIONS
+.TP
+\fB\-\-oneline\fR
+Format each history entry as a single line
+.TP
+\fB\-\-limit\fR \fI<LIMIT>\fR
+Limit output to the N most recent revisions
+.TP
+\fB\-\-element\fR \fI<ELEMENT>\fR
+Filter history to revisions touching a specific element ID or prefix
+.TP
+\fB\-\-compact\fR
+Display compact output
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

@@ -172,11 +172,11 @@ kat unlink <prefix-of-relationship-id>  -> resolves in RelationshipId domain
 
 ## 4. Definition of Done for Phase 11
 
-- [ ] `kat list` enumerates accepted elements with `--type`, `--lifecycle`, and positional type shorthand; unknown type/lifecycle → exit 1.
-- [ ] `kat list` output is a stable compact table; empty repo handled; strictly read-only.
-- [ ] Unique-prefix input resolution works for `ElementId` and `RelationshipId` with the 0/1/>1 rule; ambiguity rejects explicitly.
-- [ ] Prefix resolution wired into `show`, `update`, `deprecate`, `supersede`, `link`, `unlink`, `trace`, `impact`.
-- [ ] `kat show` renders incoming/outgoing relationships (one hop, grouped by type) distinct from `trace`/`impact`.
-- [ ] Canonical identities and the canonical format are unchanged; no repository mutation anywhere in Phase 11.
-- [ ] `docs/cli.md` documents `kat list`, prefix input, and the `show` neighborhood.
-- [ ] All steps validated (`cargo test`, `fmt --check`, `clippy -D warnings`) and committed atomically.
+- [x] `kat list` enumerates accepted elements with `--type`, `--lifecycle`, and positional type shorthand; unknown type/lifecycle → exit 1.
+- [x] `kat list` output is a stable compact table; empty repo handled; strictly read-only.
+- [x] Unique-prefix input resolution works for `ElementId` and `RelationshipId` with the 0/1/>1 rule; ambiguity rejects explicitly.
+- [x] Prefix resolution wired into `show`, `update`, `deprecate`, `supersede`, `link`, `unlink`, `trace`, `impact`.
+- [x] `kat show` renders incoming/outgoing relationships (one hop, grouped by type/direction) distinct from `trace`/`impact`.
+- [x] Canonical identities and the canonical format are unchanged; no repository mutation anywhere in Phase 11.
+- [x] `docs/cli.md` documents `kat list`, prefix input, and the `show` neighborhood.
+- [x] All steps validated (`cargo test`, `fmt --check`, `clippy -D warnings`) and committed atomically.

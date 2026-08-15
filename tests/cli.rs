@@ -615,7 +615,7 @@ fn kat_update_unknown_element_fails() {
     let (out, err, ok) = run_kat(root, &["update", &missing_id.to_string(), "--title", "x"]);
     assert!(!ok);
     assert!(out.is_empty());
-    assert!(err.contains("not found in the base state"));
+    assert!(err.contains("not found in the accepted state"));
 }
 
 #[test]
@@ -697,7 +697,7 @@ fn kat_deprecate_unknown_element_fails() {
     let (out, err, ok) = run_kat(root, &["deprecate", &missing_id.to_string()]);
     assert!(!ok);
     assert!(out.is_empty());
-    assert!(err.contains("not found in the base state"));
+    assert!(err.contains("not found in the accepted state"));
 }
 
 #[test]
@@ -992,7 +992,7 @@ fn kat_supersede_unknown_existing_element_fails() {
         ],
     );
     assert!(!ok);
-    assert!(err.contains("not found in the base state"));
+    assert!(err.contains("not found in the accepted state"));
 }
 
 #[test]
@@ -1367,11 +1367,11 @@ fn kat_link_missing_endpoints_fail() {
 
     let (_out1, err1, ok1) = run_kat(root, &["link", "addresses", missing_id, e1]);
     assert!(!ok1);
-    assert!(err1.contains("not found in the base state"));
+    assert!(err1.contains("not found in the accepted state"));
 
     let (_out2, err2, ok2) = run_kat(root, &["link", "addresses", e1, missing_id]);
     assert!(!ok2);
-    assert!(err2.contains("not found in the base state"));
+    assert!(err2.contains("not found in the accepted state"));
 }
 
 #[test]
@@ -2399,4 +2399,438 @@ fn kat_status_evolved_repository_displays_counts_and_latest_change() {
     assert!(out.contains("operation:   create element"));
     assert!(out.contains("elements:       1"));
     assert!(out.contains("active:        1"));
+}
+
+// ---------------------------------------------------------------------------
+// kat list CLI tests (Phase 11 Step 11.2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kat_list_outside_repository_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    let (out, err, ok) = run_kat(root, &["list"]);
+    assert!(!ok);
+    assert!(err.contains("kat list:"));
+    assert!(out.is_empty());
+}
+
+#[test]
+fn kat_list_empty_repository_returns_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+
+    let (out, err, ok) = run_kat(root, &["list"]);
+    assert!(ok, "kat list failed: {err}\n{out}");
+    assert_eq!(out.trim(), "none");
+}
+
+#[test]
+fn kat_list_all_elements_table_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+
+    run_kat(
+        root,
+        &["create", "requirement", "--title", "User authentication"],
+    );
+    run_kat(
+        root,
+        &["create", "design-decision", "--title", "Use WebAuthn"],
+    );
+
+    let (out, err, ok) = run_kat(root, &["list"]);
+    assert!(ok, "kat list failed: {err}\n{out}");
+
+    assert!(out.contains("ID         TYPE             STATE       TITLE"));
+    assert!(out.contains("requirement      active      User authentication"));
+    assert!(out.contains("design-decision  active      Use WebAuthn"));
+}
+
+#[test]
+fn kat_list_type_filter_positional_and_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+
+    run_kat(root, &["create", "requirement", "--title", "Req 1"]);
+    run_kat(root, &["create", "design-decision", "--title", "Dec 1"]);
+
+    // Positional shorthand
+    let (out_pos, _err, ok) = run_kat(root, &["list", "requirement"]);
+    assert!(ok);
+    assert!(out_pos.contains("requirement"));
+    assert!(!out_pos.contains("design-decision"));
+    assert!(out_pos.contains("Req 1"));
+
+    // Long flag
+    let (out_flag, _err, ok) = run_kat(root, &["list", "--type", "requirement"]);
+    assert!(ok);
+    assert_eq!(out_pos, out_flag);
+}
+
+#[test]
+fn kat_list_lifecycle_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+
+    let (create_out, _, ok) = run_kat(root, &["create", "requirement", "--title", "Req 1"]);
+    assert!(ok);
+    let req_id = id_line(&create_out, "element_id");
+
+    run_kat(root, &["deprecate", req_id]);
+
+    let (out_active, _, ok) = run_kat(root, &["list", "--lifecycle", "active"]);
+    assert!(ok);
+    assert_eq!(out_active.trim(), "none");
+
+    let (out_dep, _, ok) = run_kat(root, &["list", "--lifecycle", "deprecated"]);
+    assert!(ok);
+    assert!(out_dep.contains("requirement      deprecated  Req 1"));
+}
+
+#[test]
+fn kat_list_conflicting_type_arguments_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+
+    let (_out, err, ok) = run_kat(root, &["list", "requirement", "--type", "design-decision"]);
+    assert!(!ok);
+    assert!(err.contains("conflicting type arguments"));
+}
+
+#[test]
+fn kat_list_unknown_type_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+
+    let (_out, err, ok) = run_kat(root, &["list", "nonexistent-type"]);
+    assert!(!ok);
+    assert!(err.contains("unknown element type"));
+}
+
+#[test]
+fn kat_list_invalid_lifecycle_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+
+    let (_out, err, ok) = run_kat(root, &["list", "--lifecycle", "invalid-state"]);
+    assert!(!ok);
+    assert!(err.contains("invalid lifecycle state"));
+}
+
+// ---------------------------------------------------------------------------
+// Unique-prefix ID resolution CLI tests (Phase 11 Step 11.3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kat_cli_prefix_resolution_acceptance_workflow() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+
+    let (_create_out, _, ok) = run_kat(
+        root,
+        &["create", "requirement", "--title", "User authentication"],
+    );
+    assert!(ok);
+
+    // 1. Get list output and extract the displayed 8-character ID prefix
+    let (list_out, _, ok) = run_kat(root, &["list"]);
+    assert!(ok);
+    let short_id = list_out
+        .lines()
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap();
+    assert_eq!(short_id.len(), 8);
+
+    // 2. Pass the 8-character short ID directly to kat show
+    let (show_out, _, ok) = run_kat(root, &["show", short_id]);
+    assert!(ok, "kat show with prefix {short_id} failed");
+    assert!(show_out.contains("User authentication"));
+
+    // 3. Pass the 8-character short ID directly to kat impact
+    let (impact_out, _, ok) = run_kat(root, &["impact", short_id]);
+    assert!(ok, "kat impact with prefix {short_id} failed");
+    assert!(impact_out.contains("User authentication"));
+
+    // 4. Pass the 8-character short ID directly to kat update
+    let (update_out, _, ok) = run_kat(
+        root,
+        &["update", short_id, "--title", "User authentication v2"],
+    );
+    assert!(ok, "kat update with prefix {short_id} failed");
+    assert!(update_out.contains("version_id:"));
+}
+
+#[test]
+fn kat_cli_prefix_too_short_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+    run_kat(
+        root,
+        &["create", "requirement", "--title", "User authentication"],
+    );
+
+    let (_, err, ok) = run_kat(root, &["show", "7af83d1"]);
+    assert!(!ok);
+    assert!(err.contains("identifier prefix '7af83d1' is too short"));
+}
+
+#[test]
+fn kat_cli_prefix_ambiguous_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+    run_kat(root, &["create", "requirement", "--title", "Req A"]);
+    run_kat(root, &["create", "requirement", "--title", "Req B"]);
+
+    // Query non-matching prefix
+    let (_, err, ok) = run_kat(root, &["show", "00000000"]);
+    assert!(!ok);
+    assert!(err.contains("not found in the accepted state"));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 11 Discovery acceptance flow (zero external ID bookkeeping)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn phase11_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. Initialize repository
+    run_kat(root, &["init"]);
+
+    // 2. Create requirement & decision
+    run_kat(
+        root,
+        &["create", "requirement", "--title", "User authentication"],
+    );
+    run_kat(
+        root,
+        &["create", "design-decision", "--title", "Use WebAuthn"],
+    );
+
+    // 3. Enumerate elements via kat list (no external IDs known)
+    let (list_out, _, ok) = run_kat(root, &["list"]);
+    assert!(ok);
+    let lines: Vec<&str> = list_out.lines().collect();
+    assert_eq!(lines.len(), 3); // Header + 2 element rows
+
+    // Extract short prefixes from table output
+    let id1 = lines[1].split_whitespace().next().unwrap();
+    let id2 = lines[2].split_whitespace().next().unwrap();
+
+    // Determine requirement vs decision IDs from list
+    let (req_short_id, dec_short_id) = if lines[1].contains("requirement") {
+        (id1, id2)
+    } else {
+        (id2, id1)
+    };
+
+    // 4. Link decision -> requirement using only visible 8-character prefixes
+    let (link_out, _, ok) = run_kat(root, &["link", "addresses", dec_short_id, req_short_id]);
+    assert!(ok, "linking with 8-char prefixes failed");
+    assert!(link_out.contains("relationship_id:"));
+
+    // 5. Inspect requirement via kat show <req-short-id> and verify incoming relationship
+    let (show_req_out, _, ok) = run_kat(root, &["show", req_short_id]);
+    assert!(ok);
+    assert!(show_req_out.contains("User authentication"));
+    assert!(show_req_out.contains("Relationships"));
+    assert!(show_req_out.contains("in "));
+    assert!(show_req_out.contains("addresses"));
+    assert!(show_req_out.contains("Use WebAuthn"));
+
+    // Extract visible 8-character relationship ID from show output table row
+    let show_req_lines: Vec<&str> = show_req_out.lines().collect();
+    let rel_row = show_req_lines
+        .iter()
+        .find(|l| l.contains("in "))
+        .expect("incoming relationship row present");
+    let rel_short_id = rel_row.split_whitespace().nth(1).unwrap();
+    assert_eq!(rel_short_id.len(), 8);
+
+    // 6. Unlink relationship using only visible 8-character relationship ID prefix
+    let (unlink_out, _, ok) = run_kat(root, &["unlink", rel_short_id]);
+    assert!(ok, "unlinking with 8-char relationship prefix failed");
+    assert!(unlink_out.contains("relationship_id:"));
+
+    // 7. Verify relationship table returns to 'none'
+    let (show_after_out, _, ok) = run_kat(root, &["show", req_short_id]);
+    assert!(ok);
+    assert!(show_after_out.contains("Relationships"));
+    assert!(show_after_out.contains("none"));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12 Output Modes tests (--compact, history --oneline/--limit/--element)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kat_history_oneline_limit_element_flags() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+    let (c1, _, _) = run_kat(root, &["create", "requirement", "--title", "Req 1"]);
+    let (c2, _, _) = run_kat(root, &["create", "design-decision", "--title", "Dec 1"]);
+    let e1 = id_line(&c1, "element_id");
+    let e2 = id_line(&c2, "element_id");
+
+    run_kat(root, &["link", "addresses", e2, e1]);
+
+    // Test kat history --oneline
+    let (h_oneline, _, ok) = run_kat(root, &["history", "--oneline"]);
+    assert!(ok);
+    let lines: Vec<&str> = h_oneline.lines().collect();
+    assert_eq!(lines.len(), 3);
+    assert!(h_oneline.contains("link"));
+    assert!(h_oneline.contains("create element"));
+
+    // Test kat history --limit 1
+    let (h_limit, _, ok) = run_kat(root, &["history", "--limit", "1"]);
+    assert!(ok);
+    assert!(h_limit.contains("Accepted change history (1 revision)"));
+
+    // Test kat history --limit 0 fails
+    let (_, err, ok) = run_kat(root, &["history", "--limit", "0"]);
+    assert!(!ok);
+    assert!(err.contains("--limit must be at least 1"));
+
+    // Test kat history --element <e1-prefix>
+    let e1_short = &e1[..8];
+    let (h_elem, _, ok) = run_kat(root, &["history", "--oneline", "--element", e1_short]);
+    assert!(ok);
+    let elem_lines: Vec<&str> = h_elem.lines().collect();
+    assert_eq!(elem_lines.len(), 2); // link + create req1
+}
+
+#[test]
+fn kat_compact_read_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    run_kat(root, &["init"]);
+    let (c1, _, _) = run_kat(root, &["create", "requirement", "--title", "Req 1"]);
+    let e1 = id_line(&c1, "element_id");
+    let e1_short = &e1[..8];
+
+    // status --compact
+    let (st_out, _, ok) = run_kat(root, &["status", "--compact"]);
+    assert!(ok);
+    assert!(st_out.contains("1 elements · 0 relationships · 0 violations · 0 stale artifacts"));
+
+    // show --compact <prefix>
+    let (sh_out, _, ok) = run_kat(root, &["show", e1_short, "--compact"]);
+    assert!(ok);
+    assert!(sh_out.contains("requirement"));
+    assert!(sh_out.contains("active"));
+    assert!(sh_out.contains("Req 1"));
+
+    // validate --compact
+    let (val_out, _, ok) = run_kat(root, &["validate", "--compact"]);
+    assert!(ok);
+    assert!(val_out.contains("0 violations, 0 unverified constraints"));
+
+    // artifacts --compact
+    let (art_out, _, ok) = run_kat(root, &["artifacts", "--compact"]);
+    assert!(ok);
+    assert!(art_out.contains("STATUS       ARTIFACT"));
+}
+
+#[test]
+fn phase12_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. Init
+    run_kat(root, &["init"]);
+
+    // 2. Multi-revision creation
+    let (c1, _, _) = run_kat(
+        root,
+        &[
+            "create",
+            "requirement",
+            "--title",
+            "User must authenticate",
+            "--description",
+            "MFA required",
+        ],
+    );
+    let (c2, _, _) = run_kat(
+        root,
+        &["create", "design-decision", "--title", "Use WebAuthn"],
+    );
+    let e1 = id_line(&c1, "element_id");
+    let e2 = id_line(&c2, "element_id");
+    let e1_short = &e1[..8];
+    let e2_short = &e2[..8];
+
+    run_kat(root, &["link", "addresses", e2_short, e1_short]);
+
+    // 3. Verify history --oneline --limit 2 --element
+    let (h_out, _, ok) = run_kat(
+        root,
+        &[
+            "history",
+            "--oneline",
+            "--limit",
+            "2",
+            "--element",
+            e1_short,
+        ],
+    );
+    assert!(ok);
+    let h_lines: Vec<&str> = h_out.lines().collect();
+    assert_eq!(h_lines.len(), 2);
+
+    // 4. Verify compact output across all read commands
+    let (status_c, _, ok1) = run_kat(root, &["status", "--compact"]);
+    assert!(ok1);
+    assert!(status_c.contains("2 elements · 1 relationships"));
+
+    let (show_c, _, ok2) = run_kat(root, &["show", e1_short, "--compact"]);
+    assert!(ok2);
+    assert!(show_c.contains("User must authenticate"));
+
+    let (trace_c, _, ok3) = run_kat(root, &["trace", e2_short, "--compact"]);
+    assert!(ok3);
+    assert!(trace_c.contains("User must authenticate"));
+
+    let (impact_c, _, ok4) = run_kat(root, &["impact", e1_short, "--compact"]);
+    assert!(ok4);
+    assert!(impact_c.contains("CATEGORY  TYPE             ID        TITLE"));
+
+    let (validate_c, _, ok5) = run_kat(root, &["validate", "--compact"]);
+    assert!(ok5);
+    assert!(validate_c.contains("0 violations"));
+
+    let (artifacts_c, _, ok6) = run_kat(root, &["artifacts", "--compact"]);
+    assert!(ok6);
+    assert!(artifacts_c.contains("STATUS       ARTIFACT"));
 }

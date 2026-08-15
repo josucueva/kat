@@ -36,8 +36,18 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (status)
 _arguments "${_arguments_options[@]}" : \
+'--compact[Display compact single-line dashboard]' \
 '-h[Print help]' \
 '--help[Print help]' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--type=[Filter by element type (e.g. requirement, design-decision)]:TYPE_FLAG:_default' \
+'--lifecycle=[Filter by lifecycle state (active, deprecated, superseded)]:LIFECYCLE:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::element_type -- Optional element type positional shorthand (e.g. requirement, design-decision):_default' \
 && ret=0
 ;;
 (create)
@@ -95,39 +105,48 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (show)
 _arguments "${_arguments_options[@]}" : \
+'--compact[Display compact single-line element summary]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':element_id -- Element ID (UUID) to display:_default' \
+':element_id -- Element ID (UUID or prefix) to display:_default' \
 && ret=0
 ;;
 (history)
 _arguments "${_arguments_options[@]}" : \
+'--limit=[Limit output to the N most recent revisions]:LIMIT:_default' \
+'--element=[Filter history to revisions touching a specific element ID or prefix]:ELEMENT:_default' \
+'--oneline[Format each history entry as a single line]' \
+'--compact[Display compact output]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (trace)
 _arguments "${_arguments_options[@]}" : \
+'--compact[Display compact arrow-joined path rendering]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':element_id -- Target element ID (UUID) to trace:_default' \
+':element_id -- Target element ID (UUID or prefix) to trace:_default' \
 && ret=0
 ;;
 (impact)
 _arguments "${_arguments_options[@]}" : \
+'--compact[Display compact flat table layout]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':element_id -- Target element ID (UUID) to analyze:_default' \
+':element_id -- Target element ID (UUID or prefix) to analyze:_default' \
 && ret=0
 ;;
 (validate)
 _arguments "${_arguments_options[@]}" : \
+'--compact[Display compact single-line counts summary]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (artifacts)
 _arguments "${_arguments_options[@]}" : \
+'--compact[Display compact status table layout]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -149,6 +168,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -218,6 +241,7 @@ _kat_commands() {
     local commands; commands=(
 'init:Initialize a new KAT repository in the current directory' \
 'status:Display a concise summary of current accepted repository status and health' \
+'list:List knowledge elements in the current accepted state' \
 'create:Create a new knowledge element' \
 'update:Update title or description of an existing active knowledge element' \
 'deprecate:Mark an active knowledge element as Deprecated' \
@@ -254,6 +278,7 @@ _kat__subcmd__help_commands() {
     local commands; commands=(
 'init:Initialize a new KAT repository in the current directory' \
 'status:Display a concise summary of current accepted repository status and health' \
+'list:List knowledge elements in the current accepted state' \
 'create:Create a new knowledge element' \
 'update:Update title or description of an existing active knowledge element' \
 'deprecate:Mark an active knowledge element as Deprecated' \
@@ -310,6 +335,11 @@ _kat__subcmd__help__subcmd__link_commands() {
     local commands; commands=()
     _describe -t commands 'kat help link commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__help__subcmd__list_commands] )) ||
+_kat__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help list commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__help__subcmd__show_commands] )) ||
 _kat__subcmd__help__subcmd__show_commands() {
     local commands; commands=()
@@ -364,6 +394,11 @@ _kat__subcmd__init_commands() {
 _kat__subcmd__link_commands() {
     local commands; commands=()
     _describe -t commands 'kat link commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__list_commands] )) ||
+_kat__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat list commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__show_commands] )) ||
 _kat__subcmd__show_commands() {

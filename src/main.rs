@@ -13,6 +13,8 @@ use kat::domain::identity::{ChangeId, ElementId, ObjectId, RelationshipId};
 use kat::domain::ontology::OntologyVersion;
 use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
+use kat::encoding::decode_canonical;
+use kat::encoding::object::CanonicalPayload;
 use kat::repository::change::{
     ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, LinkElementInput,
     PublishedChange, PublishedDeprecateChange, PublishedSupersedeChange, PublishedUpdateChange,
@@ -34,12 +36,15 @@ use kat::repository::change::{
     validate_update_element_ontology,
 };
 use kat::repository::init::init_repository;
+use kat::repository::object_store::ObjectStore;
 use kat::repository::open::{Repository, open_repository};
 use kat::repository::query::{
-    ArtifactAccountabilityReport, ArtifactAccountabilityStatus, HistoryEntry, ImpactResult,
-    QueryError, RepositoryStatus, TraceResult, TraversalDirection, analyze_artifact_accountability,
-    analyze_impact, history, repository_status, show_element, trace_origin,
+    ArtifactAccountabilityReport, ArtifactAccountabilityStatus, ElementView, HistoryEntry,
+    ImpactResult, ListFilter, QueryError, RepositoryStatus, TraceResult, TraversalDirection,
+    analyze_artifact_accountability, analyze_impact, history, history_entry_touches_element,
+    list_elements, repository_status, show_element, trace_origin,
 };
+use kat::repository::resolve::{ResolveError, resolve_element_id, resolve_relationship_id};
 use kat::repository::validation::repository::{ValidationReport, validate_repository};
 
 pub mod cli;
@@ -51,7 +56,12 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Init => cmd_init(),
-        Command::Status => run_status(),
+        Command::Status { compact } => run_status(compact),
+        Command::List {
+            element_type,
+            type_flag,
+            lifecycle,
+        } => run_list(element_type, type_flag, lifecycle),
         Command::Create {
             element_type,
             title,
@@ -84,12 +94,26 @@ fn main() -> ExitCode {
             relationship_id,
             description,
         } => run_unlink(relationship_id, description),
-        Command::Show { element_id } => run_show(element_id),
-        Command::History => cmd_history(),
-        Command::Trace { element_id } => run_trace(element_id),
-        Command::Impact { element_id } => run_impact(element_id),
-        Command::Validate => cmd_validate(),
-        Command::Artifacts => cmd_artifacts(),
+        Command::Show {
+            element_id,
+            compact,
+        } => run_show(element_id, compact),
+        Command::History {
+            oneline,
+            limit,
+            element,
+            compact,
+        } => cmd_history(oneline, limit, element, compact),
+        Command::Trace {
+            element_id,
+            compact,
+        } => run_trace(element_id, compact),
+        Command::Impact {
+            element_id,
+            compact,
+        } => run_impact(element_id, compact),
+        Command::Validate { compact } => cmd_validate(compact),
+        Command::Artifacts { compact } => cmd_artifacts(compact),
     }
 }
 
@@ -111,7 +135,7 @@ fn cmd_init() -> ExitCode {
     }
 }
 
-fn run_status() -> ExitCode {
+fn run_status(compact: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -122,12 +146,238 @@ fn run_status() -> ExitCode {
 
     match repository_status(&repository) {
         Ok(status) => {
-            print_repository_status(&status);
+            if compact {
+                print_repository_status_compact(&status);
+            } else {
+                print_repository_status(&status);
+            }
             ExitCode::SUCCESS
         }
         Err(error) => {
             eprintln!("kat status: {error}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+fn print_repository_status_compact(status: &RepositoryStatus) {
+    let stale = status.accountability.stale;
+    let stale_suffix = if stale == 1 { "artifact" } else { "artifacts" };
+    println!(
+        "{} elements · {} relationships · {} violations · {} stale {}",
+        status.knowledge.active_elements,
+        status.knowledge.total_relationships,
+        status.consistency.violations,
+        stale,
+        stale_suffix
+    );
+}
+
+fn run_list(
+    element_type_pos: Option<String>,
+    type_flag: Option<String>,
+    lifecycle_flag: Option<String>,
+) -> ExitCode {
+    let type_arg = match (element_type_pos, type_flag) {
+        (Some(pos), Some(flag)) => {
+            if pos != flag {
+                eprintln!(
+                    "kat list: conflicting type arguments: positional '{pos}' and --type '{flag}'"
+                );
+                return ExitCode::FAILURE;
+            }
+            Some(pos)
+        }
+        (Some(pos), None) => Some(pos),
+        (None, Some(flag)) => Some(flag),
+        (None, None) => None,
+    };
+
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat list: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let type_id = if let Some(ref arg) = type_arg {
+        let context = match prepare_change(&repository) {
+            Ok(context) => context,
+            Err(error) => {
+                eprintln!("kat list: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        match resolve_element_type(&context.ontology, arg) {
+            Ok(resolved) => Some(resolved),
+            Err(message) => {
+                eprintln!("kat list: {message}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
+
+    let lifecycle = if let Some(ref flag) = lifecycle_flag {
+        match flag.to_lowercase().as_str() {
+            "active" => Some(Lifecycle::Active),
+            "deprecated" => Some(Lifecycle::Deprecated),
+            "superseded" => Some(Lifecycle::Superseded),
+            _ => {
+                eprintln!(
+                    "kat list: invalid lifecycle state '{flag}' (expected: active, deprecated, superseded)"
+                );
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
+
+    let filter = ListFilter { type_id, lifecycle };
+
+    match list_elements(&repository, filter) {
+        Ok(elements) => {
+            print_element_list(&elements);
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("kat list: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn print_element_list(elements: &[ElementView]) {
+    if elements.is_empty() {
+        println!("none");
+        return;
+    }
+
+    println!("{:<10} {:<16} {:<11} TITLE", "ID", "TYPE", "STATE");
+    for view in elements {
+        let short_id = &view.element_id.to_string()[..8];
+        let short_type = view
+            .element
+            .type_id
+            .rsplit('/')
+            .next()
+            .unwrap_or(&view.element.type_id);
+        let state = format_lifecycle(view.element.lifecycle);
+        let title = view
+            .element
+            .properties
+            .iter()
+            .find(|(k, _)| k == "title")
+            .and_then(|(_, v)| match v {
+                PropertyValue::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .unwrap_or("none");
+
+        println!("{short_id:<10} {short_type:<16} {state:<11} {title}");
+    }
+}
+
+fn resolve_cli_element_id(
+    repository: &Repository,
+    input: &str,
+    cmd: &str,
+) -> Result<ElementId, ExitCode> {
+    match resolve_element_id(repository, input) {
+        Ok(id) => Ok(id),
+        Err(ResolveError::Ambiguous {
+            input, candidates, ..
+        }) => {
+            eprintln!("kat {cmd}: error: element ID prefix '{input}' is ambiguous");
+            eprintln!();
+            eprintln!("matches:");
+            for cand_id_str in &candidates {
+                let show_info = ElementId::from_str(cand_id_str)
+                    .ok()
+                    .and_then(|id| show_element(repository, id).ok());
+                if let Some(view) = show_info {
+                    let short_type = view
+                        .element
+                        .type_id
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&view.element.type_id);
+                    let title = view
+                        .element
+                        .properties
+                        .iter()
+                        .find(|(k, _)| k == "title")
+                        .and_then(|(_, v)| match v {
+                            PropertyValue::Text(t) => Some(t.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or("none");
+                    eprintln!("  {cand_id_str}  {short_type:<16}  {title}");
+                } else {
+                    eprintln!("  {cand_id_str}");
+                }
+            }
+            Err(ExitCode::FAILURE)
+        }
+        Err(ResolveError::NotFound { input }) => {
+            eprintln!("kat {cmd}: element {input} not found in the accepted state");
+            Err(ExitCode::FAILURE)
+        }
+        Err(ResolveError::PrefixTooShort { input }) => {
+            eprintln!(
+                "kat {cmd}: identifier prefix '{input}' is too short (minimum 8 hex digits required)"
+            );
+            Err(ExitCode::FAILURE)
+        }
+        Err(ResolveError::InvalidIdentifier { input }) => {
+            eprintln!("kat {cmd}: invalid element ID: {input}");
+            Err(ExitCode::FAILURE)
+        }
+        Err(error) => {
+            eprintln!("kat {cmd}: {error}");
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
+fn resolve_cli_relationship_id(
+    repository: &Repository,
+    input: &str,
+    cmd: &str,
+) -> Result<RelationshipId, ExitCode> {
+    match resolve_relationship_id(repository, input) {
+        Ok(id) => Ok(id),
+        Err(ResolveError::Ambiguous {
+            input, candidates, ..
+        }) => {
+            eprintln!("kat {cmd}: error: relationship ID prefix '{input}' is ambiguous");
+            eprintln!();
+            eprintln!("matches:");
+            for cand_id_str in candidates {
+                eprintln!("  {cand_id_str}");
+            }
+            Err(ExitCode::FAILURE)
+        }
+        Err(ResolveError::NotFound { input }) => {
+            eprintln!("kat {cmd}: relationship {input} not found in the accepted state");
+            Err(ExitCode::FAILURE)
+        }
+        Err(ResolveError::PrefixTooShort { input }) => {
+            eprintln!(
+                "kat {cmd}: identifier prefix '{input}' is too short (minimum 8 hex digits required)"
+            );
+            Err(ExitCode::FAILURE)
+        }
+        Err(ResolveError::InvalidIdentifier { input }) => {
+            eprintln!("kat {cmd}: invalid relationship ID: {input}");
+            Err(ExitCode::FAILURE)
+        }
+        Err(error) => {
+            eprintln!("kat {cmd}: {error}");
+            Err(ExitCode::FAILURE)
         }
     }
 }
@@ -396,20 +646,25 @@ fn run_update(
     title: Option<String>,
     description: Option<String>,
 ) -> ExitCode {
-    let element_id = match ElementId::from_str(&element_id_str) {
-        Ok(id) => id,
-        Err(_) => {
-            eprintln!("kat update: invalid element ID: {element_id_str}");
-            return ExitCode::FAILURE;
-        }
-    };
-
     if title.is_none() && description.is_none() {
         eprintln!(
             "kat update: at least one property flag (--title, --description) must be supplied"
         );
         return ExitCode::FAILURE;
     }
+
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat update: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let element_id = match resolve_cli_element_id(&repository, &element_id_str, "update") {
+        Ok(id) => id,
+        Err(code) => return code,
+    };
 
     let parsed = UpdateArgs {
         element_id,
@@ -519,20 +774,17 @@ struct DeprecateArgs {
 /// through the Change Engine and publish it (thin dispatch; all semantics live
 /// in the library).
 fn run_deprecate(element_id_str: String) -> ExitCode {
-    let element_id = match ElementId::from_str(&element_id_str) {
-        Ok(id) => id,
-        Err(_) => {
-            eprintln!("kat deprecate: invalid element ID: {element_id_str}");
-            return ExitCode::FAILURE;
-        }
-    };
-
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
             eprintln!("kat deprecate: {error}");
             return ExitCode::FAILURE;
         }
+    };
+
+    let element_id = match resolve_cli_element_id(&repository, &element_id_str, "deprecate") {
+        Ok(id) => id,
+        Err(code) => return code,
     };
 
     let context = match prepare_change(&repository) {
@@ -627,13 +879,19 @@ fn run_supersede(
     title: String,
     description: Option<String>,
 ) -> ExitCode {
-    let existing_element_id = match ElementId::from_str(&existing_id_str) {
-        Ok(id) => id,
-        Err(_) => {
-            eprintln!("kat supersede: invalid element ID: {existing_id_str}");
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat supersede: {error}");
             return ExitCode::FAILURE;
         }
     };
+
+    let existing_element_id =
+        match resolve_cli_element_id(&repository, &existing_id_str, "supersede") {
+            Ok(id) => id,
+            Err(code) => return code,
+        };
 
     let parsed = SupersedeArgs {
         existing_element_id,
@@ -792,20 +1050,22 @@ fn run_link(
     target_str: String,
     description: Option<String>,
 ) -> ExitCode {
-    let source_element_id = match ElementId::from_str(&source_str) {
-        Ok(id) => id,
-        Err(_) => {
-            eprintln!("kat link: invalid source element ID: {source_str}");
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat link: {error}");
             return ExitCode::FAILURE;
         }
     };
 
-    let target_element_id = match ElementId::from_str(&target_str) {
+    let source_element_id = match resolve_cli_element_id(&repository, &source_str, "link") {
         Ok(id) => id,
-        Err(_) => {
-            eprintln!("kat link: invalid target element ID: {target_str}");
-            return ExitCode::FAILURE;
-        }
+        Err(code) => return code,
+    };
+
+    let target_element_id = match resolve_cli_element_id(&repository, &target_str, "link") {
+        Ok(id) => id,
+        Err(code) => return code,
     };
 
     let parsed = LinkArgs {
@@ -924,13 +1184,19 @@ struct UnlinkArgs {
 }
 
 fn run_unlink(relationship_id_str: String, description: Option<String>) -> ExitCode {
-    let relationship_id = match RelationshipId::from_str(&relationship_id_str) {
-        Ok(id) => id,
-        Err(_) => {
-            eprintln!("kat unlink: invalid relationship ID: {relationship_id_str}");
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat unlink: {error}");
             return ExitCode::FAILURE;
         }
     };
+
+    let relationship_id =
+        match resolve_cli_relationship_id(&repository, &relationship_id_str, "unlink") {
+            Ok(id) => id,
+            Err(code) => return code,
+        };
 
     let parsed = UnlinkArgs {
         relationship_id,
@@ -1026,14 +1292,7 @@ fn fail_unlink(error: ChangeError) -> ExitCode {
     ExitCode::FAILURE
 }
 
-fn run_show(element_id_str: String) -> ExitCode {
-    let element_id = match ElementId::from_str(&element_id_str) {
-        Ok(id) => id,
-        Err(_) => {
-            eprintln!("kat show: invalid element ID: {element_id_str}");
-            return ExitCode::FAILURE;
-        }
-    };
+fn run_show(element_id_str: String, compact: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -1041,9 +1300,18 @@ fn run_show(element_id_str: String) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    let element_id = match resolve_cli_element_id(&repository, &element_id_str, "show") {
+        Ok(id) => id,
+        Err(code) => return code,
+    };
     match show_element(&repository, element_id) {
         Ok(view) => {
-            print_show_element_view(&view);
+            if compact {
+                print_show_element_view_compact(&view);
+            } else {
+                print_show_element_view(&view);
+            }
             ExitCode::SUCCESS
         }
         Err(QueryError::ElementNotFound(id)) => {
@@ -1055,6 +1323,28 @@ fn run_show(element_id_str: String) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn print_show_element_view_compact(view: &kat::repository::query::ElementView) {
+    let id_short = &view.element_id.to_string()[..8];
+    let type_short = view
+        .element
+        .type_id
+        .rsplit('/')
+        .next()
+        .unwrap_or(&view.element.type_id);
+    let state_short = format_lifecycle(view.element.lifecycle);
+    let title = view
+        .element
+        .properties
+        .iter()
+        .find(|(k, _)| k == "title")
+        .and_then(|(_, v)| match v {
+            PropertyValue::Text(t) => Some(t.as_str()),
+            _ => None,
+        })
+        .unwrap_or("none");
+    println!("{id_short}  {type_short:<16}  {state_short:<10}  {title}");
 }
 
 fn print_show_element_view(view: &kat::repository::query::ElementView) {
@@ -1112,10 +1402,44 @@ fn print_show_element_view(view: &kat::repository::query::ElementView) {
 
     println!();
     println!("Relationships");
-    println!("  none");
+    let has_incoming = !view.relationships.incoming.is_empty();
+    let has_outgoing = !view.relationships.outgoing.is_empty();
+
+    if !has_incoming && !has_outgoing {
+        println!("  none");
+    } else {
+        println!("  DIR  REL ID    TYPE             ELEMENT   TITLE");
+        for rel in &view.relationships.incoming {
+            let rel_short_id = &rel.relationship_id.to_string()[..8];
+            let short_type = rel
+                .relationship_type_id
+                .rsplit('/')
+                .next()
+                .unwrap_or(&rel.relationship_type_id);
+            let elem_short_id = &rel.other_element_id.to_string()[..8];
+            let title = rel.other_title.as_deref().unwrap_or("none");
+            println!("  in   {rel_short_id:<9} {short_type:<16} {elem_short_id:<9} {title}");
+        }
+        for rel in &view.relationships.outgoing {
+            let rel_short_id = &rel.relationship_id.to_string()[..8];
+            let short_type = rel
+                .relationship_type_id
+                .rsplit('/')
+                .next()
+                .unwrap_or(&rel.relationship_type_id);
+            let elem_short_id = &rel.other_element_id.to_string()[..8];
+            let title = rel.other_title.as_deref().unwrap_or("none");
+            println!("  out  {rel_short_id:<9} {short_type:<16} {elem_short_id:<9} {title}");
+        }
+    }
 }
 
-fn cmd_history() -> ExitCode {
+fn cmd_history(
+    oneline: bool,
+    limit: Option<usize>,
+    element_str: Option<String>,
+    compact: bool,
+) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -1123,17 +1447,50 @@ fn cmd_history() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    let target_element_id = if let Some(ref el) = element_str {
+        match resolve_cli_element_id(&repository, el, "history") {
+            Ok(id) => Some(id),
+            Err(code) => return code,
+        }
+    } else {
+        None
+    };
+
+    if limit == Some(0) {
+        eprintln!("kat history: --limit must be at least 1");
+        return ExitCode::FAILURE;
+    }
+
     match history(&repository) {
-        Ok(entries) => {
-            let count = entries.len();
-            let noun = if count == 1 { "revision" } else { "revisions" };
-            println!("Accepted change history ({count} {noun})");
-            println!();
+        Ok(mut entries) => {
+            if let Some(target_id) = target_element_id {
+                entries.retain(|e| {
+                    history_entry_touches_element(&repository, e, target_id).unwrap_or(false)
+                });
+            }
+
+            if let Some(l) = limit {
+                entries.truncate(l);
+            }
+
+            let is_compact = oneline || compact;
+            if !is_compact {
+                let count = entries.len();
+                let noun = if count == 1 { "revision" } else { "revisions" };
+                println!("Accepted change history ({count} {noun})");
+                println!();
+            }
+
             for (i, entry) in entries.iter().enumerate() {
-                if i > 0 {
-                    println!();
+                if is_compact {
+                    print_history_entry_oneline(&repository, entry);
+                } else {
+                    if i > 0 {
+                        println!();
+                    }
+                    print_history_entry(entry);
                 }
-                print_history_entry(entry);
             }
             ExitCode::SUCCESS
         }
@@ -1144,14 +1501,67 @@ fn cmd_history() -> ExitCode {
     }
 }
 
-fn run_trace(element_id_str: String) -> ExitCode {
-    let element_id = match ElementId::from_str(&element_id_str) {
-        Ok(id) => id,
-        Err(_) => {
-            eprintln!("kat trace: invalid element ID: {element_id_str}");
-            return ExitCode::FAILURE;
-        }
+fn print_history_entry_oneline(repository: &Repository, entry: &HistoryEntry) {
+    let rev_short = short_object_id(&entry.revision_id);
+    let op_summary = if entry.change.operations.len() == 1 {
+        format_operation_name(&entry.change.operations[0])
+    } else {
+        &format!("{} operations", entry.change.operations.len())
     };
+
+    let detail = if let Some(desc) = &entry.change.description {
+        desc.clone()
+    } else if entry.change.operations.len() == 1 {
+        get_operation_title(repository.object_store(), &entry.change.operations[0])
+            .unwrap_or_else(|| "none".into())
+    } else {
+        "none".into()
+    };
+
+    println!("{rev_short}  {op_summary:<18}  {detail}");
+}
+
+fn get_operation_title(store: &ObjectStore, op: &Operation) -> Option<String> {
+    match op {
+        Operation::CreateElement { new_version } | Operation::UpdateElement { new_version, .. } => {
+            if let Some(CanonicalPayload::KnowledgeElementVersion(ev)) = store
+                .get(*new_version)
+                .ok()
+                .and_then(|b| decode_canonical(&b).ok())
+                .map(|o| o.payload)
+            {
+                return ev.properties.iter().find(|(k, _)| k == "title").and_then(
+                    |(_, v)| match v {
+                        PropertyValue::Text(t) => Some(t.clone()),
+                        _ => None,
+                    },
+                );
+            }
+        }
+        Operation::Supersede {
+            replacement_version,
+            ..
+        } => {
+            if let Some(CanonicalPayload::KnowledgeElementVersion(ev)) = store
+                .get(*replacement_version)
+                .ok()
+                .and_then(|b| decode_canonical(&b).ok())
+                .map(|o| o.payload)
+            {
+                return ev.properties.iter().find(|(k, _)| k == "title").and_then(
+                    |(_, v)| match v {
+                        PropertyValue::Text(t) => Some(t.clone()),
+                        _ => None,
+                    },
+                );
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
+fn run_trace(element_id_str: String, compact: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -1160,9 +1570,18 @@ fn run_trace(element_id_str: String) -> ExitCode {
         }
     };
 
+    let element_id = match resolve_cli_element_id(&repository, &element_id_str, "trace") {
+        Ok(id) => id,
+        Err(code) => return code,
+    };
+
     match trace_origin(&repository, element_id) {
         Ok(result) => {
-            print_trace_result(&repository, &result);
+            if compact {
+                print_trace_result_compact(&repository, &result);
+            } else {
+                print_trace_result(&repository, &result);
+            }
             ExitCode::SUCCESS
         }
         Err(QueryError::ElementNotFound(id)) => {
@@ -1172,6 +1591,56 @@ fn run_trace(element_id_str: String) -> ExitCode {
         Err(error) => {
             eprintln!("kat trace: {error}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+fn print_trace_result_compact(repository: &Repository, result: &TraceResult) {
+    if result.paths.is_empty() {
+        println!("none");
+        return;
+    }
+    for (path_idx, path) in result.paths.iter().enumerate() {
+        let mut steps_str = Vec::new();
+        for step in &path.steps {
+            let title = if let Ok(target_view) = show_element(repository, step.from_element_id) {
+                target_view
+                    .element
+                    .properties
+                    .iter()
+                    .find(|(k, _)| k == "title")
+                    .and_then(|(_, v)| match v {
+                        PropertyValue::Text(t) => Some(t.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| step.from_element_id.to_string()[..8].to_string())
+            } else {
+                step.from_element_id.to_string()[..8].to_string()
+            };
+            steps_str.push(title);
+        }
+        if let Some(last_step) = path.steps.last() {
+            let title = if let Ok(target_view) = show_element(repository, last_step.to_element_id) {
+                target_view
+                    .element
+                    .properties
+                    .iter()
+                    .find(|(k, _)| k == "title")
+                    .and_then(|(_, v)| match v {
+                        PropertyValue::Text(t) => Some(t.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| last_step.to_element_id.to_string()[..8].to_string())
+            } else {
+                last_step.to_element_id.to_string()[..8].to_string()
+            };
+            steps_str.push(title);
+        }
+        let chain = steps_str.join(" -> ");
+        if result.paths.len() > 1 {
+            println!("{}. {chain}", path_idx + 1);
+        } else {
+            println!("{chain}");
         }
     }
 }
@@ -1230,14 +1699,7 @@ fn print_trace_result(repository: &Repository, result: &TraceResult) {
     }
 }
 
-fn run_impact(element_id_str: String) -> ExitCode {
-    let element_id = match ElementId::from_str(&element_id_str) {
-        Ok(id) => id,
-        Err(_) => {
-            eprintln!("kat impact: invalid element ID: {element_id_str}");
-            return ExitCode::FAILURE;
-        }
-    };
+fn run_impact(element_id_str: String, compact: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -1246,9 +1708,18 @@ fn run_impact(element_id_str: String) -> ExitCode {
         }
     };
 
+    let element_id = match resolve_cli_element_id(&repository, &element_id_str, "impact") {
+        Ok(id) => id,
+        Err(code) => return code,
+    };
+
     match analyze_impact(&repository, element_id) {
         Ok(result) => {
-            print_impact_result(&repository, &result);
+            if compact {
+                print_impact_result_compact(&repository, &result);
+            } else {
+                print_impact_result(&repository, &result);
+            }
             ExitCode::SUCCESS
         }
         Err(QueryError::ElementNotFound(id)) => {
@@ -1259,6 +1730,72 @@ fn run_impact(element_id_str: String) -> ExitCode {
             eprintln!("kat impact: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn print_impact_result_compact(repository: &Repository, result: &ImpactResult) {
+    println!("CATEGORY  TYPE             ID        TITLE");
+    for id in &result.directly_changed {
+        let (type_name, title) = if let Ok(view) = show_element(repository, *id) {
+            let t = view
+                .element
+                .properties
+                .iter()
+                .find(|(k, _)| k == "title")
+                .and_then(|(_, v)| match v {
+                    PropertyValue::Text(t) => Some(t.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "none".into());
+            let short_t = view
+                .element
+                .type_id
+                .rsplit('/')
+                .next()
+                .unwrap_or(&view.element.type_id)
+                .to_string();
+            (short_t, t)
+        } else {
+            ("unknown".into(), "none".into())
+        };
+        let short_id = &id.to_string()[..8];
+        println!("direct    {type_name:<16} {short_id:<9} {title}");
+    }
+    for item in &result.semantically_affected {
+        let title = if let Ok(view) = show_element(repository, item.element_id) {
+            view.element
+                .properties
+                .iter()
+                .find(|(k, _)| k == "title")
+                .and_then(|(_, v)| match v {
+                    PropertyValue::Text(t) => Some(t.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "none".into())
+        } else {
+            "none".into()
+        };
+        let type_name = item.type_id.rsplit('/').next().unwrap_or(&item.type_id);
+        let short_id = &item.element_id.to_string()[..8];
+        println!("semantic  {type_name:<16} {short_id:<9} {title}");
+    }
+    for item in &result.affected_artifacts {
+        let title = if let Ok(view) = show_element(repository, item.element_id) {
+            view.element
+                .properties
+                .iter()
+                .find(|(k, _)| k == "title")
+                .and_then(|(_, v)| match v {
+                    PropertyValue::Text(t) => Some(t.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "none".into())
+        } else {
+            "none".into()
+        };
+        let type_name = item.type_id.rsplit('/').next().unwrap_or(&item.type_id);
+        let short_id = &item.element_id.to_string()[..8];
+        println!("artifact  {type_name:<16} {short_id:<9} {title}");
     }
 }
 
@@ -1466,7 +2003,7 @@ fn print_operation_details(operation: &Operation) {
     }
 }
 
-fn cmd_validate() -> ExitCode {
+fn cmd_validate(compact: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -1477,7 +2014,11 @@ fn cmd_validate() -> ExitCode {
 
     match validate_repository(&repository) {
         Ok(report) => {
-            print_validation_report(&repository, &report);
+            if compact {
+                print_validation_report_compact(&report);
+            } else {
+                print_validation_report(&repository, &report);
+            }
             if report.violations.is_empty() {
                 ExitCode::SUCCESS
             } else {
@@ -1489,6 +2030,14 @@ fn cmd_validate() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn print_validation_report_compact(report: &ValidationReport) {
+    println!(
+        "{} violations, {} unverified constraints",
+        report.violations.len(),
+        report.unverified_constraints.len()
+    );
 }
 
 fn print_validation_report(repository: &Repository, report: &ValidationReport) {
@@ -1543,7 +2092,7 @@ fn print_validation_report(repository: &Repository, report: &ValidationReport) {
     );
 }
 
-fn cmd_artifacts() -> ExitCode {
+fn cmd_artifacts(compact: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -1554,7 +2103,11 @@ fn cmd_artifacts() -> ExitCode {
 
     match analyze_artifact_accountability(&repository) {
         Ok(report) => {
-            print_artifact_accountability_report(&report);
+            if compact {
+                print_artifact_accountability_report_compact(&report);
+            } else {
+                print_artifact_accountability_report(&report);
+            }
             let has_stale_or_unaccounted = report.artifacts.iter().any(|a| {
                 a.status == ArtifactAccountabilityStatus::Stale
                     || a.status == ArtifactAccountabilityStatus::Unaccounted
@@ -1569,6 +2122,15 @@ fn cmd_artifacts() -> ExitCode {
             eprintln!("kat artifacts: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn print_artifact_accountability_report_compact(report: &ArtifactAccountabilityReport) {
+    println!("STATUS       ARTIFACT");
+    for item in &report.artifacts {
+        let status_str = format_accountability_status(item.status);
+        let title = item.title.as_deref().unwrap_or("none");
+        println!("{status_str:<11}  {title}");
     }
 }
 

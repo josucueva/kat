@@ -12,9 +12,11 @@ Operations are divided into three categories:
 * Query operations
 * Validation operations
 
-## Mutation Operations
+### Mutation Operations & Change Transactions
 
 Mutation operations change the authoritative semantic state of the software.
+
+Operations may be executed in **auto-commit mode** (one operation per change revision) or staged into a **multi-operation transaction** (`kat change begin` / `commit` / `abort`), producing a single `ChangeRevision` containing multiple operations published atomically. See [`docs/v0-2-multi-op-change-design.md`](v0-2-multi-op-change-design.md) for full transactional semantics.
 
 Every successful mutation contributes to a change in the semantic model.
 

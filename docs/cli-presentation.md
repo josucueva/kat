@@ -16,6 +16,11 @@ To prevent visual cleanups from accidentally altering command meaning, KAT stric
 - Standardized indentation (2 spaces for fields, 4 spaces for nested lists/sub-items)
 - Human-readable space-separated operation labels (`create element`, `link`)
 - Consistent empty-state wording (`none`, `0`)
+- **Output Mode Distinction (`--compact` vs `--oneline`)**:
+  - `--compact`: Reduced presentation detail across commands (omits headers, flattens counts/tables for fast scanning).
+  - `--oneline`: Strictly exactly one physical line per `ChangeRevision` (specifically for `kat history`).
+- **Historical Boundary for `kat history --element <id|prefix>`**:
+  Prefix resolution identifies the target's current stable `ElementId` against accepted state ($S_n$). Once resolved, history traversal inspects the complete historical revision graph — including operations involving relationships or versions that are no longer part of the current accepted state. Phase 11's "accepted state only" resolution rule does not restrict historical graph traversal.
 
 ### Semantics (Domain Layer)
 - Which fields are queried and displayed
@@ -53,6 +58,19 @@ KAT categorizes read commands into three structural layout models:
 ---
 
 ## 3. Command Output Blueprints
+
+### `kat list` (Compact Table)
+
+```text
+ID        TYPE             STATE       TITLE
+7af83d1c  requirement      active      User authentication
+bc18a910  design-decision  active      Use WebAuthn
+91ae7712  requirement      deprecated  Legacy password policy
+```
+
+*Note: When no elements match the query criteria, `kat list` outputs `none`.*
+
+---
 
 ### `kat status` (Section & Field)
 
@@ -112,7 +130,9 @@ Properties
   none
 
 Relationships
-  none
+  DIR  REL ID    TYPE             ELEMENT   TITLE
+  in   91ab36ef  addresses        7af83d1c  User authentication
+  out  47c109df  realizes         bc18a910  Use WebAuthn
 ```
 
 ---

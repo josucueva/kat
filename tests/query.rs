@@ -40,8 +40,9 @@ use kat::repository::init::init_repository;
 use kat::repository::object_store::ObjectStoreError;
 use kat::repository::open::open_repository;
 use kat::repository::query::{
-    ArtifactAccountabilityStatus, QueryError, TraversalDirection, analyze_artifact_accountability,
-    analyze_impact, history, repository_status, show_element, trace_origin,
+    ArtifactAccountabilityStatus, ListFilter, QueryError, TraversalDirection,
+    analyze_artifact_accountability, analyze_impact, history, list_elements, repository_status,
+    show_element, trace_origin,
 };
 use kat::repository::ref_store::{AcceptedRef, RefStore};
 use kat::repository::validation::repository::{ValidationViolationKind, validate_repository};
@@ -2232,4 +2233,248 @@ fn status_does_not_mutate_repository() {
     let s1 = repository_status(&repo).unwrap();
     let s2 = repository_status(&repo).unwrap();
     assert_eq!(s1, s2);
+}
+
+// ---------------------------------------------------------------------------
+// list_elements tests (Phase 11 Step 11.1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn list_elements_empty_repository_returns_empty_vec() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let elements = list_elements(&repo, ListFilter::default()).unwrap();
+    assert!(elements.is_empty());
+}
+
+#[test]
+fn list_elements_all_elements_default_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let p1 = publish_first_change(root, 101, 201);
+    let p2 = publish_first_change(root, 102, 202);
+
+    let repo = open_repository(root).unwrap();
+    let elements = list_elements(&repo, ListFilter::default()).unwrap();
+    assert_eq!(elements.len(), 2);
+
+    // Elements are returned deterministically sorted by ElementId.
+    let mut expected_ids = vec![p1.element_id, p2.element_id];
+    expected_ids.sort();
+    let actual_ids: Vec<_> = elements.iter().map(|e| e.element_id).collect();
+    assert_eq!(actual_ids, expected_ids);
+}
+
+#[test]
+fn list_elements_type_id_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let p1 = publish_first_change(root, 103, 203); // kat.core/requirement
+
+    let repo = open_repository(root).unwrap();
+    let reqs = list_elements(
+        &repo,
+        ListFilter {
+            type_id: Some("kat.core/requirement".to_string()),
+            lifecycle: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].element_id, p1.element_id);
+
+    let constraints = list_elements(
+        &repo,
+        ListFilter {
+            type_id: Some("kat.core/constraint".to_string()),
+            lifecycle: None,
+        },
+    )
+    .unwrap();
+    assert!(constraints.is_empty());
+}
+
+#[test]
+fn list_elements_lifecycle_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let p1 = publish_first_change(root, 104, 204);
+
+    let repo = open_repository(root).unwrap();
+    let active = list_elements(
+        &repo,
+        ListFilter {
+            type_id: None,
+            lifecycle: Some(Lifecycle::Active),
+        },
+    )
+    .unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].element_id, p1.element_id);
+
+    let deprecated = list_elements(
+        &repo,
+        ListFilter {
+            type_id: None,
+            lifecycle: Some(Lifecycle::Deprecated),
+        },
+    )
+    .unwrap();
+    assert!(deprecated.is_empty());
+}
+
+#[test]
+fn list_elements_combined_filters() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let _p1 = publish_first_change(root, 105, 205);
+
+    let repo = open_repository(root).unwrap();
+
+    let match_both = list_elements(
+        &repo,
+        ListFilter {
+            type_id: Some("kat.core/requirement".to_string()),
+            lifecycle: Some(Lifecycle::Active),
+        },
+    )
+    .unwrap();
+    assert_eq!(match_both.len(), 1);
+
+    let match_type_wrong_lifecycle = list_elements(
+        &repo,
+        ListFilter {
+            type_id: Some("kat.core/requirement".to_string()),
+            lifecycle: Some(Lifecycle::Deprecated),
+        },
+    )
+    .unwrap();
+    assert!(match_type_wrong_lifecycle.is_empty());
+
+    let match_lifecycle_wrong_type = list_elements(
+        &repo,
+        ListFilter {
+            type_id: Some("kat.core/constraint".to_string()),
+            lifecycle: Some(Lifecycle::Active),
+        },
+    )
+    .unwrap();
+    assert!(match_lifecycle_wrong_type.is_empty());
+}
+
+#[test]
+fn list_elements_does_not_mutate_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+    publish_first_change(root, 106, 206);
+
+    let repo = open_repository(root).unwrap();
+    let l1 = list_elements(&repo, ListFilter::default()).unwrap();
+    let l2 = list_elements(&repo, ListFilter::default()).unwrap();
+
+    assert_eq!(l1.len(), l2.len());
+    assert_eq!(l1[0].element_id, l2[0].element_id);
+    assert_eq!(l1[0].version_id, l2[0].version_id);
+}
+
+#[test]
+fn show_element_includes_incoming_and_outgoing_relationships() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let e1 = ElementId::from_uuid(Uuid::parse_str("10000000-0000-0000-0000-000000000001").unwrap());
+    let e2 = ElementId::from_uuid(Uuid::parse_str("20000000-0000-0000-0000-000000000002").unwrap());
+    let r1 =
+        RelationshipId::from_uuid(Uuid::parse_str("30000000-0000-0000-0000-000000000003").unwrap());
+
+    // e1: decision "Use WebAuthn"
+    // e2: requirement "User auth"
+    // r1: e1 addresses e2
+    let repo1 = open_repository(root).unwrap();
+    let ctx1 = prepare_change(&repo1).unwrap();
+    let p1 = apply_create_element(
+        ctx1,
+        CreateElementInput {
+            element_id: e1,
+            type_id: "kat.core/design-decision".into(),
+            properties: vec![("title".into(), PropertyValue::Text("Use WebAuthn".into()))],
+        },
+    )
+    .unwrap();
+    let v1 =
+        validate_create_element_invariants(validate_create_element_ontology(p1).unwrap()).unwrap();
+    let rev1 = prepare_change_revision(v1, ChangeId::from_uuid(Uuid::new_v4()), None).unwrap();
+    publish_persisted_change(&repo1, persist_prepared_change(&repo1, rev1).unwrap()).unwrap();
+
+    let repo2 = open_repository(root).unwrap();
+    let ctx2 = prepare_change(&repo2).unwrap();
+    let p2 = apply_create_element(
+        ctx2,
+        CreateElementInput {
+            element_id: e2,
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("User auth".into()))],
+        },
+    )
+    .unwrap();
+    let v2 =
+        validate_create_element_invariants(validate_create_element_ontology(p2).unwrap()).unwrap();
+    let rev2 = prepare_change_revision(v2, ChangeId::from_uuid(Uuid::new_v4()), None).unwrap();
+    publish_persisted_change(&repo2, persist_prepared_change(&repo2, rev2).unwrap()).unwrap();
+
+    let repo3 = open_repository(root).unwrap();
+    let ctx3 = prepare_change(&repo3).unwrap();
+    let p3 = apply_link_element(
+        &repo3,
+        ctx3,
+        LinkElementInput {
+            relationship_id: r1,
+            relationship_type_id: "kat.core/addresses".into(),
+            source_element_id: e1,
+            target_element_id: e2,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+    let v3 = validate_link_element_invariants(validate_link_element_ontology(p3).unwrap()).unwrap();
+    let rev3 = prepare_link_change_revision(v3, ChangeId::from_uuid(Uuid::new_v4()), None).unwrap();
+    publish_persisted_link_change(&repo3, persist_prepared_link_change(&repo3, rev3).unwrap())
+        .unwrap();
+
+    let repo = open_repository(root).unwrap();
+
+    // Query e1 (outgoing: addresses -> e2)
+    let view1 = show_element(&repo, e1).unwrap();
+    assert!(view1.relationships.incoming.is_empty());
+    assert_eq!(view1.relationships.outgoing.len(), 1);
+    assert_eq!(view1.relationships.outgoing[0].relationship_id, r1);
+    assert_eq!(view1.relationships.outgoing[0].other_element_id, e2);
+    assert_eq!(
+        view1.relationships.outgoing[0].other_title.as_deref(),
+        Some("User auth")
+    );
+
+    // Query e2 (incoming: addresses <- e1)
+    let view2 = show_element(&repo, e2).unwrap();
+    assert_eq!(view2.relationships.incoming.len(), 1);
+    assert!(view2.relationships.outgoing.is_empty());
+    assert_eq!(view2.relationships.incoming[0].relationship_id, r1);
+    assert_eq!(view2.relationships.incoming[0].other_element_id, e1);
+    assert_eq!(
+        view2.relationships.incoming[0].other_title.as_deref(),
+        Some("Use WebAuthn")
+    );
 }

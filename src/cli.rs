@@ -23,7 +23,25 @@ pub enum Command {
     Init,
 
     /// Display a concise summary of current accepted repository status and health
-    Status,
+    Status {
+        /// Display compact single-line dashboard
+        #[arg(long)]
+        compact: bool,
+    },
+
+    /// List knowledge elements in the current accepted state
+    List {
+        /// Optional element type positional shorthand (e.g. requirement, design-decision)
+        element_type: Option<String>,
+
+        /// Filter by element type (e.g. requirement, design-decision)
+        #[arg(long = "type")]
+        type_flag: Option<String>,
+
+        /// Filter by lifecycle state (active, deprecated, superseded)
+        #[arg(long)]
+        lifecycle: Option<String>,
+    },
 
     /// Create a new knowledge element
     Create {
@@ -104,28 +122,64 @@ pub enum Command {
 
     /// Show detailed view of a resolved active knowledge element
     Show {
-        /// Element ID (UUID) to display
+        /// Element ID (UUID or prefix) to display
         element_id: String,
+
+        /// Display compact single-line element summary
+        #[arg(long)]
+        compact: bool,
     },
 
     /// Reconstruct and display the accepted change revision graph
-    History,
+    History {
+        /// Format each history entry as a single line
+        #[arg(long)]
+        oneline: bool,
+
+        /// Limit output to the N most recent revisions
+        #[arg(long)]
+        limit: Option<usize>,
+
+        /// Filter history to revisions touching a specific element ID or prefix
+        #[arg(long)]
+        element: Option<String>,
+
+        /// Display compact output
+        #[arg(long)]
+        compact: bool,
+    },
 
     /// Trace a knowledge element back to its origin
     Trace {
-        /// Target element ID (UUID) to trace
+        /// Target element ID (UUID or prefix) to trace
         element_id: String,
+
+        /// Display compact arrow-joined path rendering
+        #[arg(long)]
+        compact: bool,
     },
 
     /// Analyze potential impact and consequences of changing an element
     Impact {
-        /// Target element ID (UUID) to analyze
+        /// Target element ID (UUID or prefix) to analyze
         element_id: String,
+
+        /// Display compact flat table layout
+        #[arg(long)]
+        compact: bool,
     },
 
     /// Run mechanical consistency validation across the current accepted state
-    Validate,
+    Validate {
+        /// Display compact single-line counts summary
+        #[arg(long)]
+        compact: bool,
+    },
 
     /// Evaluate artifact accountability baselines against accepted state
-    Artifacts,
+    Artifacts {
+        /// Display compact status table layout
+        #[arg(long)]
+        compact: bool,
+    },
 }

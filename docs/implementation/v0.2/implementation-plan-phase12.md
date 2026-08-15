@@ -133,10 +133,10 @@ kat status --compact
 
 ## 4. Definition of Done for Phase 12
 
-- [ ] Shared presentation model (`default` + `--compact`) implemented across `history`, `trace`, `impact`, `validate`, `artifacts`, `status`, `show`; defaults byte-identical to v0.1 (pinned by golden tests).
-- [ ] `kat history` default is one-change-per-entry; `--oneline`, `--limit N`, `--element <id|prefix>` implemented and composable.
-- [ ] Compact forms for trace (chain), impact (table), validate (counts), artifacts (status table), status (one-liner) implemented with correct exit codes.
-- [ ] Renderer architecture leaves a seam for a future `--json` renderer (no JSON promise in v0.2.0); no `--verbose`/`--quiet`/global config added.
-- [ ] No repository mutation, no canonical-format change, no query-semantics change.
-- [ ] `docs/cli.md` and `docs/cli-presentation.md` document the presentation model.
-- [ ] All steps validated (`cargo test`, `fmt --check`, `clippy -D warnings`) and committed atomically.
+- [x] Shared presentation model (`default` + `--compact`) implemented across `history`, `trace`, `impact`, `validate`, `artifacts`, `status`, `show`; defaults byte-identical to v0.1 (pinned by golden tests).
+- [x] `kat history` default is one-change-per-entry; `--oneline`, `--limit N`, `--element <id|prefix>` implemented and composable.
+- [x] Compact forms for trace (chain), impact (table), validate (counts), artifacts (status table), status (one-liner) implemented with correct exit codes.
+- [x] Renderer architecture leaves a seam for a future `--json` renderer (no JSON promise in v0.2.0); no `--verbose`/`--quiet`/global config added.
+- [x] No repository mutation, no canonical-format change, no query-semantics change.
+- [x] `docs/cli.md` and `docs/cli-presentation.md` document the presentation model.
+- [x] All steps validated (`cargo test`, `fmt --check`, `clippy -D warnings`) and committed atomically.
