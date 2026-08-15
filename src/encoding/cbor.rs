@@ -527,6 +527,22 @@ fn encode_operation(writer: &mut CborWriter, operation: &Operation) -> Result<()
             write_object_id(writer, replacement_version);
             write_object_id(writer, superseding_relationship);
         }
+        Operation::AccountArtifact {
+            artifact_id,
+            reconciliations,
+        } => {
+            writer.write_array_header(3);
+            writer.write_uint(7);
+            write_uuid(writer, &artifact_id.as_uuid());
+            writer.write_array_header(reconciliations.len());
+            for recon in reconciliations {
+                writer.write_array_header(4);
+                write_uuid(writer, &recon.relationship_id.as_uuid());
+                write_object_id(writer, &recon.expected_relationship_version);
+                write_uuid(writer, &recon.target_element_id.as_uuid());
+                write_object_id(writer, &recon.reconciled_target_version);
+            }
+        }
     }
     Ok(())
 }

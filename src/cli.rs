@@ -120,6 +120,16 @@ pub enum Command {
         description: Option<String>,
     },
 
+    /// Re-baseline an artifact's accountability relationships against current knowledge versions
+    Account {
+        /// Artifact element ID or unique hex prefix
+        artifact_id: String,
+
+        /// Optional detailed description
+        #[arg(long)]
+        description: Option<String>,
+    },
+
     /// Show detailed view of a resolved active knowledge element
     Show {
         /// Element ID (UUID or prefix) to display

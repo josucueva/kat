@@ -575,6 +575,15 @@ pub fn history_entry_touches_element(
                     Ok(CanonicalPayload::RelationshipVersion(rv)) if rv.source_element_id == target_element_id || rv.target_element_id == target_element_id
                 )
             }
+            Operation::AccountArtifact {
+                artifact_id,
+                reconciliations,
+            } => {
+                *artifact_id == target_element_id
+                    || reconciliations
+                        .iter()
+                        .any(|r| r.target_element_id == target_element_id)
+            }
         };
         if matches {
             return Ok(true);
@@ -1052,8 +1061,22 @@ pub fn resolve_relationship_baseline_version(
     let entries = history(repository)?;
 
     // `entries` is ordered from accepted head (newest) to oldest.
-    // Walk newest to oldest: track the last seen state containing relationship_id,
-    // and stop when relationship_id is no longer present.
+    // Walk newest to oldest: check if any revision contains an AccountArtifact operation
+    // that explicitly reconciled relationship_id!
+    for entry in &entries {
+        for op in &entry.change.operations {
+            if let Operation::AccountArtifact { reconciliations, .. } = op {
+                if let Some(recon) = reconciliations
+                    .iter()
+                    .find(|r| r.relationship_id == relationship_id)
+                {
+                    return Ok(recon.reconciled_target_version);
+                }
+            }
+        }
+    }
+
+    // Otherwise fallback to finding the introducing state
     let mut introducing_state = None;
     for entry in &entries {
         let state = match load_typed(
@@ -1364,6 +1387,9 @@ pub fn repository_status(repository: &Repository) -> Result<RepositoryStatus, Qu
                     crate::domain::operation::Operation::Supersede { .. } => "supersede element",
                     crate::domain::operation::Operation::Link { .. } => "link",
                     crate::domain::operation::Operation::Unlink { .. } => "unlink",
+                    crate::domain::operation::Operation::AccountArtifact { .. } => {
+                        "account artifact"
+                    }
                 })
                 .unwrap_or("change")
                 .to_string();

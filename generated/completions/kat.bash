@@ -16,6 +16,9 @@ _kat() {
             ",$1")
                 cmd="kat"
                 ;;
+            kat,account)
+                cmd="kat__subcmd__account"
+                ;;
             kat,artifacts)
                 cmd="kat__subcmd__artifacts"
                 ;;
@@ -97,6 +100,9 @@ _kat() {
             kat__subcmd__change__subcmd__help,status)
                 cmd="kat__subcmd__change__subcmd__help__subcmd__status"
                 ;;
+            kat__subcmd__help,account)
+                cmd="kat__subcmd__help__subcmd__account"
+                ;;
             kat__subcmd__help,artifacts)
                 cmd="kat__subcmd__help__subcmd__artifacts"
                 ;;
@@ -167,12 +173,30 @@ _kat() {
 
     case "${cmd}" in
         kat)
-            opts="-h -V --help --version init status list create update deprecate supersede link unlink show history trace impact validate artifacts change help"
+            opts="-h -V --help --version init status list create update deprecate supersede link unlink account show history trace impact validate artifacts change help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        kat__subcmd__account)
+            opts="-h --description --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --description)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;
@@ -389,8 +413,22 @@ _kat() {
             return 0
             ;;
         kat__subcmd__help)
-            opts="init status list create update deprecate supersede link unlink show history trace impact validate artifacts change help"
+            opts="init status list create update deprecate supersede link unlink account show history trace impact validate artifacts change help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        kat__subcmd__help__subcmd__account)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi

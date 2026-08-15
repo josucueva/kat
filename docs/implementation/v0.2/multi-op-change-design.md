@@ -1,7 +1,7 @@
 # Multi-Operation Change Design (v0.2)
 
 > **Specification & Design Document for Phase 13**  
-> Part of the [v0.2 Master Plan](implementation/v0.2/implementation-plan.md).
+> Part of the [v0.2 Master Plan](implementation-plan.md).
 
 ---
 

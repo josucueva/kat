@@ -20,6 +20,7 @@ use crate::domain::change::ChangeRevision;
 use crate::domain::element::KnowledgeElementVersion;
 use crate::domain::identity::{ElementId, ObjectId, RelationshipId};
 use crate::domain::ontology::{OntologyVersion, RelationshipTypeDefinition};
+use crate::domain::operation::Operation;
 use crate::domain::property::PropertyValue;
 use crate::domain::relationship::RelationshipVersion;
 use crate::domain::state::SemanticState;
@@ -85,6 +86,12 @@ pub enum CanonicalStructureError {
     /// A property map contains a duplicate key.
     #[error("property map contains a duplicate key: {0}")]
     PropertyKeysDuplicate(String),
+    /// AccountArtifact reconciliations are not sorted by relationship ID.
+    #[error("AccountArtifact reconciliations must be sorted by relationship ID")]
+    AccountReconciliationsUnordered,
+    /// AccountArtifact reconciliations contain a duplicate relationship ID.
+    #[error("AccountArtifact reconciliations contain a duplicate relationship ID: {0}")]
+    AccountReconciliationsDuplicate(RelationshipId),
 }
 
 /// Canonical structural validation for values that must conform to the
@@ -265,6 +272,17 @@ impl CanonicalValidate for ChangeRevision {
         }
         if self.operations.is_empty() {
             return Err(CanonicalStructureError::ChangeOperationsEmpty);
+        }
+        for op in &self.operations {
+            if let Operation::AccountArtifact { reconciliations, .. } = op {
+                check_strictly_ascending(
+                    reconciliations,
+                    |r| &r.relationship_id,
+                    Ord::cmp,
+                    || CanonicalStructureError::AccountReconciliationsUnordered,
+                    |r| CanonicalStructureError::AccountReconciliationsDuplicate(r.relationship_id),
+                )?;
+            }
         }
         check_strictly_ascending(
             &self.dependencies,

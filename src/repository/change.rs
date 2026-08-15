@@ -132,6 +132,12 @@ pub enum PreconditionError {
         relationship_id: RelationshipId,
         version_relationship_id: RelationshipId,
     },
+    /// Element is not an artifact element type ('kat.core/artifact').
+    #[error("element {0} is not an artifact element type ('kat.core/artifact')")]
+    NotAnArtifact(ElementId),
+    /// Artifact has no active direct accountability relationships ('represents', 'derived-from').
+    #[error("artifact {0} has no active direct accountability relationships ('represents', 'derived-from')")]
+    NoAccountabilityRelationships(ElementId),
 }
 
 /// Error produced by the Change Engine.
@@ -215,7 +221,8 @@ pub enum ChangeError {
 ///
 /// Carrying the loaded base state and ontology avoids re-reading and
 /// re-decoding them for each operation in the change.
-#[derive(Debug, Clone)]
+use crate::domain::operation::RelationshipReconciliation;
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeContext {
     /// The accepted repository head this change is based on. This is also the
     /// `expected` value later passed to the CAS publication step.
@@ -1208,6 +1215,233 @@ pub fn apply_unlink_element(
     })
 }
 
+/// Input for re-baselining an artifact's direct accountability relationships.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccountArtifactInput {
+    /// Stable artifact element identity.
+    pub artifact_id: ElementId,
+}
+
+/// A prepared account artifact operation containing baseline reconciliations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedElementAccounted {
+    pub context: ChangeContext,
+    pub artifact_id: ElementId,
+    pub reconciliations: Vec<RelationshipReconciliation>,
+    pub candidate_state: SemanticState,
+    pub candidate_state_id: ObjectId,
+}
+
+/// A validated account artifact operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatedElementAccounted {
+    pub prepared: PreparedElementAccounted,
+}
+
+/// Applies `AccountArtifact` to `context`, finding all direct active accountability
+/// relationships (`represents`, `derived-from`) originating from `artifact_id`,
+/// and capturing target element current version ObjectIds.
+pub fn apply_account_artifact(
+    repository: &Repository,
+    context: ChangeContext,
+    input: AccountArtifactInput,
+) -> Result<PreparedElementAccounted, ChangeError> {
+    let art_entry = context
+        .base_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == input.artifact_id)
+        .ok_or(ChangeError::Precondition(
+            PreconditionError::ElementNotFound(input.artifact_id),
+        ))?;
+
+    let art_version = load_element_version_context(
+        &context,
+        repository.object_store(),
+        art_entry.version,
+    )?;
+
+    if art_version.lifecycle != Lifecycle::Active {
+        return Err(ChangeError::Precondition(
+            PreconditionError::ElementNotActive(input.artifact_id),
+        ));
+    }
+
+    let type_short = art_version
+        .type_id
+        .rsplit('/')
+        .next()
+        .unwrap_or(&art_version.type_id);
+    if type_short != "artifact" {
+        return Err(ChangeError::Precondition(
+            PreconditionError::NotAnArtifact(input.artifact_id),
+        ));
+    }
+
+    let mut reconciliations = Vec::new();
+    for rel_entry in &context.base_state.relationships {
+        let rel_v = load_relationship_version_context(
+            &context,
+            repository.object_store(),
+            rel_entry.version,
+        )?;
+
+        if rel_v.source_element_id == input.artifact_id {
+            let rel_type_short = rel_v
+                .relationship_type
+                .rsplit('/')
+                .next()
+                .unwrap_or(&rel_v.relationship_type);
+            if rel_type_short == "represents"
+                || rel_type_short == "derived-from"
+                || rel_type_short == "derived_from"
+            {
+                if let Some(target_entry) = context
+                    .base_state
+                    .elements
+                    .iter()
+                    .find(|e| e.element_id == rel_v.target_element_id)
+                {
+                    let target_v = load_element_version_context(
+                        &context,
+                        repository.object_store(),
+                        target_entry.version,
+                    )?;
+                    if target_v.lifecycle != Lifecycle::Active {
+                        return Err(ChangeError::Precondition(
+                            PreconditionError::ElementNotActive(rel_v.target_element_id),
+                        ));
+                    }
+
+                    reconciliations.push(RelationshipReconciliation {
+                        relationship_id: rel_v.relationship_id,
+                        expected_relationship_version: rel_entry.version,
+                        target_element_id: rel_v.target_element_id,
+                        reconciled_target_version: target_entry.version,
+                    });
+                }
+            }
+        }
+    }
+
+    if reconciliations.is_empty() {
+        return Err(ChangeError::Precondition(
+            PreconditionError::NoAccountabilityRelationships(input.artifact_id),
+        ));
+    }
+
+    reconciliations.sort_by(|a, b| a.relationship_id.cmp(&b.relationship_id));
+
+    let mut any_changed = false;
+    for rec in &reconciliations {
+        let baseline_version = crate::repository::query::resolve_relationship_baseline_version(
+            repository,
+            rec.relationship_id,
+            rec.target_element_id,
+        )
+        .unwrap_or(rec.reconciled_target_version);
+
+        if baseline_version != rec.reconciled_target_version {
+            any_changed = true;
+            break;
+        }
+    }
+
+    if !any_changed {
+        return Err(ChangeError::Precondition(
+            PreconditionError::NoEffectiveChange,
+        ));
+    }
+
+    let candidate_state = context.base_state.clone();
+    let state_obj = CanonicalObject {
+        payload: CanonicalPayload::SemanticState(candidate_state.clone()),
+    };
+    let candidate_state_id = canonical_object_id(&state_obj)?;
+
+    Ok(PreparedElementAccounted {
+        context,
+        artifact_id: input.artifact_id,
+        reconciliations,
+        candidate_state,
+        candidate_state_id,
+    })
+}
+
+/// Ontology validation stage for `AccountArtifact` (passthrough: accountability relationships are pre-existing).
+pub fn validate_account_artifact_ontology(
+    prepared: PreparedElementAccounted,
+) -> Result<PreparedElementAccounted, ChangeError> {
+    Ok(prepared)
+}
+
+/// Invariant validation stage for `AccountArtifact`.
+pub fn validate_account_artifact_invariants(
+    prepared: PreparedElementAccounted,
+) -> Result<ValidatedElementAccounted, ChangeError> {
+    if prepared.reconciliations.is_empty() {
+        return Err(ChangeError::Precondition(
+            PreconditionError::NoAccountabilityRelationships(prepared.artifact_id),
+        ));
+    }
+
+    // Verify reconciliations are strictly sorted by relationship_id
+    if !prepared
+        .reconciliations
+        .windows(2)
+        .all(|w| w[0].relationship_id < w[1].relationship_id)
+    {
+        return Err(ChangeError::Invariant(
+            crate::repository::validation::invariant::InvariantError::InvalidCanonicalStructure(
+                crate::encoding::validate::CanonicalStructureError::SemanticRelationshipsUnordered,
+            ),
+        ));
+    }
+
+    // Verify all 4 relationships between (R, RV, E, EV) against candidate_state
+    for rec in &prepared.reconciliations {
+        // 1. candidate_state.relationships[R] == RV
+        let rel_entry = prepared
+            .candidate_state
+            .relationships
+            .iter()
+            .find(|r| r.relationship_id == rec.relationship_id)
+            .ok_or(ChangeError::Precondition(
+                PreconditionError::RelationshipNotFound(rec.relationship_id),
+            ))?;
+        if rel_entry.version != rec.expected_relationship_version {
+            return Err(ChangeError::Precondition(
+                PreconditionError::RelationshipVersionMismatch {
+                    relationship_id: rec.relationship_id,
+                    expected: rec.expected_relationship_version,
+                    actual: rel_entry.version,
+                },
+            ));
+        }
+
+        // 2. candidate_state.elements[E] == EV
+        let elem_entry = prepared
+            .candidate_state
+            .elements
+            .iter()
+            .find(|e| e.element_id == rec.target_element_id)
+            .ok_or(ChangeError::Precondition(
+                PreconditionError::ElementNotFound(rec.target_element_id),
+            ))?;
+        if elem_entry.version != rec.reconciled_target_version {
+            return Err(ChangeError::Precondition(
+                PreconditionError::VersionMismatch {
+                    element_id: rec.target_element_id,
+                    expected: rec.reconciled_target_version,
+                    actual: elem_entry.version,
+                },
+            ));
+        }
+    }
+
+    Ok(ValidatedElementAccounted { prepared })
+}
+
 /// Applies the step 5.2 ontology-conformance stage to a prepared element link:
 /// the newly constructed relationship type must exist in the base `OntologyVersion`,
 /// and the source and target element types must be allowed for that relationship type.
@@ -1867,6 +2101,53 @@ pub fn prepare_unlink_change_revision(
     })
 }
 
+/// A prepared account artifact change revision.
+#[derive(Debug)]
+pub struct PreparedAccountChangeRevision {
+    pub account: PreparedElementAccounted,
+    pub state_id: ObjectId,
+    pub change: ChangeRevision,
+    pub change_revision_id: ObjectId,
+}
+
+/// Constructs the `ChangeRevision` for a validated `AccountArtifact`.
+pub fn prepare_account_change_revision(
+    validated: ValidatedElementAccounted,
+    change_id: ChangeId,
+    description: Option<String>,
+) -> Result<PreparedAccountChangeRevision, ChangeError> {
+    let account = validated.prepared;
+
+    let state_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(account.candidate_state.clone()),
+    })?;
+
+    let dependencies: Vec<ObjectId> = account.context.accepted.change.into_iter().collect();
+
+    let change = ChangeRevision {
+        change_id,
+        base_states: vec![account.context.base_state_id],
+        result_state: state_id,
+        operations: vec![Operation::AccountArtifact {
+            artifact_id: account.artifact_id,
+            reconciliations: account.reconciliations.clone(),
+        }],
+        dependencies,
+        description,
+    };
+
+    let change_revision_id = canonical_object_id(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(change.clone()),
+    })?;
+
+    Ok(PreparedAccountChangeRevision {
+        account,
+        state_id,
+        change,
+        change_revision_id,
+    })
+}
+
 /// A prepared change whose immutable objects have been materialized into the
 /// ObjectStore (V1, S1, C1), but which has **not** been published.
 ///
@@ -2275,6 +2556,104 @@ pub fn persist_prepared_unlink_change(
     }
 
     Ok(PersistedUnlinkChange { prepared })
+}
+
+/// A prepared account artifact change whose immutable objects have been materialized into ObjectStore.
+#[derive(Debug)]
+pub struct PersistedAccountChange {
+    pub prepared: PreparedAccountChangeRevision,
+}
+
+/// Materializes a prepared account artifact change's objects into ObjectStore (`Sn+1`, `Cn+1`).
+pub fn persist_prepared_account_change(
+    repository: &Repository,
+    prepared: PreparedAccountChangeRevision,
+) -> Result<PersistedAccountChange, ChangeError> {
+    let store = repository.object_store();
+
+    // 1. Sn+1
+    let s_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(prepared.account.candidate_state.clone()),
+    })?;
+    let s_next_id = store.put(&s_next_bytes)?;
+    if s_next_id != prepared.state_id {
+        return Err(identity_mismatch(
+            ObjectKind::SemanticState,
+            prepared.state_id,
+            s_next_id,
+        ));
+    }
+
+    // 2. Cn+1
+    let c_next_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
+    })?;
+    let c_next_id = store.put(&c_next_bytes)?;
+    if c_next_id != prepared.change_revision_id {
+        return Err(identity_mismatch(
+            ObjectKind::ChangeRevision,
+            prepared.change_revision_id,
+            c_next_id,
+        ));
+    }
+
+    Ok(PersistedAccountChange { prepared })
+}
+
+/// A published account artifact change.
+#[derive(Debug)]
+pub struct PublishedAccountChange {
+    pub persisted: PersistedAccountChange,
+    pub accepted: AcceptedRef,
+}
+
+/// Publishes an already-persisted account artifact change.
+pub fn publish_persisted_account_change(
+    repository: &Repository,
+    persisted: PersistedAccountChange,
+) -> Result<PublishedAccountChange, ChangeError> {
+    let prepared = &persisted.prepared;
+
+    if prepared.change.result_state != prepared.state_id {
+        return Err(ChangeError::PublicationStateMismatch {
+            expected: prepared.state_id,
+            actual: prepared.change.result_state,
+        });
+    }
+
+    let expected = &prepared.account.context.accepted;
+    let new = AcceptedRef {
+        state: prepared.state_id,
+        change: Some(prepared.change_revision_id),
+    };
+
+    match repository
+        .ref_store()
+        .compare_and_swap_accepted(expected, &new)
+    {
+        Ok(()) => Ok(PublishedAccountChange {
+            persisted,
+            accepted: new,
+        }),
+        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
+        Err(err) => Err(ChangeError::RefStore(err)),
+    }
+}
+
+/// Single-operation pipeline: re-baselines artifact accountability relationships directly into accepted head.
+pub fn account_artifact(
+    repository: &Repository,
+    input: AccountArtifactInput,
+    description: Option<String>,
+) -> Result<PublishedAccountChange, ChangeError> {
+    let context = prepare_change(repository)?;
+    let prep = apply_account_artifact(repository, context, input)?;
+    let ont = validate_account_artifact_ontology(prep)?;
+    let val = validate_account_artifact_invariants(ont)?;
+    let change_id = ChangeId::new();
+    let prep_rev = prepare_account_change_revision(val, change_id, description)?;
+    let persisted = persist_prepared_account_change(repository, prep_rev)?;
+    publish_persisted_account_change(repository, persisted)
 }
 
 /// A persisted update change that has been atomically published as the
@@ -2690,6 +3069,8 @@ pub enum StagedOperationInput {
     LinkElement(LinkElementInput),
     /// Unlink an existing relationship.
     UnlinkElement(UnlinkElementInput),
+    /// Re-baseline an artifact's accountability relationships.
+    AccountArtifact(AccountArtifactInput),
 }
 
 /// Stages one mutation operation onto the working candidate of an open draft change session.
@@ -2808,6 +3189,16 @@ pub fn stage_operation_into_session(
             let op = Operation::Unlink {
                 relationship_id: val.prepared.relationship_id,
                 expected_version: val.prepared.expected_version,
+            };
+            (op, val.prepared.candidate_state)
+        }
+        StagedOperationInput::AccountArtifact(in_val) => {
+            let prep = apply_account_artifact(repository, context, in_val)?;
+            let ont = validate_account_artifact_ontology(prep)?;
+            let val = validate_account_artifact_invariants(ont)?;
+            let op = Operation::AccountArtifact {
+                artifact_id: val.prepared.artifact_id,
+                reconciliations: val.prepared.reconciliations.clone(),
             };
             (op, val.prepared.candidate_state)
         }

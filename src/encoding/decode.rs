@@ -30,7 +30,7 @@ use crate::domain::change::ChangeRevision;
 use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
 use crate::domain::identity::{ChangeId, ElementId, ObjectId, OntologyId, RelationshipId};
 use crate::domain::ontology::{ElementTypeDefinition, OntologyVersion, RelationshipTypeDefinition};
-use crate::domain::operation::Operation;
+use crate::domain::operation::{Operation, RelationshipReconciliation};
 use crate::domain::property::PropertyValue;
 use crate::domain::relationship::RelationshipVersion;
 use crate::domain::state::{ElementStateEntry, RelationshipStateEntry, SemanticState};
@@ -672,6 +672,30 @@ fn decode_operation(value: &CborValue) -> Result<Operation, DecodingError> {
                 replacement_element: ElementId::from_uuid(expect_uuid(&items[3])?),
                 replacement_version: expect_object_id(&items[4])?,
                 superseding_relationship: expect_object_id(&items[5])?,
+            })
+        }
+        7 => {
+            if items.len() != 3 {
+                return Err(DecodingError::InvalidOperation);
+            }
+            let artifact_id = ElementId::from_uuid(expect_uuid(&items[1])?);
+            let recon_items = expect_array(&items[2])?;
+            let mut reconciliations = Vec::with_capacity(recon_items.len());
+            for recon_val in recon_items {
+                let fields = expect_array(recon_val)?;
+                if fields.len() != 4 {
+                    return Err(DecodingError::InvalidOperation);
+                }
+                reconciliations.push(RelationshipReconciliation {
+                    relationship_id: RelationshipId::from_uuid(expect_uuid(&fields[0])?),
+                    expected_relationship_version: expect_object_id(&fields[1])?,
+                    target_element_id: ElementId::from_uuid(expect_uuid(&fields[2])?),
+                    reconciled_target_version: expect_object_id(&fields[3])?,
+                });
+            }
+            Ok(Operation::AccountArtifact {
+                artifact_id,
+                reconciliations,
             })
         }
         _ => Err(DecodingError::InvalidOperation),

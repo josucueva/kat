@@ -1,5 +1,6 @@
 ; KAT Canonical Format
-; Version: 0.1
+; Schema Version: 1
+; Envelope Version: 1
 ;
 ; This file defines the structural schema of canonical KAT objects.
 ;
@@ -28,23 +29,24 @@ description = tstr
 ; Property Values
 ; ---------------------------------------------------------------------------
 
-; Property values intentionally exclude floating-point numbers in v0.1.
+; Schema version 1 property values intentionally exclude floating-point numbers.
 property-value =
-null
-/ bool
-/ int
-/ tstr
-/ bstr
-/ uuid
-/ property-list
-/ property-map
+  null
+  / bool
+  / int
+  / tstr
+  / bstr
+  / uuid
+  / property-list
+  / property-map
 
 property-list = [
-* property-value
+  * property-value
 ]
 
+; Property map keys MUST be unique.
 property-map = {
-* tstr => property-value
+  * tstr => property-value
 }
 
 ; ---------------------------------------------------------------------------
@@ -63,7 +65,7 @@ property-map = {
 ;   2 -> schema_version
 ;   3 -> payload
 ;
-; KAT v0.1 uses:
+; Current canonical objects use:
 ;
 ;   envelope_version = 1
 ;   schema_version   = 1
@@ -77,45 +79,45 @@ property-map = {
 ;   5 -> OntologyVersion
 
 canonical-object =
-knowledge-element-object
-/ relationship-object
-/ change-revision-object
-/ semantic-state-object
-/ ontology-version-object
+  knowledge-element-object
+  / relationship-object
+  / change-revision-object
+  / semantic-state-object
+  / ontology-version-object
 
 knowledge-element-object = {
-0: 1,
-1: 1,
-2: 1,
-3: knowledge-element-version
+  0: 1,
+  1: 1,
+  2: 1,
+  3: knowledge-element-version
 }
 
 relationship-object = {
-0: 1,
-1: 2,
-2: 1,
-3: relationship-version
+  0: 1,
+  1: 2,
+  2: 1,
+  3: relationship-version
 }
 
 change-revision-object = {
-0: 1,
-1: 3,
-2: 1,
-3: change-revision
+  0: 1,
+  1: 3,
+  2: 1,
+  3: change-revision
 }
 
 semantic-state-object = {
-0: 1,
-1: 4,
-2: 1,
-3: semantic-state
+  0: 1,
+  1: 4,
+  2: 1,
+  3: semantic-state
 }
 
 ontology-version-object = {
-0: 1,
-1: 5,
-2: 1,
-3: ontology-version
+  0: 1,
+  1: 5,
+  2: 1,
+  3: ontology-version
 }
 
 ; ---------------------------------------------------------------------------
@@ -130,10 +132,10 @@ ontology-version-object = {
 ;   3 -> semantic properties
 
 knowledge-element-version = {
-0: uuid,
-1: type-id,
-2: lifecycle,
-3: property-map
+  0: uuid,
+  1: type-id,
+  2: lifecycle,
+  3: property-map
 }
 
 ; Lifecycle values:
@@ -143,9 +145,9 @@ knowledge-element-version = {
 ;   2 -> superseded
 
 lifecycle =
-0
-/ 1
-/ 2
+  0
+  / 1
+  / 2
 
 ; ---------------------------------------------------------------------------
 ; Relationship Version
@@ -160,25 +162,25 @@ lifecycle =
 ;   4 -> relationship properties
 
 relationship-version = {
-0: uuid,
-1: uuid,
-2: type-id,
-3: uuid,
-4: property-map
+  0: uuid,
+  1: uuid,
+  2: type-id,
+  3: uuid,
+  4: property-map
 }
 
 ; ---------------------------------------------------------------------------
 ; Semantic State
 ; ---------------------------------------------------------------------------
 
-; A SemanticState represents the complete active semantic composition
+; A SemanticState represents one complete accepted semantic composition
 ; of the repository.
 ;
 ; Fields:
 ;
 ;   0 -> OntologyVersion ObjectId
-;   1 -> active element mappings
-;   2 -> active relationship mappings
+;   1 -> selected element mappings
+;   2 -> selected relationship mappings
 ;
 ; element-state-entry values MUST be sorted by ElementId.
 ;
@@ -187,23 +189,23 @@ relationship-version = {
 ; Duplicate semantic IDs are invalid.
 
 semantic-state = {
-0: object-id,
-1: [* element-state-entry],
-2: [* relationship-state-entry]
+  0: object-id,
+  1: [* element-state-entry],
+  2: [* relationship-state-entry]
 }
 
 ; ElementId -> KnowledgeElementVersion ObjectId
 
 element-state-entry = [
-uuid,
-object-id
+  uuid,
+  object-id
 ]
 
 ; RelationshipId -> RelationshipVersion ObjectId
 
 relationship-state-entry = [
-uuid,
-object-id
+  uuid,
+  object-id
 ]
 
 ; ---------------------------------------------------------------------------
@@ -220,9 +222,9 @@ object-id
 ; Duplicate type identifiers are invalid.
 
 ontology-version = {
-0: uuid,
-1: [* element-type-definition],
-2: [* relationship-type-definition]
+  0: uuid,
+  1: [* element-type-definition],
+  2: [* relationship-type-definition]
 }
 
 ; Fields:
@@ -231,8 +233,8 @@ ontology-version = {
 ;   1 -> human-readable name
 
 element-type-definition = {
-0: type-id,
-1: name
+  0: type-id,
+  1: name
 }
 
 ; Fields:
@@ -248,18 +250,18 @@ element-type-definition = {
 ; Duplicates are invalid.
 
 relationship-type-definition = {
-0: type-id,
-1: name,
-2: allowed-source-types,
-3: allowed-target-types
+  0: type-id,
+  1: name,
+  2: allowed-source-types,
+  3: allowed-target-types
 }
 
 allowed-source-types = [
-* type-id
+  * type-id
 ]
 
 allowed-target-types = [
-* type-id
+  * type-id
 ]
 
 ; ---------------------------------------------------------------------------
@@ -279,23 +281,24 @@ allowed-target-types = [
 ;
 ; base_states contains at least one state.
 ;
-; KAT v0.1 executes only single-base changes.
+; KAT v0.2 accepted publication uses one base state.
+; The schema structurally permits multiple base-state references for future composition or merge semantics.
 ;
-; When multiple base states are present, they MUST be sorted by ObjectId
-; until a future schema assigns semantic ordering to them.
+; When multiple base states are present, they MUST be sorted lexicographically
+; by raw ObjectId bytes.
 ;
-; Dependencies are set-like and MUST be sorted by ObjectId.
+; Dependencies are set-like and MUST be sorted lexicographically by raw ObjectId bytes.
 ; Duplicate dependencies are invalid.
 ;
 ; Operation order is semantic and MUST NOT be changed.
 
 change-revision = {
-0: uuid,
-1: [1* object-id],
-2: object-id,
-3: [1* operation],
-4: [* object-id],
-? 5: description
+  0: uuid,
+  1: [1* object-id],
+  2: object-id,
+  3: [1* operation],
+  4: [* object-id],
+  ? 5: description
 }
 
 ; ---------------------------------------------------------------------------
@@ -311,15 +314,17 @@ change-revision = {
 ;   3 -> DeprecateElement
 ;   4 -> Link
 ;   5 -> Unlink
-;   6 -> Supersede
+;   6 -> SupersedeElement
+;   7 -> AccountArtifact
 
 operation =
-create-element
-/ update-element
-/ deprecate-element
-/ link
-/ unlink
-/ supersede
+  create-element
+  / update-element
+  / deprecate-element
+  / link
+  / unlink
+  / supersede
+  / account-artifact
 
 ; ---------------------------------------------------------------------------
 ; CreateElement
@@ -329,13 +334,10 @@ create-element
 ;
 ;   0 -> operation kind = 1
 ;   1 -> new KnowledgeElementVersion ObjectId
-;
-; The ElementId contained by the referenced version MUST NOT already
-; be active in the base SemanticState.
 
 create-element = [
-1,
-object-id
+  1,
+  object-id
 ]
 
 ; ---------------------------------------------------------------------------
@@ -350,10 +352,10 @@ object-id
 ;   3 -> new KnowledgeElementVersion ObjectId
 
 update-element = [
-2,
-uuid,
-object-id,
-object-id
+  2,
+  uuid,
+  object-id,
+  object-id
 ]
 
 ; ---------------------------------------------------------------------------
@@ -366,14 +368,12 @@ object-id
 ;   1 -> stable ElementId
 ;   2 -> expected current KnowledgeElementVersion ObjectId
 ;   3 -> new deprecated KnowledgeElementVersion ObjectId
-;
-; The referenced new version MUST have lifecycle = deprecated.
 
 deprecate-element = [
-3,
-uuid,
-object-id,
-object-id
+  3,
+  uuid,
+  object-id,
+  object-id
 ]
 
 ; ---------------------------------------------------------------------------
@@ -384,13 +384,10 @@ object-id
 ;
 ;   0 -> operation kind = 4
 ;   1 -> new RelationshipVersion ObjectId
-;
-; The RelationshipId contained by the referenced version MUST NOT
-; already be active in the base SemanticState.
 
 link = [
-4,
-object-id
+  4,
+  object-id
 ]
 
 ; ---------------------------------------------------------------------------
@@ -404,18 +401,15 @@ object-id
 ;   2 -> expected current RelationshipVersion ObjectId
 
 unlink = [
-5,
-uuid,
-object-id
+  5,
+  uuid,
+  object-id
 ]
 
 ; ---------------------------------------------------------------------------
-; Supersede
+; SupersedeElement
 ; ---------------------------------------------------------------------------
 
-; Supersede creates a replacement knowledge element and preserves
-; explicit traceability to the element it replaces.
-;
 ; Fields:
 ;
 ;   0 -> operation kind = 6
@@ -424,22 +418,38 @@ object-id
 ;   3 -> replacement ElementId
 ;   4 -> replacement KnowledgeElementVersion ObjectId
 ;   5 -> superseding RelationshipVersion ObjectId
-;
-; Semantic validation MUST verify that:
-;
-;   - existing_element resolves to expected_existing_version
-;   - replacement_version contains replacement_element
-;   - replacement_element is not already active
-;   - the superseding relationship has the expected source and target
-;   - the relationship type is valid according to the active ontology
-;   - the resulting lifecycle states satisfy KAT invariants
 
 supersede = [
-6,
-uuid,
-object-id,
-uuid,
-object-id,
-object-id
+  6,
+  uuid,
+  object-id,
+  uuid,
+  object-id,
+  object-id
 ]
 
+; ---------------------------------------------------------------------------
+; AccountArtifact
+; ---------------------------------------------------------------------------
+
+; Fields:
+;
+;   0 -> operation kind = 7
+;   1 -> artifact ElementId
+;   2 -> non-empty list of relationship baseline reconciliations
+
+account-artifact = [
+  7,
+  uuid,
+  [1* relationship-reconciliation]
+]
+
+; Reconciliation entries MUST be strictly sorted lexicographically by the
+; canonical 16-byte UUID representation of relationship_id.
+; Duplicate relationship_id entries within reconciliations are invalid.
+relationship-reconciliation = [
+  uuid,
+  object-id,
+  uuid,
+  object-id
+]

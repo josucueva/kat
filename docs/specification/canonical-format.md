@@ -39,11 +39,11 @@ spec/canonical-format.cddl
 
 Both documents are normative. Details specified by the CDDL schema are not restated as open questions by this document.
 
-Other KAT specifications, such as `prototype-design.md`, may summarize canonical format values for implementation context but must not independently redefine them.
+Other KAT specifications may summarize canonical format values for implementation context but must not independently redefine them.
 
 ## Format Goals
 
-The canonical format should be:
+The canonical format is designed to be:
 
 * Deterministic
 * Compact
@@ -53,7 +53,9 @@ The canonical format should be:
 * Suitable for immutable content-addressed storage
 * Precise enough for independent implementations to produce identical object identities
 
-The canonical format must not depend on Rust struct layout, Serde defaults, filesystem paths, or internal implementation details.
+The canonical format does not depend on Rust struct layout, Serde defaults, filesystem paths, or internal implementation details.
+
+---
 
 # Normative Representation
 
@@ -85,6 +87,8 @@ Object ID
 The CDDL schema defines structural validity.
 
 This document defines additional semantic and encoding rules that are not completely expressible through CDDL.
+
+---
 
 # Canonical Object Identity
 
@@ -125,6 +129,8 @@ Example:
 
 Abbreviated Object IDs may be supported by user interfaces but are not canonical identifiers.
 
+---
+
 # Semantic Identity
 
 Content-addressed Object IDs do not replace stable semantic identities.
@@ -149,9 +155,11 @@ Requirement Version:
     SHA-256 Object ID
 ```
 
-The canonical format therefore contains stable semantic IDs inside objects where required.
+The canonical format contains stable semantic IDs inside objects where required.
 
-Stable semantic identities use UUIDv4 in KAT v0.1.
+Stable semantic identities use UUIDv4 in schema version 1.
+
+---
 
 # UUID Representation
 
@@ -168,6 +176,8 @@ Example:
 ```text
 7c8e0c81-b9fc-4c31-9974-b9db8fa72e51
 ```
+
+---
 
 # Canonical Object Envelope
 
@@ -186,7 +196,7 @@ payload
 
 The envelope is part of the hashed canonical representation.
 
-The Object ID is therefore sensitive to:
+The Object ID is sensitive to:
 
 * Envelope version
 * Object kind
@@ -197,7 +207,7 @@ The Object ID is therefore sensitive to:
 
 `envelope_version` defines the common framing used by canonical KAT objects.
 
-KAT v0.1 uses:
+The current canonical format uses:
 
 ```text
 envelope_version = 1
@@ -211,7 +221,7 @@ An implementation must reject unsupported envelope versions.
 
 `object_kind` identifies the type of canonical object contained in the payload.
 
-Initial object kinds are:
+Envelope version 1 object kinds are:
 
 ```text
 1  KnowledgeElementVersion
@@ -235,7 +245,6 @@ For example:
 
 ```text
 KnowledgeElementVersion schema 2
-
 SemanticState schema 1
 ```
 
@@ -259,6 +268,8 @@ must contain a valid `KnowledgeElementVersion` payload.
 
 An object whose kind and payload do not correspond is invalid.
 
+---
+
 # Deterministic CBOR Requirements
 
 Canonical KAT objects must use deterministic CBOR encoding following the RFC 8949 Core Deterministic Encoding Requirements (RFC 8949, Section 4.2.1).
@@ -272,7 +283,6 @@ The following rules apply.
 Indefinite-length encoding must not be used.
 
 This applies to:
-
 * Arrays
 * Maps
 * Byte strings
@@ -284,11 +294,9 @@ Integers must use the shortest valid CBOR representation.
 
 ## Floating-Point Values
 
-Floating-point property values are not supported by the KAT v0.1 canonical property model.
+Floating-point property values are not supported by the schema version 1 canonical property model.
 
 This avoids ambiguity around representation, equality, and canonicalization.
-
-A later schema version may introduce floating-point values if a concrete semantic requirement justifies them.
 
 ## Text
 
@@ -296,7 +304,7 @@ Text values must contain valid UTF-8.
 
 No implicit text normalization is performed by the canonical encoder unless explicitly defined by a future schema.
 
-Therefore semantically equivalent but byte-distinct Unicode strings may produce different Object IDs.
+Therefore semantically equivalent but byte-distinct Unicode strings produce different Object IDs.
 
 ## Map Ordering
 
@@ -304,25 +312,30 @@ CBOR maps used by canonical objects follow the RFC 8949 Core Deterministic Encod
 
 Map keys are ordered by the bytewise lexicographic comparison of their deterministic encoded forms.
 
-For example, the following keys appear in this deterministic order:
+For example, the following keys appear in this deterministic order based on their encoded bytes:
 
 ```text
-10
-100
--1
-"z"
-"aa"
+Key      Encoded Bytes (Hex)
+10    -> 0a
+100   -> 1864
+-1    -> 20
+"z"   -> 617a
+"aa"  -> 626161
 ```
 
-because ordering is based on the encoded bytes rather than on encoded length. In particular, this is not the length-first alternative defined for RFC 7049 Canonical CBOR compatibility (RFC 8949, Section 4.2.3).
+ordering is based on the encoded bytes rather than on encoded length. In particular, this is not the length-first alternative defined for RFC 7049 Canonical CBOR compatibility (RFC 8949, Section 4.2.3).
 
-However, semantic collections whose logical meaning is a set should normally use explicitly sorted arrays rather than relying on map ordering alone.
+Semantic collections whose logical meaning is a set use explicitly sorted arrays rather than relying on map ordering alone.
 
 ## Unknown Fields
 
 Canonical encoders must not emit fields that are not defined by the active object schema.
 
-Canonical decoders must reject unsupported required structure rather than silently guessing its meaning.
+Current schema versions are closed schemas. Decoders must reject fields not defined by the declared schema version.
+
+Forward-compatible field skipping is not part of schema version 1.
+
+---
 
 # Canonical Collections
 
@@ -350,11 +363,13 @@ Canonical set-like collections must not contain duplicate identities or identifi
 
 Duplicates make the object invalid.
 
+---
+
 # Property Values
 
 Knowledge Element and Relationship properties use a restricted canonical value model.
 
-KAT v0.1 supports:
+Schema version 1 supports:
 
 ```text
 null
@@ -371,9 +386,11 @@ Lists preserve order.
 
 Maps use text keys.
 
+Property maps must not contain duplicate text keys.
+
 Nested values may use the same supported value types.
 
-Floating-point numbers are excluded from v0.1.
+Floating-point numbers are excluded from schema version 1.
 
 ## Property Map Keys
 
@@ -392,6 +409,8 @@ status
 ```
 
 Property key ordering must follow deterministic CBOR map ordering.
+
+---
 
 # Knowledge Element Version
 
@@ -428,7 +447,7 @@ kat.core/validation
 
 ## lifecycle
 
-KAT v0.1 defines the following lifecycle states:
+Schema version 1 defines the following lifecycle states:
 
 ```text
 0  active
@@ -442,12 +461,9 @@ These numeric values are canonical protocol identifiers and must not be reassign
 
 A map of semantic properties associated with this element version.
 
-The meaning and validity of properties may be further constrained by the active ontology.
-
 ## Excluded Fields
 
 A Knowledge Element Version does not contain:
-
 * Previous version pointers
 * History
 * Incoming relationships
@@ -455,7 +471,7 @@ A Knowledge Element Version does not contain:
 * Query indexes
 * Artifact file contents
 
-Those concerns are represented elsewhere or derived.
+---
 
 # Relationship Version
 
@@ -473,7 +489,7 @@ properties
 
 ## relationship_id
 
-Stable UUID identifying the relationship across its evolution.
+Stable UUID identifying the logical relationship independently of its immutable canonical representation.
 
 ## source_element_id
 
@@ -504,13 +520,11 @@ Stable UUID of the relationship target.
 
 Relationships reference stable semantic identities rather than immutable Knowledge Element Version IDs.
 
-The active Semantic State determines which element versions are current.
-
 ## properties
 
 Optional semantic properties of the relationship.
 
-The active ontology determines whether a relationship type permits or requires particular properties.
+---
 
 # Semantic State
 
@@ -526,7 +540,7 @@ relationships
 
 The state answers:
 
-> What semantic knowledge is active in this state?
+> What semantic knowledge is selected by this state?
 
 It does not describe how that state was reached.
 
@@ -542,9 +556,7 @@ Logical mapping:
 ElementId -> KnowledgeElementVersion ObjectId
 ```
 
-Physically, KAT v0.1 encodes this mapping as a sorted array of entries.
-
-Each entry contains:
+Schema version 1 encodes this mapping as a sorted array of entries:
 
 ```text
 [
@@ -553,9 +565,7 @@ Each entry contains:
 ]
 ```
 
-Entries must be sorted by raw Element ID bytes.
-
-Duplicate Element IDs are invalid.
+Entries must be sorted by raw Element ID bytes. Duplicate Element IDs are invalid.
 
 ## relationships
 
@@ -565,35 +575,33 @@ Logical mapping:
 RelationshipId -> RelationshipVersion ObjectId
 ```
 
-Physically, this is also encoded as a sorted array.
+Encoded as a sorted array of entries:
 
-Entries must be sorted by raw Relationship ID bytes.
+```text
+[
+    RelationshipId,
+    RelationshipVersion ObjectId
+]
+```
 
-Duplicate Relationship IDs are invalid.
+Entries must be sorted by raw Relationship ID bytes. Duplicate Relationship IDs are invalid.
 
 ## State Identity
 
 The Semantic State Object ID is the SHA-256 digest of the complete canonical Semantic State object.
 
 Any change to:
-
-* Active element versions
-* Active relationship versions
-* Ontology version
+* selected element versions;
+* selected relationship versions;
+* ontology version;
 
 produces a different Semantic State Object ID.
 
 ## Historical Information
 
-Semantic States do not contain:
+Semantic States do not contain parent states, originating changes, change descriptions, author information, or history indexes.
 
-* Parent states
-* Originating changes
-* Change descriptions
-* Author information
-* History indexes
-
-History belongs to Change Revisions and derived history structures.
+---
 
 # Ontology Version
 
@@ -613,44 +621,17 @@ Stable UUID identifying the ontology across its evolution.
 
 ## Element Type Definitions
 
-Each element type definition contains at least:
+Each element type definition contains at least `type_id` and `name`.
 
-```text
-type_id
-name
-```
-
-Element type definitions must be sorted lexicographically by `type_id`.
-
-Duplicate `type_id` values are invalid.
+Element type definitions must be sorted lexicographically by `type_id`. Duplicate `type_id` values are invalid.
 
 ## Relationship Type Definitions
 
-Each relationship type definition contains:
+Each relationship type definition contains `type_id`, `name`, `allowed_source_types`, and `allowed_target_types`.
 
-```text
-type_id
-name
-allowed_source_types
-allowed_target_types
-```
+Relationship definitions must be sorted lexicographically by `type_id`. `allowed_source_types` and `allowed_target_types` must be sorted lexicographically and contain no duplicates.
 
-Relationship definitions must be sorted lexicographically by `type_id`.
-
-`allowed_source_types` and `allowed_target_types` represent semantic sets.
-
-They must:
-
-* Be sorted lexicographically by type identifier
-* Contain no duplicates
-
-## Ontology Extensions
-
-KAT v0.1 may reserve structural space for ontology extensions.
-
-The extension mechanism is not considered stable until explicitly specified.
-
-Core ontology objects must not embed architecture-specific assumptions.
+---
 
 # Change Revision
 
@@ -669,63 +650,47 @@ description
 
 ## change_id
 
-Stable UUID identifying the logical Change.
-
-Different immutable revisions may share the same Change ID while work remains mutable before final acceptance.
+`change_id` is the stable semantic identity of the logical Change represented by this revision.
 
 ## base_states
 
-One or more Semantic State Object IDs on which the Change Revision is based.
+`base_states` is a canonical array of `SemanticState` Object IDs.
 
-KAT v0.1 executes only single-base changes.
+KAT v0.2 accepted publication uses exactly one base state. The schema permits multiple base-state references for future composition or merge semantics.
 
-The canonical structure permits multiple base states to preserve compatibility with future collaborative reconciliation.
-
-If multiple base states are present, their order is semantically significant only if explicitly defined by a future schema.
-
-Until then, multiple base states must use canonical Object ID ordering.
+Until semantics for multiple base states are defined, such values are structurally representable but are not valid for normal v0.2 publication. If multiple base states are present, they must use canonical Object ID ordering.
 
 ## result_state
 
 Semantic State Object ID produced by the Change Revision.
 
-A Semantic State must not contain a reverse canonical reference to its originating Change Revision.
-
-This prevents cyclic content-addressed object dependencies.
+A Semantic State does not contain a reverse canonical reference to its originating Change Revision.
 
 ## operations
 
 Ordered list of semantic operations comprising the Change Revision.
 
-Operation order is semantically meaningful and must be preserved exactly.
-
-Operations must not be sorted.
+Operation order is semantically meaningful and must be preserved exactly. Operations must not be sorted.
 
 ## dependencies
 
 Immutable Change Revision Object IDs on which the change causally depends.
 
-Dependencies represent a semantic set.
-
-They must be sorted by Object ID and must not contain duplicates.
+Dependencies represent a semantic set. They must be sorted by Object ID and must not contain duplicates.
 
 ## description
 
 Optional human-readable description of the semantic change.
 
-If present, the description is part of the immutable Change Revision and therefore participates in its Object ID.
-
-Incidental runtime metadata should not be included here unless it is intentionally part of historical meaning.
+---
 
 # Operations
 
-Operations are encoded inside Change Revisions.
-
-They are not independent canonical objects in KAT v0.1.
+Operations are encoded inside Change Revisions. They are not independent canonical objects in schema version 1.
 
 Operations use a closed numeric operation vocabulary.
 
-Initial operation kinds are:
+Schema version 1 operation kinds are:
 
 ```text
 1  CreateElement
@@ -733,129 +698,133 @@ Initial operation kinds are:
 3  DeprecateElement
 4  Link
 5  Unlink
-6  Supersede
+6  SupersedeElement
+7  AccountArtifact
 ```
 
 Operation identifiers are permanent protocol values.
 
 ## CreateElement
 
-Creates a new semantic element.
-
-Canonical semantic content:
+Canonical semantic structure (operation kind 1):
 
 ```text
-new_version
+[
+    1,
+    new_version
+]
 ```
 
 where `new_version` is the Object ID of a Knowledge Element Version.
 
-The referenced Element ID must not already be active in the base state.
-
 ## UpdateElement
 
-Updates an existing semantic element.
-
-Canonical semantic content:
+Canonical semantic structure (operation kind 2):
 
 ```text
-element_id
-expected_version
-new_version
-```
-
-The operation implies:
-
-```text
-Precondition:
-    element_id resolves to expected_version
-    in the base state.
-
-Postcondition:
-    element_id resolves to new_version
-    in the resulting state.
+[
+    2,
+    element_id,
+    expected_version,
+    new_version
+]
 ```
 
 ## DeprecateElement
 
-Changes an element to a deprecated lifecycle state.
-
-Canonical semantic content:
+Canonical semantic structure (operation kind 3):
 
 ```text
-element_id
-expected_version
-new_version
+[
+    3,
+    element_id,
+    expected_version,
+    new_version
+]
 ```
-
-The new Knowledge Element Version must have lifecycle `deprecated`.
 
 ## Link
 
-Introduces a semantic relationship.
-
-Canonical semantic content:
+Canonical semantic structure (operation kind 4):
 
 ```text
-new_relationship_version
+[
+    4,
+    new_relationship_version
+]
 ```
 
-The referenced Relationship Version must satisfy the active ontology.
+where `new_relationship_version` is the Object ID of a Relationship Version.
 
 ## Unlink
 
-Removes a relationship from the active semantic state.
-
-Canonical semantic content:
+Canonical semantic structure (operation kind 5):
 
 ```text
-relationship_id
-expected_version
+[
+    5,
+    relationship_id,
+    expected_version
+]
 ```
 
-The historical Relationship Version object remains in the canonical object store.
+Unlink removes the relationship mapping from the resulting `SemanticState`; it does not encode deletion or mutation of the referenced `RelationshipVersion`.
 
-## Supersede
+## SupersedeElement
 
-Represents semantic replacement while preserving traceability between previous and replacement knowledge.
-
-Its canonical structure includes enough information to identify:
-
-* Existing element
-* Expected existing version
-* Replacement element
-* Replacement version
-* Superseding relationship
-
-The complete field structure is defined by `spec/canonical-format.cddl` (operation kind 6).
-
-Supersede remains an explicit operation because it carries semantic lifecycle meaning that should not be reduced to unrelated primitive mutations.
-
-# Preconditions and Postconditions
-
-Standard operation preconditions and postconditions are defined by operation semantics.
-
-They are not redundantly encoded as separate objects.
-
-For example:
+Canonical semantic structure (operation kind 6):
 
 ```text
-UpdateElement(
-    E,
-    expected = V1,
-    new = V2
-)
+[
+    6,
+    existing_element_id,
+    expected_existing_version,
+    replacement_element_id,
+    replacement_version,
+    superseding_relationship_version
+]
 ```
 
-already defines the expected transition:
+## AccountArtifact
+
+Canonical semantic structure (operation kind 7):
 
 ```text
-E: V1 -> V2
+[
+    7,
+    artifact_id,
+    reconciliations
+]
 ```
 
-Additional explicit condition structures are outside the KAT v0.1 canonical format.
+where `reconciliations` is a non-empty array of baseline reconciliation entries:
 
-Repository invariants provide additional validation where operation-local semantics are insufficient.
+```text
+[
+    relationship_id,
+    expected_relationship_version,
+    target_element_id,
+    reconciled_target_version
+]
+```
+
+### Canonical Reconciliation Ordering Rule
+
+The entries in `reconciliations` MUST be strictly sorted lexicographically by the canonical 16-byte UUID representation of `relationship_id` (RFC 4122 UUID bytes).
+
+Duplicate `relationship_id` entries within `reconciliations` are invalid.
+
+---
+
+## Operation Contract Representation
+
+Operation preconditions and postconditions are defined by [`docs/operations.md`](operations.md) and are not encoded as separate canonical objects unless explicitly included in an operation's structural schema.
+
+Fields such as `expected_version` participate in the canonical operation payload because they are part of that operation's structural identity.
+
+The canonical format defines structural representation and binary encoding, not execution semantics.
+
+---
 
 # Hashing Procedure
 
@@ -863,58 +832,22 @@ To calculate an Object ID:
 
 1. Construct the logical canonical object.
 2. Validate that its structure conforms to the active CDDL schema.
-3. Normalize all set-like collections according to canonical sorting rules.
+3. Construct each set-like collection in its required canonical order. Existing encoded input is never normalized before identity verification. Canonical decoding must validate the received encoding as-is; decoding and re-encoding must not be used to silently canonicalize malformed input.
 4. Encode the complete object envelope using deterministic CBOR.
 5. Calculate SHA-256 over the exact encoded bytes.
 6. Use the resulting 32-byte digest as the Object ID.
 
-Conceptually:
+Object hashing must never depend on file paths, modification times, hostnames, process IDs, memory layout, or environment metadata.
 
-```text
-Object
-  |
-  v
-Normalize
-  |
-  v
-Deterministic CBOR
-  |
-  v
-SHA-256
-  |
-  v
-Object ID
-```
-
-Object hashing must never depend on:
-
-* File path
-* Modification time
-* Hostname
-* Process ID
-* Memory representation
-* Rust field order
-* Filesystem metadata
+---
 
 # Object Storage Verification
 
-When an object is loaded by Object ID, the implementation should verify its integrity.
+Canonical object integrity is verified by recomputing SHA-256 over stored canonical bytes and comparing it to the claimed `ObjectId`.
 
-Conceptually:
+Detailed storage layout, ref updates, and filesystem operations are governed by repository implementation specifications.
 
-```text
-Read object bytes
-      |
-      v
-SHA-256
-      |
-      v
-Compare with requested Object ID
-```
-
-A mismatch is a repository integrity error.
-
-Only after integrity verification should the object be interpreted semantically.
+---
 
 # Validation Layers
 
@@ -925,21 +858,20 @@ Canonical object processing distinguishes three validation layers.
 Determines whether the bytes represent a valid canonical KAT object.
 
 Includes:
-
 * Valid CBOR
 * Supported envelope version
 * Known object kind
 * Supported schema version
 * Correct field structure
 * Valid primitive types
-* Correct canonical ordering
+* Deterministic CBOR encoding
+* Canonical collection ordering
 
 ## Repository Integrity
 
 Determines whether canonical repository references are structurally valid.
 
 Includes:
-
 * Object hash matches its Object ID
 * Referenced objects exist
 * Referenced object kinds are correct
@@ -947,141 +879,58 @@ Includes:
 
 ## Semantic Validity
 
-Determines whether objects and Semantic States conform to KAT semantics.
+Determines whether objects and Semantic States conform to KAT semantic rules, including ontology conformance, operation contracts, and model invariants.
 
-Includes:
-
-* Ontology conformance
-* Relationship validity
-* Lifecycle rules
-* Preconditions
-* Postconditions
-* Invariants
-* Repository-specific semantic rules
-
-An object may be structurally valid while still being semantically invalid.
+---
 
 # Decoder Behavior
 
 Canonical object decoders must fail closed.
 
 An implementation must reject:
-
 * Unsupported envelope versions
 * Unsupported required schema versions
 * Unknown required object kinds
 * Kind/payload mismatches
 * Invalid UUID encoding
 * Invalid Object ID encoding
-* Duplicate required fields
+* Duplicate map keys where the schema requires uniqueness (including duplicate property-map keys)
 * Missing required fields
 * Non-canonical set ordering
-* Duplicate semantic identifiers in set-like structures
-* Hash mismatches
-* Invalid object references
+* Non-deterministic CBOR
 
 Canonical repository data must not be silently repaired during normal decoding.
 
-Repair tooling, if introduced later, must operate explicitly.
+---
 
-# Schema Evolution
+# Schema Evolution & Compatibility Rules
 
-KAT repository compatibility is versioned at multiple levels.
+KAT repository compatibility is versioned at multiple levels:
+* **Repository Format Version**: Stored in repository metadata.
+* **Envelope Version**: Defines common canonical-object framing.
+* **Object Schema Version**: Defines payload format per object kind.
+* **Ontology Version**: Defines semantic vocabulary and relationship rules.
 
-## Repository Format Version
-
-Stored in repository metadata.
-
-Defines overall physical repository compatibility.
-
-## Envelope Version
-
-Defines the common canonical-object framing.
-
-## Object Schema Version
-
-Defines the payload format for one object kind.
-
-Each object kind evolves independently.
-
-## Ontology Version
-
-Defines semantic vocabulary and relationship rules.
-
-Ontology evolution is independent from canonical storage-format evolution.
-
-Conceptually:
-
-```text
-Repository Format
-        |
-        +--> Canonical Envelope
-        |
-        +--> Object Schemas
-        |
-        +--> Ontology Versions
-```
-
-These versions must not be treated as interchangeable.
-
-# Compatibility Rules
-
-KAT v0.1 follows these initial compatibility rules.
-
+Rules:
 * Unsupported repository format versions must not be opened for mutation.
 * Unsupported envelope versions must be rejected.
 * Unsupported object schema versions must be rejected unless an explicit compatible decoder exists.
-* Unknown ontology types may be structurally decoded but may prevent semantic validation if the active ontology cannot interpret them.
 * Existing numeric object-kind and operation identifiers must never be reassigned.
 * Existing canonical field identifiers must not be reused with incompatible meaning.
 
-A future implementation may support read-only access to partially understood repositories.
+---
 
-That behavior is not required by v0.1.
+# Non-Normative Diagnostic Representation
 
-# Diagnostic Representation
+Canonical KAT objects are binary CBOR.
 
-Canonical KAT objects are binary.
+Tooling may provide a human-readable diagnostic representation (e.g. JSON/text) for inspection and debugging. The diagnostic representation is non-canonical and must not be used directly to calculate Object IDs.
 
-KAT should provide a human-readable diagnostic representation for inspection and debugging.
+---
 
-Example:
+# Canonical Format Properties
 
-```text
-kat object show <object-id>
-```
-
-may display:
-
-```json
-{
-  "kind": "knowledge-element-version",
-  "element_id": "7c8e0c81-b9fc-4c31-9974-b9db8fa72e51",
-  "type": "kat.core/requirement",
-  "lifecycle": "active",
-  "properties": {
-    "title": "Support refunds"
-  }
-}
-```
-
-The diagnostic representation is not canonical.
-
-It must not be used directly to calculate Object IDs.
-
-Conceptually:
-
-```text
-Canonical CBOR
-    = repository representation
-
-JSON / text
-    = diagnostic representation
-```
-
-# Canonical Format Invariants
-
-The canonical format follows these rules:
+The canonical format guarantees these properties:
 
 * Immutable object identity is derived from canonical contents.
 * Stable semantic identity remains independent from content.
@@ -1098,9 +947,11 @@ The canonical format follows these rules:
 * Canonical decoding fails closed.
 * Storage integrity and semantic validity remain separate concerns.
 
-# v0.1 Canonical Object Set
+---
 
-The canonical object set for KAT v0.1 is:
+# Canonical Object Set
+
+The canonical object set for envelope version 1 and current object schema versions is:
 
 ```text
 KnowledgeElementVersion
@@ -1110,32 +961,27 @@ SemanticState
 ChangeRevision
 ```
 
-No additional canonical object types should be introduced unless the existing conceptual model cannot preserve their required meaning.
-
-The following remain non-canonical or derived in v0.1:
+The following remain non-canonical or derived:
 
 ```text
-Operation
+Operation (embedded in ChangeRevision, not a top-level canonical object)
+Standalone Reconciliation object (reconciliations are embedded in AccountArtifact)
 History
 Semantic Diff
 Query Index
 Validation Cache
 Conflict
-Reconciliation
 Materialization Record
 Participant
 Permission
 ```
 
+---
+
 # Open Questions
 
-The following details remain to be finalized in the implementation specification:
+The following details remain open for future format extensions:
 
-* Maximum nesting or object-size limits
-* Whether empty optional property maps are omitted or encoded explicitly
-* Whether Change descriptions allow empty strings
-* Whether Change metadata beyond description belongs in v0.1
-* Whether ontology extensions require a canonical field in schema version 1
-* Whether canonical decoders must re-encode objects to verify deterministic encoding
-* How future hash-algorithm migration is represented
-
+* Maximum nesting or object-size limits in future envelope versions
+* Whether implementations must verify deterministic encoding by byte-level validation, re-encoding comparison, or another equivalent method
+* How future hash-algorithm migration is represented in envelope version 2

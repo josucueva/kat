@@ -27,10 +27,11 @@ use kat::encoding::canonical_bytes;
 use kat::encoding::canonical_object_id;
 use kat::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use kat::repository::change::{
-    ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, LinkElementInput,
-    PreconditionError, PreparedElementUpdate, PublishedLinkChange, SupersedeElementInput,
-    UnlinkElementInput, UpdateElementInput, apply_create_element, apply_deprecate_element,
-    apply_link_element, apply_supersede_element, apply_unlink_element, apply_update_element,
+    AccountArtifactInput, ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput,
+    LinkElementInput, PreconditionError, PreparedElementUpdate, PublishedLinkChange,
+    SupersedeElementInput, UnlinkElementInput, UpdateElementInput, account_artifact,
+    apply_account_artifact, apply_create_element, apply_deprecate_element, apply_link_element,
+    apply_supersede_element, apply_unlink_element, apply_update_element,
     persist_prepared_change, persist_prepared_deprecate_change, persist_prepared_link_change,
     persist_prepared_supersede_change, persist_prepared_unlink_change,
     persist_prepared_update_change, prepare_change, prepare_change_revision,
@@ -4780,4 +4781,386 @@ fn publish_unlink_conflicts_when_accepted_ref_moved_since_preparation() {
     // Now publishing the prepared unlink must fail with Conflict
     let err = publish_persisted_unlink_change(repo, persisted).unwrap_err();
     assert!(matches!(err, ChangeError::Conflict));
+}
+
+#[test]
+fn account_artifact_preconditions_not_found() {
+    let temp = tempfile::tempdir().unwrap();
+    init_repository(temp.path()).unwrap();
+    let repo = open_repository(temp.path()).unwrap();
+    let context = prepare_change(&repo).unwrap();
+    let unknown_id = ElementId::from_uuid(Uuid::from_u128(99999));
+
+    let err = apply_account_artifact(
+        &repo,
+        context,
+        AccountArtifactInput {
+            artifact_id: unknown_id,
+        },
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::ElementNotFound(id)) if id == unknown_id
+    ));
+}
+
+#[test]
+fn account_artifact_preconditions_not_an_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    init_repository(root).unwrap();
+    let repo = open_repository(root).unwrap();
+    let context = prepare_change(&repo).unwrap();
+
+    let req_id = ElementId::from_uuid(Uuid::from_u128(7701));
+    let prep = apply_create_element(
+        context,
+        CreateElementInput {
+            element_id: req_id,
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("Req".into()))],
+        },
+    )
+    .unwrap();
+    let ont = validate_create_element_ontology(prep).unwrap();
+    let val = validate_create_element_invariants(ont).unwrap();
+    let rev = prepare_change_revision(val, ChangeId::new(), None).unwrap();
+    let pers = persist_prepared_change(&repo, rev).unwrap();
+    publish_persisted_change(&repo, pers).unwrap();
+
+    let repo2 = open_repository(root).unwrap();
+    let ctx2 = prepare_change(&repo2).unwrap();
+    let err = apply_account_artifact(
+        &repo2,
+        ctx2,
+        AccountArtifactInput {
+            artifact_id: req_id,
+        },
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(
+            &err,
+            ChangeError::Precondition(PreconditionError::NotAnArtifact(id)) if *id == req_id
+        ),
+        "err: {err:?}"
+    );
+}
+
+#[test]
+fn account_artifact_preconditions_no_accountability_relationships() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    init_repository(root).unwrap();
+    let repo = open_repository(root).unwrap();
+    let context = prepare_change(&repo).unwrap();
+
+    let art_id = ElementId::from_uuid(Uuid::from_u128(7702));
+    let prep = apply_create_element(
+        context,
+        CreateElementInput {
+            element_id: art_id,
+            type_id: "kat.core/artifact".into(),
+            properties: vec![("title".into(), PropertyValue::Text("doc.md".into()))],
+        },
+    )
+    .unwrap();
+    let ont = validate_create_element_ontology(prep).unwrap();
+    let val = validate_create_element_invariants(ont).unwrap();
+    let rev = prepare_change_revision(val, ChangeId::new(), None).unwrap();
+    let pers = persist_prepared_change(&repo, rev).unwrap();
+    publish_persisted_change(&repo, pers).unwrap();
+
+    let repo2 = open_repository(root).unwrap();
+    let ctx2 = prepare_change(&repo2).unwrap();
+    let err = apply_account_artifact(
+        &repo2,
+        ctx2,
+        AccountArtifactInput {
+            artifact_id: art_id,
+        },
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(
+            &err,
+            ChangeError::Precondition(PreconditionError::NoAccountabilityRelationships(id)) if *id == art_id
+        ),
+        "err: {err:?}"
+    );
+}
+
+#[test]
+fn account_artifact_end_to_end_single_operation() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    init_repository(root).unwrap();
+
+    let repo0 = open_repository(root).unwrap();
+    let art_id = ElementId::from_uuid(Uuid::from_u128(7703));
+    let ctx0 = prepare_change(&repo0).unwrap();
+    let prep0 = apply_create_element(
+        ctx0,
+        CreateElementInput {
+            element_id: art_id,
+            type_id: "kat.core/artifact".into(),
+            properties: vec![("title".into(), PropertyValue::Text("doc.md".into()))],
+        },
+    )
+    .unwrap();
+    let ont0 = validate_create_element_ontology(prep0).unwrap();
+    let val0 = validate_create_element_invariants(ont0).unwrap();
+    let rev0 = prepare_change_revision(val0, ChangeId::new(), None).unwrap();
+    let pers0 = persist_prepared_change(&repo0, rev0).unwrap();
+    publish_persisted_change(&repo0, pers0).unwrap();
+
+    let repo1 = open_repository(root).unwrap();
+    let req_id = ElementId::from_uuid(Uuid::from_u128(7704));
+    let ctx1 = prepare_change(&repo1).unwrap();
+    let prep1 = apply_create_element(
+        ctx1,
+        CreateElementInput {
+            element_id: req_id,
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("Req v1".into()))],
+        },
+    )
+    .unwrap();
+    let ont1 = validate_create_element_ontology(prep1).unwrap();
+    let val1 = validate_create_element_invariants(ont1).unwrap();
+    let rev1 = prepare_change_revision(val1, ChangeId::new(), None).unwrap();
+    let pers1 = persist_prepared_change(&repo1, rev1).unwrap();
+    let pub1 = publish_persisted_change(&repo1, pers1).unwrap();
+    let req_v1 = pub1.persisted.prepared.creation.element_version_id;
+
+    let repo2 = open_repository(root).unwrap();
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(7705));
+    let ctx2 = prepare_change(&repo2).unwrap();
+    let prep2 = apply_link_element(
+        &repo2,
+        ctx2,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/derived-from".into(),
+            source_element_id: art_id,
+            target_element_id: req_id,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+    let ont2 = validate_link_element_ontology(prep2).unwrap();
+    let val2 = validate_link_element_invariants(ont2).unwrap();
+    let rev2 = prepare_link_change_revision(val2, ChangeId::new(), None).unwrap();
+    let pers2 = persist_prepared_link_change(&repo2, rev2).unwrap();
+    publish_persisted_link_change(&repo2, pers2).unwrap();
+
+    // Update requirement
+    let repo3 = open_repository(root).unwrap();
+    let ctx3 = prepare_change(&repo3).unwrap();
+    let prep3 = apply_update_element(
+        &repo3,
+        ctx3,
+        UpdateElementInput {
+            element_id: req_id,
+            expected_version: req_v1,
+            properties: vec![("title".into(), PropertyValue::Text("Req v2".into()))],
+        },
+    )
+    .unwrap();
+    let ont3 = validate_update_element_ontology(prep3).unwrap();
+    let val3 = validate_update_element_invariants(ont3).unwrap();
+    let rev3 = prepare_update_change_revision(val3, ChangeId::new(), None).unwrap();
+    let pers3 = persist_prepared_update_change(&repo3, rev3).unwrap();
+    publish_persisted_update_change(&repo3, pers3).unwrap();
+
+    // Account artifact
+    let repo4 = open_repository(root).unwrap();
+    let pub_acc = account_artifact(
+        &repo4,
+        AccountArtifactInput { artifact_id: art_id },
+        Some("Re-baselined doc.md".into()),
+    )
+    .unwrap();
+
+    assert_eq!(pub_acc.persisted.prepared.account.artifact_id, art_id);
+    assert_eq!(pub_acc.persisted.prepared.account.reconciliations.len(), 1);
+}
+
+#[test]
+fn account_artifact_already_current_rejected_as_noop() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    init_repository(root).unwrap();
+
+    let repo0 = open_repository(root).unwrap();
+    let art_id = ElementId::from_uuid(Uuid::from_u128(8801));
+    let ctx0 = prepare_change(&repo0).unwrap();
+    let prep0 = apply_create_element(
+        ctx0,
+        CreateElementInput {
+            element_id: art_id,
+            type_id: "kat.core/artifact".into(),
+            properties: vec![("title".into(), PropertyValue::Text("doc.md".into()))],
+        },
+    )
+    .unwrap();
+    let ont0 = validate_create_element_ontology(prep0).unwrap();
+    let val0 = validate_create_element_invariants(ont0).unwrap();
+    let rev0 = prepare_change_revision(val0, ChangeId::new(), None).unwrap();
+    let pers0 = persist_prepared_change(&repo0, rev0).unwrap();
+    publish_persisted_change(&repo0, pers0).unwrap();
+
+    let repo1 = open_repository(root).unwrap();
+    let req_id = ElementId::from_uuid(Uuid::from_u128(8802));
+    let ctx1 = prepare_change(&repo1).unwrap();
+    let prep1 = apply_create_element(
+        ctx1,
+        CreateElementInput {
+            element_id: req_id,
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("Req v1".into()))],
+        },
+    )
+    .unwrap();
+    let ont1 = validate_create_element_ontology(prep1).unwrap();
+    let val1 = validate_create_element_invariants(ont1).unwrap();
+    let rev1 = prepare_change_revision(val1, ChangeId::new(), None).unwrap();
+    let pers1 = persist_prepared_change(&repo1, rev1).unwrap();
+    publish_persisted_change(&repo1, pers1).unwrap();
+
+    let repo2 = open_repository(root).unwrap();
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(8803));
+    let ctx2 = prepare_change(&repo2).unwrap();
+    let prep2 = apply_link_element(
+        &repo2,
+        ctx2,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/derived-from".into(),
+            source_element_id: art_id,
+            target_element_id: req_id,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+    let ont2 = validate_link_element_ontology(prep2).unwrap();
+    let val2 = validate_link_element_invariants(ont2).unwrap();
+    let rev2 = prepare_link_change_revision(val2, ChangeId::new(), None).unwrap();
+    let pers2 = persist_prepared_link_change(&repo2, rev2).unwrap();
+    publish_persisted_link_change(&repo2, pers2).unwrap();
+
+    // Artifact doc.md is already CURRENT (target requirement version has not changed)
+    let repo3 = open_repository(root).unwrap();
+    let err = account_artifact(
+        &repo3,
+        AccountArtifactInput { artifact_id: art_id },
+        None,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::NoEffectiveChange)
+    ));
+}
+
+#[test]
+fn account_artifact_target_deprecated_rejected() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    init_repository(root).unwrap();
+
+    let repo0 = open_repository(root).unwrap();
+    let art_id = ElementId::from_uuid(Uuid::from_u128(8811));
+    let ctx0 = prepare_change(&repo0).unwrap();
+    let prep0 = apply_create_element(
+        ctx0,
+        CreateElementInput {
+            element_id: art_id,
+            type_id: "kat.core/artifact".into(),
+            properties: vec![("title".into(), PropertyValue::Text("doc.md".into()))],
+        },
+    )
+    .unwrap();
+    let ont0 = validate_create_element_ontology(prep0).unwrap();
+    let val0 = validate_create_element_invariants(ont0).unwrap();
+    let rev0 = prepare_change_revision(val0, ChangeId::new(), None).unwrap();
+    let pers0 = persist_prepared_change(&repo0, rev0).unwrap();
+    publish_persisted_change(&repo0, pers0).unwrap();
+
+    let repo1 = open_repository(root).unwrap();
+    let req_id = ElementId::from_uuid(Uuid::from_u128(8812));
+    let ctx1 = prepare_change(&repo1).unwrap();
+    let prep1 = apply_create_element(
+        ctx1,
+        CreateElementInput {
+            element_id: req_id,
+            type_id: "kat.core/requirement".into(),
+            properties: vec![("title".into(), PropertyValue::Text("Req v1".into()))],
+        },
+    )
+    .unwrap();
+    let ont1 = validate_create_element_ontology(prep1).unwrap();
+    let val1 = validate_create_element_invariants(ont1).unwrap();
+    let rev1 = prepare_change_revision(val1, ChangeId::new(), None).unwrap();
+    let pers1 = persist_prepared_change(&repo1, rev1).unwrap();
+    let pub1 = publish_persisted_change(&repo1, pers1).unwrap();
+    let req_v1 = pub1.persisted.prepared.creation.element_version_id;
+
+    let repo2 = open_repository(root).unwrap();
+    let rel_id = RelationshipId::from_uuid(Uuid::from_u128(8813));
+    let ctx2 = prepare_change(&repo2).unwrap();
+    let prep2 = apply_link_element(
+        &repo2,
+        ctx2,
+        LinkElementInput {
+            relationship_id: rel_id,
+            relationship_type_id: "kat.core/derived-from".into(),
+            source_element_id: art_id,
+            target_element_id: req_id,
+            properties: vec![],
+        },
+    )
+    .unwrap();
+    let ont2 = validate_link_element_ontology(prep2).unwrap();
+    let val2 = validate_link_element_invariants(ont2).unwrap();
+    let rev2 = prepare_link_change_revision(val2, ChangeId::new(), None).unwrap();
+    let pers2 = persist_prepared_link_change(&repo2, rev2).unwrap();
+    publish_persisted_link_change(&repo2, pers2).unwrap();
+
+    // Deprecate requirement
+    let repo3 = open_repository(root).unwrap();
+    let ctx3 = prepare_change(&repo3).unwrap();
+    let prep3 = apply_deprecate_element(
+        &repo3,
+        ctx3,
+        DeprecateElementInput {
+            element_id: req_id,
+            expected_version: req_v1,
+        },
+    )
+    .unwrap();
+    let ont3 = validate_deprecate_element_ontology(prep3).unwrap();
+    let val3 = validate_deprecate_element_invariants(ont3).unwrap();
+    let rev3 = prepare_deprecate_change_revision(val3, ChangeId::new(), None).unwrap();
+    let pers3 = persist_prepared_deprecate_change(&repo3, rev3).unwrap();
+    publish_persisted_deprecate_change(&repo3, pers3).unwrap();
+
+    // Attempt kat account on artifact whose target requirement is deprecated -> fails with ElementNotActive
+    let repo4 = open_repository(root).unwrap();
+    let err = account_artifact(
+        &repo4,
+        AccountArtifactInput { artifact_id: art_id },
+        None,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ChangeError::Precondition(PreconditionError::ElementNotActive(id)) if id == req_id
+    ));
 }

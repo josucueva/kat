@@ -51,7 +51,8 @@ use kat::repository::resolve::{
 use kat::repository::validation::repository::{ValidationReport, validate_repository};
 
 use kat::repository::change::{
-    StagedOperationInput, commit_draft_session, stage_operation_into_session,
+    AccountArtifactInput, StagedOperationInput, account_artifact, commit_draft_session,
+    stage_operation_into_session,
 };
 use kat::repository::session::{
     DraftSessionError, abort_draft_session, begin_draft_session, has_draft_session,
@@ -105,6 +106,10 @@ fn main() -> ExitCode {
             relationship_id,
             description,
         } => run_unlink(relationship_id, description),
+        Command::Account {
+            artifact_id,
+            description,
+        } => run_account(artifact_id, description),
         Command::Show {
             element_id,
             compact,
@@ -296,7 +301,7 @@ fn print_element_list(elements: &[ElementView]) {
 fn is_mutation_cmd(cmd: &str) -> bool {
     matches!(
         cmd,
-        "update" | "deprecate" | "supersede" | "link" | "unlink"
+        "update" | "deprecate" | "supersede" | "link" | "unlink" | "account"
     )
 }
 
@@ -445,6 +450,7 @@ fn format_operation_name(operation: &Operation) -> &'static str {
         Operation::Supersede { .. } => "supersede element",
         Operation::Link { .. } => "link",
         Operation::Unlink { .. } => "unlink",
+        Operation::AccountArtifact { .. } => "account artifact",
     }
 }
 
@@ -1606,6 +1612,72 @@ fn fail_unlink(error: ChangeError) -> ExitCode {
     ExitCode::FAILURE
 }
 
+/// `kat account <artifact-id> [--description "..."]` —
+/// re-baselines direct accountability relationships of an artifact.
+fn run_account(artifact_id_str: String, description: Option<String>) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("kat account: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let artifact_id = match resolve_cli_element_id(&repository, &artifact_id_str, "account") {
+        Ok(id) => id,
+        Err(code) => return code,
+    };
+
+    let root = repository.root_dir();
+    if has_draft_session(root) {
+        let mut session = match read_draft_session(root) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("kat account: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let input = AccountArtifactInput { artifact_id };
+        let op = match stage_operation_into_session(
+            &repository,
+            &mut session,
+            StagedOperationInput::AccountArtifact(input),
+        ) {
+            Ok(op) => op,
+            Err(err) => {
+                eprintln!("kat account: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        println!("staged account artifact");
+        println!("  artifact_id:       {artifact_id}");
+        if let Operation::AccountArtifact { reconciliations, .. } = op {
+            println!("  reconciliations:   {}", reconciliations.len());
+        }
+        println!("  change operations: {}", session.operations.len());
+        return ExitCode::SUCCESS;
+    }
+
+    let input = AccountArtifactInput { artifact_id };
+    match account_artifact(&repository, input, description) {
+        Ok(published) => {
+            let prep = &published.persisted.prepared;
+            println!("artifact_id: {}", prep.account.artifact_id);
+            println!("reconciliations: {}", prep.account.reconciliations.len());
+            println!("state_id: {}", prep.state_id);
+            println!("change_id: {}", prep.change.change_id);
+            println!("change_revision_id: {}", prep.change_revision_id);
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("kat account: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn run_show(element_id_str: String, compact: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
@@ -2314,6 +2386,13 @@ fn print_operation_details(operation: &Operation) {
                 short_object_id(superseding_relationship)
             );
         }
+        Operation::AccountArtifact {
+            artifact_id,
+            reconciliations,
+        } => {
+            println!("      artifact:        {artifact_id}");
+            println!("      reconciliations: {}", reconciliations.len());
+        }
     }
 }
 
@@ -2653,6 +2732,16 @@ fn cmd_change_status(compact: bool) -> ExitCode {
                 } => {
                     let short_id = &relationship_id.to_string()[..8];
                     println!("  {num}. unlink relationship {short_id}");
+                }
+                Operation::AccountArtifact {
+                    artifact_id,
+                    reconciliations,
+                } => {
+                    let short_id = &artifact_id.to_string()[..8];
+                    println!(
+                        "  {num}. account artifact {short_id} (reconciliations: {})",
+                        reconciliations.len()
+                    );
                 }
             }
         }

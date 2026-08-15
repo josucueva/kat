@@ -60,6 +60,26 @@ pub enum Operation {
         /// ObjectId of the superseding RelationshipVersion linking them.
         superseding_relationship: ObjectId,
     },
+    /// `7` — re-baseline direct accountability relationships of an artifact.
+    AccountArtifact {
+        /// Stable artifact element identity.
+        artifact_id: ElementId,
+        /// List of relationship baseline reconciliations.
+        reconciliations: Vec<RelationshipReconciliation>,
+    },
+}
+
+/// Individual relationship baseline reconciliation entry for `AccountArtifact`.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct RelationshipReconciliation {
+    /// Stable relationship identity.
+    pub relationship_id: RelationshipId,
+    /// Expected relationship version currently active in state.
+    pub expected_relationship_version: ObjectId,
+    /// Target element identity.
+    pub target_element_id: ElementId,
+    /// Exact target KnowledgeElementVersion ObjectId reconciled against.
+    pub reconciled_target_version: ObjectId,
 }
 
 #[cfg(test)]

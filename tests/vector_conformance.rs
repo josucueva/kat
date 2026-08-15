@@ -168,6 +168,20 @@ fn operation(v: &Value) -> Operation {
             replacement_version: object_id(&v["replacement_version"]),
             superseding_relationship: object_id(&v["superseding_relationship"]),
         },
+        "account-artifact" => Operation::AccountArtifact {
+            artifact_id: ElementId::from_uuid(uuid_str(&v["artifact_id"])),
+            reconciliations: v["reconciliations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| kat::domain::operation::RelationshipReconciliation {
+                    relationship_id: RelationshipId::from_uuid(uuid_str(&r["relationship_id"])),
+                    expected_relationship_version: object_id(&r["expected_relationship_version"]),
+                    target_element_id: ElementId::from_uuid(uuid_str(&r["target_element_id"])),
+                    reconciled_target_version: object_id(&r["reconciled_target_version"]),
+                })
+                .collect(),
+        },
         other => panic!("unknown operation kind {other}"),
     }
 }

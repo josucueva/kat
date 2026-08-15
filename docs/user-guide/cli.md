@@ -117,7 +117,7 @@ KAT supports multi-operation change transactions:
 - `kat change commit`: Validates candidate $S_{\text{working}}$, persists canonical objects, publishes single `ChangeRevision` via CAS ($S_n \to S_{\text{new}}$), and cleans up `.kat/draft.json`.
 - `kat change abort`: Discards draft session `.kat/draft.json`. Standard read commands (`status`, `list`, `show`, `history`, `trace`, `impact`, `validate`, `artifacts`) inspect accepted state $S_n$ only.
 
-See [`docs/v0-2-multi-op-change-design.md`](v0-2-multi-op-change-design.md) for complete transactional semantics.
+See [`multi-op-change-design.md`](../implementation/v0.2/multi-op-change-design.md) for complete transactional semantics.
 
 ## Unique-Prefix ID Resolution (v0.2)
 

@@ -3123,3 +3123,164 @@ fn kat_change_cas_conflict_stale_session() {
     let (status_after, _, _) = run_kat(root, &["change", "status"]);
     assert!(status_after.contains("no open draft change transaction found"));
 }
+
+#[test]
+fn phase15_acceptance_cli_flow_end_to_end() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+
+    // 1. kat init
+    run_kat(root, &["init"]);
+
+    // 2. Create artifact and requirement
+    let (art_out, _, ok1) = run_kat(root, &["create", "artifact", "--title", "styles.css"]);
+    assert!(ok1);
+    let art_id = id_line(&art_out, "element_id");
+    let art_short = &art_id[..8];
+
+    let (req_out, _, ok2) = run_kat(root, &["create", "requirement", "--title", "Layout Spec v1"]);
+    assert!(ok2);
+    let req_id = id_line(&req_out, "element_id");
+    let req_short = &req_id[..8];
+
+    // 3. Link artifact --derived-from--> requirement
+    let (link_out, link_err, ok3) = run_kat(root, &["link", "derived-from", art_short, req_short]);
+    assert!(ok3, "link failed: out={link_out}, err={link_err}");
+
+    // 4. Verify kat artifacts shows current
+    let (arts_1, _, ok_arts1) = run_kat(root, &["artifacts"]);
+    assert!(ok_arts1);
+    assert!(arts_1.contains("current"));
+    assert!(arts_1.contains("styles.css"));
+
+    // 5. Update requirement -> kat artifacts becomes stale (and exits with non-zero status for CI)
+    let (up_out, up_err, ok4) = run_kat(root, &["update", req_short, "--title", "Layout Spec v2"]);
+    assert!(ok4, "update failed: out={up_out}, err={up_err}");
+
+    let (arts_2, _, ok_arts2) = run_kat(root, &["artifacts"]);
+    assert!(!ok_arts2); // kat artifacts fails when stale artifacts exist
+    assert!(arts_2.contains("stale"));
+
+    // 6. kat account <artifact> (first-class re-accountability operation)
+    let (acc_out, _, ok5) = run_kat(
+        root,
+        &[
+            "account",
+            art_short,
+            "--description",
+            "Reconciled styles.css against Layout Spec v2",
+        ],
+    );
+    assert!(ok5, "account failed: {acc_out}");
+
+    // 7. Verify kat artifacts is current again (without unlink/link ceremony!)
+    let (arts_3, _, ok_arts3) = run_kat(root, &["artifacts"]);
+    assert!(ok_arts3);
+    assert!(arts_3.contains("current:      1"));
+    assert!(arts_3.contains("stale:        0"));
+
+    // 8. Verify kat history --oneline records account artifact operation
+    let (hist_out, _, ok_hist) = run_kat(root, &["history", "--oneline"]);
+    assert!(ok_hist);
+    assert!(hist_out.contains("account artifact"));
+
+    // 9. Verify kat validate returns clean
+    let (val_out, _, ok_val) = run_kat(root, &["validate"]);
+    assert!(ok_val);
+    assert!(val_out.contains("violations:             0"));
+}
+
+#[test]
+fn phase15_staged_multi_op_account_composition() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+
+    run_kat(root, &["init"]);
+
+    let (art_out, _, ok1) = run_kat(root, &["create", "artifact", "--title", "component.tsx"]);
+    assert!(ok1);
+    let art_short = &id_line(&art_out, "element_id")[..8];
+
+    let (req_out, _, ok2) = run_kat(root, &["create", "requirement", "--title", "Spec v1"]);
+    assert!(ok2);
+    let req_short = &id_line(&req_out, "element_id")[..8];
+
+    run_kat(root, &["link", "derived-from", art_short, req_short]);
+
+    // Open multi-op change transaction
+    let (_, _, ok_begin) = run_kat(
+        root,
+        &[
+            "change",
+            "begin",
+            "--description",
+            "Evolve spec and reconcile component in one change",
+        ],
+    );
+    assert!(ok_begin);
+
+    // Stage 1: update requirement in candidate state
+    let (up_out, _, ok_up) = run_kat(root, &["update", req_short, "--title", "Spec v2"]);
+    assert!(ok_up, "staged update failed: {up_out}");
+    assert!(up_out.contains("staged update"));
+
+    // Stage 2: account artifact (observes updated requirement version in S_working!)
+    let (acc_out, _, ok_acc) = run_kat(root, &["account", art_short]);
+    assert!(ok_acc, "staged account failed: {acc_out}");
+    assert!(acc_out.contains("staged account artifact"));
+
+    // Commit draft transaction
+    let (cm_out, _, ok_cm) = run_kat(root, &["change", "commit"]);
+    assert!(ok_cm, "commit failed: {cm_out}");
+
+    // Verify artifacts is current
+    let (arts_out, _, ok_arts) = run_kat(root, &["artifacts"]);
+    assert!(ok_arts);
+    assert!(arts_out.contains("current:      1"));
+
+    // Verify single revision in history containing both operations
+    let (hist_out, _, ok_hist) = run_kat(root, &["history"]);
+    assert!(ok_hist);
+    assert!(hist_out.contains("update element") || hist_out.contains("update"), "hist_out: {hist_out}");
+    assert!(hist_out.contains("account artifact"), "hist_out: {hist_out}");
+}
+
+#[test]
+fn phase15_multiple_accountability_edges_reconciliation() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+
+    run_kat(root, &["init"]);
+
+    let (art_out, _, _) = run_kat(root, &["create", "artifact", "--title", "app.ts"]);
+    let art_short = &id_line(&art_out, "element_id")[..8];
+
+    let (req_out, _, _) = run_kat(root, &["create", "requirement", "--title", "Req 1"]);
+    let req_short = &id_line(&req_out, "element_id")[..8];
+
+    let (imp_out, _, _) = run_kat(root, &["create", "implementation", "--title", "Impl 1"]);
+    let imp_short = &id_line(&imp_out, "element_id")[..8];
+
+    run_kat(root, &["link", "derived-from", art_short, req_short]);
+    run_kat(root, &["link", "derived-from", art_short, imp_short]);
+
+    let (arts_init, _, _) = run_kat(root, &["artifacts"]);
+    assert!(arts_init.contains("current:      1"));
+
+    // Update both upstream elements
+    run_kat(root, &["update", req_short, "--title", "Req 2"]);
+    run_kat(root, &["update", imp_short, "--title", "Impl 2"]);
+
+    let (arts_stale, _, ok_stale) = run_kat(root, &["artifacts"]);
+    assert!(!ok_stale); // non-zero exit when stale
+    assert!(arts_stale.contains("stale:        1"));
+
+    // kat account app.ts reconciles BOTH accountability relationships
+    let (acc_out, _, ok_acc) = run_kat(root, &["account", art_short]);
+    assert!(ok_acc, "account failed: {acc_out}");
+
+    let (arts_curr, _, ok_curr) = run_kat(root, &["artifacts"]);
+    assert!(ok_curr);
+    assert!(arts_curr.contains("current:      1"));
+    assert!(arts_curr.contains("stale:        0"));
+}
