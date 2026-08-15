@@ -8,6 +8,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::str::FromStr;
 
+use kat::domain::element::Lifecycle;
 use kat::domain::identity::{ChangeId, ElementId, ObjectId, RelationshipId};
 use kat::domain::ontology::OntologyVersion;
 use kat::domain::operation::Operation;
@@ -131,34 +132,70 @@ fn run_status() -> ExitCode {
     }
 }
 
-fn print_repository_status(status: &RepositoryStatus) {
-    let abbreviate = |id: &ObjectId| -> String {
-        let s = id.to_string();
-        if s.len() >= 12 {
-            s[..12].to_string()
-        } else {
-            s
-        }
-    };
+// ---------------------------------------------------------------------------
+// Centralized CLI Presentation Formatting Helpers
+// (Ref: docs/cli-presentation.md)
+// ---------------------------------------------------------------------------
 
+/// Abbreviates a content-addressed `ObjectId` hex digest to 12 characters for display.
+fn short_object_id(id: &ObjectId) -> String {
+    let s = id.to_string();
+    if s.len() >= 12 {
+        s[..12].to_string()
+    } else {
+        s
+    }
+}
+
+/// Formats an operation as a human-readable space-separated string.
+fn format_operation_name(operation: &Operation) -> &'static str {
+    match operation {
+        Operation::CreateElement { .. } => "create element",
+        Operation::UpdateElement { .. } => "update element",
+        Operation::DeprecateElement { .. } => "deprecate element",
+        Operation::Supersede { .. } => "supersede element",
+        Operation::Link { .. } => "link",
+        Operation::Unlink { .. } => "unlink",
+    }
+}
+
+/// Formats element lifecycle in lowercase.
+fn format_lifecycle(lifecycle: Lifecycle) -> &'static str {
+    match lifecycle {
+        Lifecycle::Active => "active",
+        Lifecycle::Deprecated => "deprecated",
+        Lifecycle::Superseded => "superseded",
+    }
+}
+
+/// Formats artifact accountability status in lowercase.
+fn format_accountability_status(status: ArtifactAccountabilityStatus) -> &'static str {
+    match status {
+        ArtifactAccountabilityStatus::Current => "current",
+        ArtifactAccountabilityStatus::Stale => "stale",
+        ArtifactAccountabilityStatus::Unaccounted => "unaccounted",
+    }
+}
+
+fn print_repository_status(status: &RepositoryStatus) {
     println!("KAT repository");
     println!();
     println!("Repository");
     println!("  repository:  {}", status.repository_id);
     println!("  software:    {}", status.software_id);
-    println!("  state:       {}", abbreviate(&status.state_id));
+    println!("  state:       {}", short_object_id(&status.state_id));
 
     if let Some(change_id) = status.change_id {
-        println!("  change:      {}", abbreviate(&change_id));
+        println!("  change:      {}", short_object_id(&change_id));
     } else {
         println!("  change:      none");
     }
-    println!("  ontology:    {}", abbreviate(&status.ontology_id));
+    println!("  ontology:    {}", short_object_id(&status.ontology_id));
 
     if let Some(ref latest) = status.latest_change {
         println!();
         println!("Latest change");
-        println!("  revision:    {}", abbreviate(&latest.revision_id));
+        println!("  revision:    {}", short_object_id(&latest.revision_id));
         println!("  operation:   {}", latest.operation_kind);
         println!(
             "  description: {}",
@@ -1006,13 +1043,7 @@ fn run_show(element_id_str: String) -> ExitCode {
     };
     match show_element(&repository, element_id) {
         Ok(view) => {
-            println!("element_id: {}", view.element_id);
-            println!("version_id: {}", view.version_id);
-            println!("type: {}", view.element.type_id);
-            println!("lifecycle: {}", view.element.lifecycle);
-            for (key, value) in &view.element.properties {
-                println!("{key}: {value}");
-            }
+            print_show_element_view(&view);
             ExitCode::SUCCESS
         }
         Err(QueryError::ElementNotFound(id)) => {
@@ -1026,6 +1057,64 @@ fn run_show(element_id_str: String) -> ExitCode {
     }
 }
 
+fn print_show_element_view(view: &kat::repository::query::ElementView) {
+    println!("Element {}", view.element_id);
+    println!();
+    println!("Identity");
+    println!("  version:     {}", short_object_id(&view.version_id));
+    println!("  type:        {}", view.element.type_id);
+    println!(
+        "  lifecycle:   {}",
+        format_lifecycle(view.element.lifecycle)
+    );
+
+    println!();
+    println!("Details");
+    let title = view
+        .element
+        .properties
+        .iter()
+        .find(|(k, _)| k == "title")
+        .and_then(|(_, v)| match v {
+            PropertyValue::Text(t) => Some(t.as_str()),
+            _ => None,
+        })
+        .unwrap_or("none");
+    println!("  title:       {title}");
+
+    let description = view
+        .element
+        .properties
+        .iter()
+        .find(|(k, _)| k == "description")
+        .and_then(|(_, v)| match v {
+            PropertyValue::Text(d) => Some(d.as_str()),
+            _ => None,
+        })
+        .unwrap_or("none");
+    println!("  description: {description}");
+
+    println!();
+    println!("Properties");
+    let other_props: Vec<_> = view
+        .element
+        .properties
+        .iter()
+        .filter(|(k, _)| k != "title" && k != "description")
+        .collect();
+    if other_props.is_empty() {
+        println!("  none");
+    } else {
+        for (k, v) in other_props {
+            println!("  {k}: {v}");
+        }
+    }
+
+    println!();
+    println!("Relationships");
+    println!("  none");
+}
+
 fn cmd_history() -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
@@ -1036,6 +1125,10 @@ fn cmd_history() -> ExitCode {
     };
     match history(&repository) {
         Ok(entries) => {
+            let count = entries.len();
+            let noun = if count == 1 { "revision" } else { "revisions" };
+            println!("Accepted change history ({count} {noun})");
+            println!();
             for (i, entry) in entries.iter().enumerate() {
                 if i > 0 {
                     println!();
@@ -1084,34 +1177,43 @@ fn run_trace(element_id_str: String) -> ExitCode {
 }
 
 fn print_trace_result(repository: &Repository, result: &TraceResult) {
-    println!("element_id: {}", result.root_element_id);
+    println!("Trace origin for element {}", result.root_element_id);
     if let Ok(view) = show_element(repository, result.root_element_id) {
-        println!("type: {}", view.element.type_id);
-        println!("lifecycle: {}", view.element.lifecycle);
+        println!("  type:        {}", view.element.type_id);
+        println!(
+            "  lifecycle:   {}",
+            format_lifecycle(view.element.lifecycle)
+        );
         if let Some((_, PropertyValue::Text(title))) =
             view.element.properties.iter().find(|(k, _)| k == "title")
         {
-            println!("title: {title}");
+            println!("  title:       \"{title}\"");
         }
     }
 
+    println!();
     if result.paths.is_empty() {
-        println!("origin: none");
+        println!("Origin paths");
+        println!("  none");
         return;
     }
 
-    println!("origin_paths:");
     for (path_idx, path) in result.paths.iter().enumerate() {
-        println!("  path {}:", path_idx + 1);
-        for step in &path.steps {
+        if path_idx > 0 {
+            println!();
+        }
+        println!("Path {}", path_idx + 1);
+        for (step_idx, step) in path.steps.iter().enumerate() {
             let dir_label = match step.direction {
-                TraversalDirection::Forward => "forward",
-                TraversalDirection::Backward => "backward",
+                TraversalDirection::Forward => "forward ->",
+                TraversalDirection::Backward => "backward <-",
             };
-            print!(
-                "    - via {} ({dir_label}) -> {}",
-                step.relationship_type_id, step.to_element_id
-            );
+            println!("  Step {}", step_idx + 1);
+            println!("    from:          {}", step.from_element_id);
+            println!("    relationship:  {}", step.relationship_id);
+            println!("    type:          {}", step.relationship_type_id);
+            println!("    direction:     {dir_label}");
+            print!("    to:            {}", step.to_element_id);
             if let Ok(target_view) = show_element(repository, step.to_element_id) {
                 print!(" [{}]", target_view.element.type_id);
                 if let Some((_, PropertyValue::Text(title))) = target_view
@@ -1172,37 +1274,52 @@ fn run_impact(element_id_str: String) -> ExitCode {
 ///     via kat.core/represents (backward) -> <impl_id>
 /// ```
 fn print_impact_result(repository: &Repository, result: &ImpactResult) {
-    println!("directly_changed:");
-    for id in &result.directly_changed {
-        print!("  {id}");
-        if let Ok(view) = show_element(repository, *id) {
-            print!(" [{}]", view.element.type_id);
-            print_title_property(&view.element.properties);
-        }
-        println!();
+    if let Some(root_id) = result.directly_changed.first() {
+        println!("Impact analysis for element {root_id}");
+    } else {
+        println!("Impact analysis");
     }
 
     println!();
-    println!("semantically_affected:");
+    println!("Directly changed");
+    if result.directly_changed.is_empty() {
+        println!("  none");
+    } else {
+        for id in &result.directly_changed {
+            print!("  Element {id}");
+            if let Ok(view) = show_element(repository, *id) {
+                print!(" [{}]", view.element.type_id);
+                print_title_property(&view.element.properties);
+            }
+            println!();
+        }
+    }
+
+    println!();
+    let sem_count = result.semantically_affected.len();
+    println!("Semantically affected elements ({sem_count})");
     if result.semantically_affected.is_empty() {
         println!("  none");
     } else {
         for elem in &result.semantically_affected {
-            print!("  {}", elem.element_id);
+            print!("  Element {}", elem.element_id);
             print!(" [{}]", elem.type_id);
             if let Ok(view) = show_element(repository, elem.element_id) {
                 print_title_property(&view.element.properties);
             }
             println!();
-            for path in &elem.paths {
-                for step in &path.steps {
+            for (path_idx, path) in elem.paths.iter().enumerate() {
+                for (step_idx, step) in path.steps.iter().enumerate() {
                     let dir_label = match step.direction {
-                        TraversalDirection::Forward => "forward",
-                        TraversalDirection::Backward => "backward",
+                        TraversalDirection::Forward => "forward ->",
+                        TraversalDirection::Backward => "backward <-",
                     };
                     println!(
-                        "    via {} ({dir_label}) -> {}",
-                        step.relationship_type_id, step.from_element_id
+                        "    path {}, step {}: via {} ({dir_label}) from {}",
+                        path_idx + 1,
+                        step_idx + 1,
+                        step.relationship_type_id,
+                        step.from_element_id
                     );
                 }
             }
@@ -1210,31 +1327,42 @@ fn print_impact_result(repository: &Repository, result: &ImpactResult) {
     }
 
     println!();
-    println!("affected_artifacts:");
+    let art_count = result.affected_artifacts.len();
+    println!("Affected artifacts ({art_count})");
     if result.affected_artifacts.is_empty() {
         println!("  none");
     } else {
         for elem in &result.affected_artifacts {
-            print!("  {}", elem.element_id);
+            print!("  Artifact {}", elem.element_id);
             print!(" [{}]", elem.type_id);
             if let Ok(view) = show_element(repository, elem.element_id) {
                 print_title_property(&view.element.properties);
             }
             println!();
-            for path in &elem.paths {
-                for step in &path.steps {
+            for (path_idx, path) in elem.paths.iter().enumerate() {
+                for (step_idx, step) in path.steps.iter().enumerate() {
                     let dir_label = match step.direction {
-                        TraversalDirection::Forward => "forward",
-                        TraversalDirection::Backward => "backward",
+                        TraversalDirection::Forward => "forward ->",
+                        TraversalDirection::Backward => "backward <-",
                     };
                     println!(
-                        "    via {} ({dir_label}) -> {}",
-                        step.relationship_type_id, step.from_element_id
+                        "    path {}, step {}: via {} ({dir_label}) from {}",
+                        path_idx + 1,
+                        step_idx + 1,
+                        step.relationship_type_id,
+                        step.from_element_id
                     );
                 }
             }
         }
     }
+
+    println!();
+    println!("Summary");
+    println!(
+        "  total impacted: {}",
+        result.semantically_affected.len() + result.affected_artifacts.len()
+    );
 }
 
 fn print_title_property(properties: &[(String, PropertyValue)]) {
@@ -1243,85 +1371,101 @@ fn print_title_property(properties: &[(String, PropertyValue)]) {
     }
 }
 
-/// Prints one history entry in the stable diagnostic form:
-///
-/// ```text
-/// revision_id: <C1>
-/// change_id: <ChangeId>
-/// result_state: <S1>
-/// base_states:
-///   <S0>
-/// dependencies:
-///   none
-/// operations:
-///   create_element <V1>
-/// description: none
-/// ```
 fn print_history_entry(entry: &HistoryEntry) {
-    println!("revision_id: {}", entry.revision_id);
-    println!("change_id: {}", entry.change.change_id);
-    println!("result_state: {}", entry.change.result_state);
-    println!("base_states:");
-    print_ids_or_none(&entry.change.base_states);
-    println!("dependencies:");
-    print_ids_or_none(&entry.change.dependencies);
-    println!("operations:");
-    for operation in &entry.change.operations {
-        println!("  {}", format_operation(operation));
-    }
+    println!("Revision {}", short_object_id(&entry.revision_id));
+    println!("  change:        {}", entry.change.change_id);
     println!(
-        "description: {}",
+        "  result_state:  {}",
+        short_object_id(&entry.change.result_state)
+    );
+    println!("  base_states:");
+    print_short_ids_or_none(&entry.change.base_states);
+    println!("  dependencies:");
+    print_short_ids_or_none(&entry.change.dependencies);
+    println!(
+        "  description:   {}",
         entry.change.description.as_deref().unwrap_or("none")
     );
+    println!("  operations:");
+    for operation in &entry.change.operations {
+        println!("    {}", format_operation_name(operation));
+        print_operation_details(operation);
+    }
 }
 
-fn print_ids_or_none(ids: &[ObjectId]) {
+fn print_short_ids_or_none(ids: &[ObjectId]) {
     if ids.is_empty() {
-        println!("  none");
+        println!("    none");
     } else {
         for id in ids {
-            println!("  {id}");
+            println!("    {}", short_object_id(id));
         }
     }
 }
 
-/// Boring deterministic rendering of one operation: `<name> <arg> ...` with
-/// the canonical ObjectIds exactly as stored (no enrichment — e.g.
-/// `CreateElement` displays V1, not the element it belongs to).
-fn format_operation(operation: &Operation) -> String {
+fn print_operation_details(operation: &Operation) {
     match operation {
-        Operation::CreateElement { new_version } => format!("create_element {new_version}"),
+        Operation::CreateElement { new_version } => {
+            println!("      version:     {}", short_object_id(new_version));
+        }
         Operation::UpdateElement {
             element_id,
             expected_version,
             new_version,
-        } => format!("update_element {element_id} {expected_version} {new_version}"),
+        } => {
+            println!("      element:     {element_id}");
+            println!("      expected:    {}", short_object_id(expected_version));
+            println!("      new_version: {}", short_object_id(new_version));
+        }
         Operation::DeprecateElement {
             element_id,
             expected_version,
             new_version,
-        } => format!("deprecate_element {element_id} {expected_version} {new_version}"),
+        } => {
+            println!("      element:     {element_id}");
+            println!("      expected:    {}", short_object_id(expected_version));
+            println!("      new_version: {}", short_object_id(new_version));
+        }
         Operation::Link {
             new_relationship_version,
-        } => format!("link {new_relationship_version}"),
+        } => {
+            println!(
+                "      version:     {}",
+                short_object_id(new_relationship_version)
+            );
+        }
         Operation::Unlink {
             relationship_id,
             expected_version,
-        } => format!("unlink {relationship_id} {expected_version}"),
+        } => {
+            println!("      relationship: {relationship_id}");
+            println!("      expected:     {}", short_object_id(expected_version));
+        }
         Operation::Supersede {
             existing_element,
             expected_existing_version,
             replacement_element,
             replacement_version,
             superseding_relationship,
-        } => format!(
-            "supersede {existing_element} {expected_existing_version} {replacement_element} {replacement_version} {superseding_relationship}"
-        ),
+        } => {
+            println!("      existing:     {existing_element}");
+            println!(
+                "      expected:     {}",
+                short_object_id(expected_existing_version)
+            );
+            println!("      replacement:  {replacement_element}");
+            println!(
+                "      rep_version:  {}",
+                short_object_id(replacement_version)
+            );
+            println!(
+                "      relationship: {}",
+                short_object_id(superseding_relationship)
+            );
+        }
     }
 }
 
-/// `kat validate` — evaluate current repository state against ontology rules,
-/// state invariants, and relationship constraints (read-only; thin dispatch over [`validate_repository`]).
 fn cmd_validate() -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
@@ -1348,8 +1492,12 @@ fn cmd_validate() -> ExitCode {
 }
 
 fn print_validation_report(repository: &Repository, report: &ValidationReport) {
-    if !report.violations.is_empty() {
-        println!("violations:");
+    println!("Consistency validation");
+    println!();
+    println!("Violations");
+    if report.violations.is_empty() {
+        println!("  none");
+    } else {
         for v in &report.violations {
             print!("  - [{:?}] {}", v.kind, v.message);
             if let Some(rel_id) = v.relationship_id {
@@ -1357,11 +1505,13 @@ fn print_validation_report(repository: &Repository, report: &ValidationReport) {
             }
             println!();
         }
-        println!();
     }
 
-    if !report.unverified_constraints.is_empty() {
-        println!("unverified_constraints:");
+    println!();
+    println!("Unverified constraints");
+    if report.unverified_constraints.is_empty() {
+        println!("  none");
+    } else {
         for c in &report.unverified_constraints {
             print!("  {}", c.constraint_element_id);
             if let Some(ref title) = c.title {
@@ -1382,33 +1532,17 @@ fn print_validation_report(repository: &Repository, report: &ValidationReport) {
                 }
             }
         }
-        println!();
     }
 
-    if report.violations.is_empty() {
-        println!("semantic consistency: no violations detected");
-        if !report.unverified_constraints.is_empty() {
-            println!(
-                "unverified constraints: {}",
-                report.unverified_constraints.len()
-            );
-        }
-    } else {
-        println!(
-            "semantic consistency: {} violation(s) detected",
-            report.violations.len()
-        );
-        if !report.unverified_constraints.is_empty() {
-            println!(
-                "unverified constraints: {}",
-                report.unverified_constraints.len()
-            );
-        }
-    }
+    println!();
+    println!("Summary");
+    println!("  violations:             {}", report.violations.len());
+    println!(
+        "  unverified constraints: {}",
+        report.unverified_constraints.len()
+    );
 }
 
-/// `kat artifacts` — evaluate artifact accountability across all active `kat.core/artifact` elements
-/// against current accepted state (read-only; thin dispatch over [`analyze_artifact_accountability`]).
 fn cmd_artifacts() -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
@@ -1439,16 +1573,17 @@ fn cmd_artifacts() -> ExitCode {
 }
 
 fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport) {
-    println!("artifact accountability:");
+    println!("Artifact accountability");
     println!();
 
     if report.artifacts.is_empty() {
+        println!("Artifacts");
         println!("  no active artifacts found");
         println!();
-        println!("summary:");
-        println!("  current: 0");
-        println!("  stale: 0");
-        println!("  unaccounted: 0");
+        println!("Summary");
+        println!("  current:      0");
+        println!("  stale:        0");
+        println!("  unaccounted:  0");
         return;
     }
 
@@ -1456,6 +1591,7 @@ fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport) {
     let mut stale_count = 0;
     let mut unaccounted_count = 0;
 
+    println!("Artifacts ({})", report.artifacts.len());
     for a in &report.artifacts {
         match a.status {
             ArtifactAccountabilityStatus::Current => current_count += 1,
@@ -1463,40 +1599,39 @@ fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport) {
             ArtifactAccountabilityStatus::Unaccounted => unaccounted_count += 1,
         }
 
-        print!("  {}", a.artifact_element_id);
+        println!();
+        print!("  Artifact {}", a.artifact_element_id);
         if let Some(ref title) = a.title {
             print!(" \"{title}\"");
         }
         println!();
 
-        let status_str = match a.status {
-            ArtifactAccountabilityStatus::Current => "current",
-            ArtifactAccountabilityStatus::Stale => "stale",
-            ArtifactAccountabilityStatus::Unaccounted => "unaccounted",
-        };
-        println!("    status: {status_str}");
+        println!(
+            "    status:      {}",
+            format_accountability_status(a.status)
+        );
 
         if a.baselines.is_empty() {
-            println!("    accountability relationships: none");
+            println!("    baselines:   none");
         } else {
-            println!("    accountability relationships:");
+            println!("    baselines:");
             for b in &a.baselines {
-                let status_flag = if b.is_stale { "STALE" } else { "CURRENT" };
                 println!(
-                    "      - {} -> {} [{}] status: {}",
-                    b.relationship_type, b.upstream_element_id, b.upstream_type_id, status_flag
+                    "      {} {} {} (version {})",
+                    b.relationship_type,
+                    b.upstream_type_id,
+                    b.upstream_element_id,
+                    short_object_id(&b.current_version)
                 );
-                println!("        baseline version: {}", b.baseline_version);
-                println!("        current version:  {}", b.current_version);
             }
         }
-        println!();
     }
 
-    println!("summary:");
-    println!("  current: {current_count}");
-    println!("  stale: {stale_count}");
-    println!("  unaccounted: {unaccounted_count}");
+    println!();
+    println!("Summary");
+    println!("  current:      {current_count}");
+    println!("  stale:        {stale_count}");
+    println!("  unaccounted:  {unaccounted_count}");
 }
 
 #[cfg(test)]

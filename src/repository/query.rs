@@ -1137,14 +1137,14 @@ pub fn repository_status(repository: &Repository) -> Result<RepositoryStatus, Qu
                 .operations
                 .first()
                 .map(|op| match op {
-                    crate::domain::operation::Operation::CreateElement { .. } => "create_element",
-                    crate::domain::operation::Operation::UpdateElement { .. } => "update_element",
+                    crate::domain::operation::Operation::CreateElement { .. } => "create element",
+                    crate::domain::operation::Operation::UpdateElement { .. } => "update element",
                     crate::domain::operation::Operation::DeprecateElement { .. } => {
-                        "deprecate_element"
+                        "deprecate element"
                     }
-                    crate::domain::operation::Operation::Supersede { .. } => "supersede_element",
-                    crate::domain::operation::Operation::Link { .. } => "link_element",
-                    crate::domain::operation::Operation::Unlink { .. } => "unlink_element",
+                    crate::domain::operation::Operation::Supersede { .. } => "supersede element",
+                    crate::domain::operation::Operation::Link { .. } => "link",
+                    crate::domain::operation::Operation::Unlink { .. } => "unlink",
                 })
                 .unwrap_or("change")
                 .to_string();
