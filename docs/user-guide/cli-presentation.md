@@ -32,7 +32,7 @@ Presentation controls representation only. It must not alter which semantic reco
 
 ### Identity Formatting
 - **Content-Addressed `ObjectId`s**: Displayed as the **first 12 hex characters** in standard read commands (e.g., `state: abd76d8bd634`, `version: b8db0be458a9`).
-- **Stable Semantic `UUID`s**: Rendered in **full 36-character hyphenated UUID format** in detailed section views. Compact tabular views (`list`, relationship neighborhoods) may use standard 8-character hex prefixes for visual scannability.
+- **Stable Semantic `UUID`s**: Rendered in **full 36-character hyphenated UUID format** in detailed section views. Compact tabular views (`list`, relationship neighborhoods) may use standard 8-hex-character UUID prefixes for visual scannability.
 
 ### Operation Naming Vocabulary
 - `CreateElement` $\to$ `create element`
