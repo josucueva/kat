@@ -2,543 +2,164 @@
 
 ## Purpose
 
-The collaboration model defines how multiple participants may evolve the same KAT software model without reducing collaboration to file-based merging.
+The collaboration model defines how participants evolve a KAT software model without reducing collaboration to file-based merging.
 
 Collaboration operates on semantic changes to authoritative software knowledge.
 
-The model defines:
+---
 
-* Local and shared work
-* Concurrent changes
-* Change dependencies
-* Compatibility
-* Reconciliation
-* Semantic conflicts
-* Conflict resolution
-* Accepted and working states
-* Collaborative history
+## Scope and v0.2 Boundary
 
-The collaboration model does not define network protocols, synchronization algorithms, distributed storage, locking strategies, or user interface behavior.
+KAT v0.2 implements only **local draft collaboration semantics**:
+* One local draft session per repository.
+* Explicit accepted base state $S_n$.
+* Stale-base conflict detection at commit time.
+* Atomic acceptance via CAS transition.
+* No automatic multi-branch merge or rebase.
 
-## Shared Semantic State
+Distributed multi-participant collaboration, shared drafts, remote repository synchronization, semantic merge, and conflict reconciliation are future collaboration semantics.
 
-Collaboration begins from a semantic state known to the participants involved.
+---
 
-Conceptually:
+## Current v0.2 Collaboration Model
 
-```text
-Shared Semantic State S0
-        |
-        +--------------------+
-        |                    |
-        v                    v
-Developer A             Developer B
-```
+### Accepted Repository State
+Authoritative software knowledge is represented by the current accepted `SemanticState` $S_n$ and the latest accepted `ChangeRevision` head $C_n$. All participants reading the repository inspect this accepted state.
 
-Participants may independently propose changes based on the same state.
+### Local Draft Session
+A participant prepares changes within a local draft session ($S_{\text{working}}$):
+* Initialized from an explicit accepted base state $S_n$.
+* Maintains an ordered sequence of staged mutation operations.
+* Accumulates candidate state $S_{\text{working}}$.
+* Isolated from accepted history until committed or aborted.
+* At most one local draft session exists per repository.
 
-```text
-Shared Semantic State S0
-        |
-        +--------------------+
-        |                    |
-        v                    v
-Change A                Change B
-```
+### Stale-Base Conflict Detection
+If the accepted repository state advances ($S_n \to S_{n+1}$) while a participant is preparing a local draft based on $S_n$, the draft becomes stale.
 
-The shared semantic state remains authoritative until new changes are accepted.
+KAT v0.2 does not attempt automatic semantic merging. Upon commit, stale-base detection rejects publication with an explicit conflict error, preserving repository consistency.
 
-## Local Change
+### Atomic Acceptance
+Committing a draft is an atomic transition:
+$$(S_n, C_n) \xrightarrow{\text{Commit Draft}} (S_{n+1}, C_{n+1})$$
+If valid, the new canonical objects are written, the accepted head is updated, and the draft session is cleared. Unaccepted or rejected drafts leave accepted repository state unchanged.
 
-A local change is a change being developed by a participant that has not yet become part of the accepted shared semantic history.
+---
 
-A local change follows the same change model as any other KAT change.
+## Collaboration Principles
 
-It may contain:
-
-* One or more mutation operations
-* Preconditions
-* Postconditions
-* Semantic effects
-* Dependencies on previous changes
-
-A local change may evolve while it remains local.
-
-Once accepted into persistent shared history, its historical identity and meaning must remain traceable.
-
-## Shared Change
-
-A shared change is a change that has been incorporated into the collaborative history of the software model.
-
-A shared change must satisfy the requirements of the change model and all required invariants.
-
-Acceptance of a shared change produces or contributes to an accepted semantic state.
+### Semantic Conflict vs File Conflict
+Collaboration in KAT is defined primarily over semantic knowledge changes, not file-level diffs:
 
 ```text
-Accepted State S0
-        |
-        | Change A
-        v
-Accepted State S1
+Artifact Conflict != Semantic Conflict
 ```
 
-A change becoming shared does not imply that every participant must immediately materialize its artifact effects.
+* Two developers may modify the same source file without introducing conflicting semantic knowledge.
+* Conversely, two developers may modify separate source files while creating conflicting semantic requirements or design decisions.
 
-## Concurrent Changes
+### Causality and Dependencies
+Causal relationships between changes are preserved through explicit dependencies (`ChangeRevision.dependencies`). If Change B addresses a Requirement introduced in Change A, Change B causally depends on Change A and cannot be accepted before Change A.
 
-Changes are concurrent when they are developed independently without one depending on the other.
+### Publication Order vs Causal Dependencies
+KAT v0.2 preserves a single linear publication sequence of `ChangeRevision` objects through the accepted change head $C_n$. Causal dependencies recorded in `ChangeRevision.dependencies` capture semantic links and need not correspond one-to-one with publication sequence order.
 
-Example:
+---
+
+## Future Distributed Collaboration
+
+The following sections define conceptual models for future multi-participant distributed collaboration beyond KAT v0.2.
+
+### Concurrent Proposals (Future Concept)
+Two proposed changes are concurrent when developed independently from the same base state $S_0$ without a direct causal dependency between them.
 
 ```text
-        State S0
-       /        \
-      v          v
- Change A      Change B
+        Shared Base S0
+       /              \
+      v                v
+ Proposal A        Proposal B
 ```
 
-Concurrency does not imply conflict.
+In future models, concurrent proposals may be evaluated as independent, compatible, order-dependent, or conflicting.
 
-Two concurrent changes may be:
-
-* Independent
-* Compatible
-* Order-dependent
-* Conflicting
-
-Their relationship must be determined from their semantics, dependencies, preconditions, effects, and invariants.
-
-## Causality
-
-Collaboration preserves causal relationships between changes.
-
-If one change requires knowledge introduced by another, the dependent change cannot be meaningfully incorporated before its dependency.
-
-Example:
+### Collaborative Reconciliation (Future Concept)
+Collaborative reconciliation (semantic merge) is the process of evaluating concurrent proposals and determining how to combine their semantic operations into a new accepted state:
 
 ```text
-Change A:
-Create Requirement R
-
-Change B:
-Create Design Decision D addressing R
+Proposal A \
+            +--> Collaborative Reconciliation --> Combined Accepted State S1
+Proposal B /
 ```
 
-Then:
+This is distinct from Phase 15 `AccountArtifact` accountability reconciliation, which re-baselines artifact relationships in accepted history without mutating `SemanticState`.
+
+### Semantic Conflict Categories (Future Concept)
+Conflict categories are defined by [`docs/specification/change-model.md`](change-model.md); when applied to collaborative proposals, they include:
+
+* **Write Conflict**: Concurrent proposals assign incompatible values to the same element property.
+* **Lifecycle Conflict**: One proposal deprecates or supersedes an element while another proposal attempts to update or link to it.
+* **Dependency Conflict**: One proposal removes knowledge required by another proposal's causal dependency.
+* **Invariant Conflict**: Proposals are individually valid, but their combined state violates a Level 1 domain invariant or ontology rule.
+
+### Conflict Resolution (Future Concept)
+Resolving a semantic conflict involves producing a valid, accepted outcome through explicit intent, such as:
+* Selecting one proposed value.
+* Creating a new `Design Decision` element that reconciles competing intent.
+* Modifying or withdrawing a proposal.
+
+Resolution must yield a semantically valid state before publication.
+
+---
+
+## Artifact Collaboration Boundary
+
+Artifact modifications may occur during local work, but physical file overlap does not determine semantic collaboration conflicts.
+
+Artifact accountability is tracked semantically through `kat.core/represents`, `kat.core/derived-from`, and `AccountArtifact` operations. Physical file merging, line-level diff resolution, and VCS branch coordination remain external to KAT v0.2.
+
+---
+
+## Current v0.2 Guarantees
+
+KAT v0.2 guarantees the following collaboration properties:
+
+* **Specification-First Authority**: Authoritative knowledge remains defined by the accepted semantic model.
+* **Single Draft Isolation**: At most one local draft session exists per repository, isolated from accepted state.
+* **Accepted Read Stability**: Standard queries inspect accepted state $S_n$ without exposure to transient draft operations.
+* **Stale-Base Protection**: Attempts to commit against an outdated base state are rejected.
+* **Atomic Publication**: Accepted state and change head update together as one atomic transition.
+* **No Unverified Merges**: Invalid or conflicting operations are never persisted into accepted history.
+
+---
+
+## Current v0.2 Core Flow
 
 ```text
-Change A
-    |
-    v
-Change B
+                  Accepted State Sn
+                         |
+                         v
+             Local Draft Session (S_working)
+                         |
+            +------------+------------+
+            | stage mutation ops      |
+            v                         v
+   Base State Unchanged     Base State Advanced
+            |                         |
+            v                         v
+   Validate Candidate       Stale-Base Rejected
+            |                         |
+            v                         v
+   Accepted State S_{n+1}    Accepted State Sn (Unchanged)
 ```
 
-Change B causally depends on Change A.
+---
 
-Changes are ordered when causality requires it.
+## Future Research Questions
 
-Independent changes do not require an arbitrary semantic ordering.
+The following topics are intentionally outside KAT v0.2 and represent future collaboration research:
 
-## Compatibility
-
-Two changes are compatible when they can both become part of an accepted semantic state without violating:
-
-* Their preconditions
-* Their intended semantic effects
-* Required relationships
-* Ontology rules
-* Invariants
-
-Compatible changes may still require a particular application order.
-
-Example:
-
-```text
-Change A:
-Create Requirement R
-
-Change B:
-Update unrelated Constraint C
-```
-
-These changes may be independent and compatible.
-
-Another example:
-
-```text
-Change A:
-Create Requirement R
-
-Change B:
-Create Decision D addressing R
-```
-
-These changes may be compatible but order-dependent because Change B depends on Change A.
-
-## Reconciliation
-
-Reconciliation is the process of determining how multiple changes can be incorporated into a shared semantic state.
-
-Conceptually:
-
-```text
-Change A
-     \
-      \
-       > Reconciliation
-      /
-     /
-Change B
-```
-
-Reconciliation evaluates:
-
-* Change dependencies
-* Preconditions
-* Postconditions
-* Semantic effects
-* Compatibility
-* Ontology rules
-* Invariants
-
-The result may be:
-
-* Both changes can be accepted
-* The changes require a specific order
-* One change must be adjusted
-* A semantic conflict exists
-
-Reconciliation operates on semantic meaning rather than textual file differences.
-
-## Compatible Reconciliation
-
-When concurrent changes are compatible, KAT may incorporate both into a new shared semantic state.
-
-```text
-        State S0
-       /        \
-      v          v
- Change A      Change B
-       \        /
-        \      /
-         v    v
-        State S1
-```
-
-The resulting state must satisfy all required invariants.
-
-The exact execution or synchronization mechanism used to produce the resulting state is outside the scope of this model.
-
-## Conflict
-
-A semantic conflict occurs when multiple changes cannot be incorporated into the same accepted semantic state without violating their intended semantics or the rules of the model.
-
-Conflict detection should use the conflict definitions established by the change model.
-
-Initial conflict types include:
-
-* Write conflict
-* Lifecycle conflict
-* Dependency conflict
-* Invariant conflict
-
-A conflict is not defined merely by multiple participants changing the same artifact or file.
-
-## Write Conflict
-
-A write conflict occurs when concurrent changes assign incompatible values to the same semantic property.
-
-Example:
-
-```text
-Change A:
-Requirement.priority = High
-
-Change B:
-Requirement.priority = Critical
-```
-
-The conflict concerns the intended value of the Requirement property, not the textual location in which it may later be represented.
-
-## Lifecycle Conflict
-
-A lifecycle conflict occurs when one change alters the lifecycle of knowledge in a way that invalidates another change.
-
-Example:
-
-```text
-Change A:
-Deprecate Requirement R
-
-Change B:
-Update Requirement R
-```
-
-The changes cannot both be accepted without resolving the intended lifecycle of Requirement R.
-
-## Dependency Conflict
-
-A dependency conflict occurs when one change removes or invalidates knowledge required by another.
-
-Example:
-
-```text
-Change A:
-Deprecate Authentication Implementation
-
-Change B:
-Add Payment Implementation dependency on Authentication Implementation
-```
-
-The conflict is determined from the semantic dependency rather than artifact overlap.
-
-## Invariant Conflict
-
-An invariant conflict occurs when changes are individually valid but their combined state violates a required invariant.
-
-Example:
-
-```text
-Constraint:
-Payment must have at least one provider.
-
-Change A:
-Remove Stripe provider.
-
-Change B:
-Remove PayPal provider.
-```
-
-Each change may be valid independently.
-
-Their combination violates the constraint.
-
-## Working State
-
-A working state represents semantic work that has not yet been accepted as part of the authoritative shared state.
-
-A working state may contain:
-
-* Local changes
-* Proposed changes
-* Unvalidated changes
-* Changes awaiting reconciliation
-
-A working state does not replace the accepted semantic state.
-
-This distinction allows collaboration to proceed without treating incomplete work as authoritative.
-
-## Accepted State
-
-An accepted state is a semantic state recognized as authoritative within the shared software history.
-
-An accepted state must satisfy:
-
-* Ontology rules
-* Required invariants
-* Change preconditions and postconditions
-* Required consistency rules
-
-Unresolved semantic conflicts must not silently become part of an accepted state.
-
-Whether KAT may explicitly represent a conflicted working state remains an open question.
-
-## Conflict Resolution
-
-Conflict resolution is the process of producing an acceptable semantic outcome from conflicting changes.
-
-Resolution may involve:
-
-* Selecting one intended value
-* Modifying one or more changes
-* Creating a new change that reconciles competing intent
-* Replacing or superseding conflicting knowledge
-* Rejecting a proposed change
-
-Conflict resolution should preserve the semantic intent involved where possible.
-
-Resolution must produce a state that satisfies the ontology and required invariants before becoming accepted.
-
-## Resolution as Knowledge
-
-A meaningful conflict resolution may itself represent new software knowledge.
-
-For example:
-
-```text
-Change A:
-Use REST
-
-Change B:
-Use gRPC
-```
-
-A resolution might introduce:
-
-```text
-Design Decision:
-Use gRPC for internal communication while preserving REST externally.
-```
-
-This is not merely a mechanical merge.
-
-It is a new design decision and should be represented as such.
-
-## Rejected Changes
-
-A proposed change may be rejected during collaboration.
-
-Rejection means that the change does not become part of the accepted semantic state.
-
-If the change has already entered persistent collaborative history, its rejection or replacement should remain traceable rather than silently removing its existence.
-
-The exact lifecycle of rejected local changes is outside the scope of this model.
-
-## Superseding Collaborative Changes
-
-A later change may replace or counteract knowledge introduced by an earlier shared change.
-
-This follows the normal change and history models.
-
-Example:
-
-```text
-Change A:
-Introduce REST API design.
-
-Change B:
-Supersede REST design with gRPC.
-```
-
-Both changes remain historically traceable.
-
-Collaboration does not require rewriting earlier accepted history in order to represent later evolution.
-
-## Collaboration and Artifacts
-
-Collaboration is defined primarily over authoritative semantic changes.
-
-Artifact modifications may occur during local work, but artifact overlap does not by itself determine whether semantic changes conflict.
-
-For example, two developers may modify the same source file while changing unrelated semantic knowledge.
-
-Conversely, two developers may modify different artifacts while introducing conflicting semantic changes.
-
-Therefore:
-
-```text
-Artifact conflict != Semantic conflict
-```
-
-Artifact differences should be interpreted through their relationship to authoritative knowledge.
-
-The materialization and reconciliation models govern how artifact changes are associated with semantic changes.
-
-## Collaboration and Materialization
-
-Accepted semantic changes may produce artifact effects.
-
-Participants may materialize those effects independently or through shared tooling.
-
-Conceptually:
-
-```text
-Shared Semantic Change
-        |
-        v
-Affected Knowledge
-        |
-        v
-Artifact Effects
-        |
-        v
-Materialization
-```
-
-The state of materialized artifacts does not determine whether the semantic change itself is authoritative.
-
-Artifact consistency remains a separate concern.
-
-## Collaboration History
-
-Collaborative history records the semantic evolution produced by accepted changes.
-
-History should preserve:
-
-* Change identity
-* Causal dependencies
-* Knowledge affected
-* Relationships between changes
-* Reconciliation outcomes when relevant
-* Supersession or compensation
-* The semantic states produced by accepted evolution
-
-History should preserve causality rather than requiring every independent change to be interpreted as part of one artificial linear sequence.
-
-The exact physical representation of collaborative history is an implementation concern.
-
-## Collaboration Guarantees
-
-A collaboration mechanism compatible with KAT should preserve the following properties:
-
-* Authoritative knowledge remains specification-first.
-* Changes retain stable identity once persisted.
-* Causal dependencies remain traceable.
-* Compatible changes may coexist.
-* Semantic conflicts remain explicit.
-* Conflicts are not reduced to file overlap.
-* Required invariants hold for accepted states.
-* Conflict resolution does not silently erase history.
-* Artifact modifications do not independently redefine authoritative knowledge.
-* Collaboration semantics remain independent from the synchronization technology used.
-
-## Core Flow
-
-The collaboration model can be summarized as:
-
-```text
-              Accepted State S0
-                     |
-          +----------+----------+
-          |                     |
-          v                     v
-      Change A               Change B
-          |                     |
-          +----------+----------+
-                     |
-                     v
-               Reconciliation
-                     |
-          +----------+----------+
-          |                     |
-          v                     v
-      Compatible             Conflict
-          |                     |
-          v                     v
-   Validate Result       Resolve Meaning
-          |                     |
-          +----------+----------+
-                     |
-                     v
-              Accepted State S1
-```
-
-## Open Questions
-
-The following questions remain intentionally unresolved:
-
-* Can KAT persist unresolved conflicted working states?
-* When does a local change become shared?
-* Can a shared change be modified before final acceptance?
-* How are participants identified?
-* How are permissions and authorization represented?
-* Can reconciliation involve more than two concurrent changes?
-* How are changes exchanged between repositories?
-* How are missing causal dependencies obtained?
-* How are concurrent changes discovered?
-* How are equivalent independently created changes recognized?
-* How are rejected changes represented in persistent history?
-* How are artifact-level conflicts coordinated with semantic conflicts?
-* What synchronization model should be used between repositories?
-* What guarantees are required when collaboration occurs offline?
-
+* What protocol will govern remote repository fetch/push and proposed change exchange?
+* Can KAT persist unaccepted, conflicted proposed change graphs for collaborative review?
+* How will participant identities and cryptographic signatures be attached to change revisions?
+* How will semantic merge tools visualize and resolve structural conflicts interactively?
+* What guarantees are required for offline distributed repository synchronization?
