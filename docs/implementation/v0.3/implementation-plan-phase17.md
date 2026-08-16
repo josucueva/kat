@@ -1,6 +1,8 @@
 # Phase 17 Implementation Plan: Ontology Discovery — `kat ontology`, `kat ontology show`
 
 > Part of the [v0.3 master plan](implementation-plan.md).
+>
+> Status: **COMPLETED** — All steps (17.1, 17.2, 17.3) implemented, tested, and documented.
 
 ## Purpose
 

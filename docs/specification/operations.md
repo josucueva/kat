@@ -312,6 +312,18 @@ Evaluates artifact accountability status from the current accepted semantic stat
 **Result:**
 * Artifact accountability report categorizing artifacts into `CURRENT`, `STALE`, or `UNACCOUNTED`.
 
+### InspectOntology
+
+Queries and inspects active ontology element types, relationship types, and endpoint capabilities.
+
+**Input:**
+* Scope: `Summary` or `TypeDetail(query)`
+* Context: Active `OntologyVersion` referenced by accepted state ($S_n$)
+
+**Result:**
+* `Summary`: Complete list of element and relationship type definitions, human-readable names, and allowed source/target endpoints, canonically ordered.
+* `TypeDetail`: Resolved element or relationship type view including human-readable name, endpoint admissibility, and derived incoming/outgoing relationship capabilities. Resolves exact canonical IDs or unique short identifiers.
+
 ---
 
 ## Validation Operations

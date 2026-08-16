@@ -119,6 +119,7 @@ The Application Layer coordinates KAT use cases by delegating requests to the ap
 * Review artifact accountability (`kat artifacts`)
 * Reconcile artifact accountability baselines (`kat account`)
 * Manage local draft Changes (`kat change begin/status/commit/abort`)
+* Inspect active ontology and type capabilities (`kat ontology`, `kat ontology show`)
 
 The Application Layer does not directly mutate persisted canonical objects or repository references.
 
@@ -377,6 +378,7 @@ The Query Engine provides read-only semantic query operations over accepted repo
 * `Impact`: Partitioned impact analysis (`Directly Changed Elements`, `Semantically Affected Elements`, `Accountable Artifacts`).
 * `History`: Accepted history traversal and element revision filtering (`history --element`).
 * `ArtifactAccountability`: `CURRENT` / `STALE` / `UNACCOUNTED` status reporting (`kat artifacts`).
+* `InspectOntology`: Active ontology discovery, element/relationship type summaries, endpoint admissibility, and capability views (`kat ontology`, `kat ontology show`).
 
 Query operations produce results that are semantically equivalent to querying canonical repository objects directly.
 
