@@ -74,7 +74,7 @@ A managed software system has a stable `SoftwareId` (UUIDv4).
 
 Moving the repository, copying its storage, or changing its filesystem path does not by itself redefine the software knowledge represented by it.
 
-Canonical identity metadata is recorded by repository layout metadata (`.kat/repository.json`).
+Canonical identity metadata is recorded by repository layout metadata.
 
 ---
 
@@ -169,14 +169,16 @@ Incomplete or staged draft operations do not redefine authoritative state ($S_n$
 
 ## Atomic Acceptance
 
-Publishing a draft Change into accepted repository history is an atomicCompare-And-Swap (CAS) transition:
+Publishing a draft Change into accepted repository history is an atomic transition:
 
 $$ (S_n, C_n) \xrightarrow{\text{Commit Draft}} (S_{n+1}, C_{n+1}) $$
 
-If the accepted state $S_n$ changed during draft preparation, acceptance is rejected with a conflict error. Upon successful publication:
-1. All newly produced canonical objects (element versions, relationship versions, `ChangeRevision`) are written to the object store.
-2. The accepted head reference is updated atomically.
-3. The local draft session is cleaned up.
+If the accepted state $S_n$ changed during draft preparation, acceptance is rejected with a conflict error.
+
+Acceptance guarantees:
+1. **Atomic Publication**: Either both the accepted state reference and accepted change head update to $(S_{n+1}, C_{n+1})$ or neither does.
+2. **Conflict Rejection**: A stale base state rejects acceptance.
+3. **State Preservation**: Accepted repository state remains unchanged on failure.
 
 ---
 
@@ -198,7 +200,7 @@ Semantic restrictions expressed as `kat.core/constraint` knowledge elements with
 
 ## Change History & Publication Order
 
-A repository preserves the semantic evolution of software knowledge through an immutable chain of `ChangeRevision` objects.
+A repository preserves the semantic evolution of software knowledge through an immutable accepted sequence of `ChangeRevision` objects.
 
 ```text
 SemanticState S0
@@ -233,7 +235,7 @@ The state of a KAT repository is categorized into four distinct functional layer
    - Immutable canonical object store (containing element versions, relationship versions, change revisions, ontology versions)
 
 3. **Local Working State** (Transient):
-   - Draft transaction session (`.kat/work/change/session.json`)
+   - Local draft transaction session
 
 4. **Derived State** (Computed Read-Side Views):
    - Identity lookup indexes
@@ -270,7 +272,7 @@ Accountability is derived from:
 
 Artifact accountability status is categorized as:
 * `CURRENT`: All direct accountability baselines match current target element versions.
-* `STALE`: At least one direct accountability baseline differs from the current target element version.
+* `STALE`: At least one direct accountability baseline differs from the current target element version, or a target element's lifecycle state has become invalid (`Deprecated` or `Superseded`).
 * `UNACCOUNTED`: No direct accountability relationship exists for the artifact in $S_n$.
 
 This state does not imply physical artifact inspection or verification.
@@ -291,7 +293,7 @@ A repository is semantically valid when its accepted state satisfies all require
 
 1. The accepted `SemanticState` $S_n$ exists in store and is structurally valid.
 2. The active `OntologyVersion` exists in store and is valid.
-3. `accepted.change` is `none` if and only if $S_n = S_0$ (initial state).
+3. `accepted.change == none` only for the freshly initialized repository before any Change has been accepted.
 4. If `accepted.change` is not `none`, `accepted.change.result_state == accepted.state`.
 5. All element version and relationship version objects selected by $S_n$ exist in the object store and have expected kinds.
 6. The accepted state $S_n$ conforms to the active ontology and Level 1 domain invariants.
@@ -311,14 +313,14 @@ Conceptual KAT Repository
         |-- Active ontology
         +-- Artifact accountability baselines
 
-Physical Environment
-        |-- KAT internal metadata (.kat/)
-        |-- Canonical object store (.kat/objects/)
-        |-- Local draft session (.kat/work/change/session.json)
-        +-- Project source files & build outputs
+Physical Storage Boundary
+        |-- Repository layout metadata
+        |-- Immutable canonical object store
+        |-- Local draft storage
+        +-- Managed software source files & build outputs
 ```
 
-`Artifact semantic identity (ElementId UUID) != filesystem path`. KAT does not require managed artifacts to physically reside within the `.kat/` workspace directory.
+`Artifact semantic identity (ElementId UUID) != physical filesystem path`. KAT does not require managed artifacts to physically reside within the internal repository storage directory.
 
 ---
 
@@ -344,7 +346,7 @@ A KAT repository moves through defined lifecycle activities:
 
 1. **Initialization**: Establishing `RepositoryId`, `SoftwareId`, active `OntologyVersion`, initial state $S_0$, and setting `accepted.change = none`.
 2. **Draft Evolution**: Opening a draft session, staging mutation operations on $S_{\text{working}}$, and evaluating candidate consistency.
-3. **Atomic Acceptance**: Validating candidate state $S_{\text{working}}$, persisting canonical objects, publishing $(S_{n+1}, C_{n+1})$ via CAS, and clearing draft.
+3. **Atomic Acceptance**: Validating candidate state $S_{\text{working}}$, persisting canonical objects, atomically publishing $(S_{n+1}, C_{n+1})$, and cleaning up local draft state.
 4. **Validation**: Evaluating mechanical consistency and identifying unverified constraints on accepted state $S_n$.
 5. **Artifact Accountability Analysis**: Evaluating direct accountability baselines against current target element versions to report `CURRENT`, `STALE`, or `UNACCOUNTED` status.
 
