@@ -42,7 +42,7 @@ KAT v0.2 does not attempt automatic semantic merging. Upon commit, stale-base de
 ### Atomic Acceptance
 Committing a draft is an atomic transition:
 $$(S_n, C_n) \xrightarrow{\text{Commit Draft}} (S_{n+1}, C_{n+1})$$
-If valid, the new canonical objects are written, the accepted head is updated, and the draft session is cleared. Unaccepted or rejected drafts leave accepted repository state unchanged.
+If valid, the draft is atomically published as the next accepted repository state and the local draft session is cleared. Unaccepted or rejected drafts leave accepted repository state unchanged.
 
 ---
 
@@ -128,7 +128,7 @@ KAT v0.2 guarantees the following collaboration properties:
 * **Accepted Read Stability**: Standard queries inspect accepted state $S_n$ without exposure to transient draft operations.
 * **Stale-Base Protection**: Attempts to commit against an outdated base state are rejected.
 * **Atomic Publication**: Accepted state and change head update together as one atomic transition.
-* **No Unverified Merges**: Invalid or conflicting operations are never persisted into accepted history.
+* **Validated Acceptance**: A draft must satisfy required validation before it can become part of accepted history.
 
 ---
 
