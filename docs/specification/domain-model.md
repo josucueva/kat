@@ -28,16 +28,16 @@ An immutable, content-addressed version snapshot of a knowledge element at a spe
 A logical semantic edge connecting a source element to a target element. A relationship has a stable 36-character hyphenated UUID identity (`RelationshipId`) that persists across all relationship version revisions.
 
 ### Relationship Version
-An immutable, content-addressed version snapshot of a relationship. Each version is identified by its 32-byte CBOR hash (`ObjectId`), belongs to a `RelationshipId`, and records the relationship type (`type_id`), `source_element_id`, `target_element_id`, and description.
+An immutable, content-addressed version snapshot of a relationship. Each version is identified by its 32-byte CBOR hash (`ObjectId`), belongs to a `RelationshipId`, and records the relationship type (`type_id`), source and target element identities, and relationship properties.
 
 ### Semantic State
-An immutable composition of software knowledge at a specific point in evolution. A `SemanticState` ($S_n$) maps active `ElementId`s to specific `KnowledgeElementVersion` object IDs, and active `RelationshipId`s to specific `RelationshipVersion` object IDs. `SemanticState` is a snapshot reference, not a mutable object.
+An immutable composition of software knowledge at a specific point in evolution. A `SemanticState` ($S_n$) maps selected `ElementId`s to specific `KnowledgeElementVersion` ObjectIds, and selected `RelationshipId`s to specific `RelationshipVersion` ObjectIds. `SemanticState` is a snapshot reference, not a mutable object.
 
 ### Change
 A logical evolution of software knowledge from one semantic state to another. A Change has a stable 36-character hyphenated UUID identity (`ChangeId`).
 
 ### Change Revision
-An immutable, canonical record of an accepted Change, identified by its 32-byte CBOR hash (`ObjectId`). A `ChangeRevision` records its `change_id`, an ordered sequence of canonical mutation operations, `base_states` references, `result_state` reference, and `dependencies`.
+A `ChangeRevision` is an immutable canonical record of a Change revision, identified by its 32-byte CBOR hash (`ObjectId`). When accepted, it becomes part of accepted repository history. A `ChangeRevision` records its `change_id`, an ordered sequence of canonical mutation operations, `base_states` references, `result_state` reference, and `dependencies`.
 
 ### Ontology Version
 An immutable canonical object defining the active knowledge element types, relationship types, and allowed source/target type combinations for a semantic state.
@@ -132,7 +132,7 @@ Normative relationship endpoint rules and type admissibility are governed exclus
 
 Software knowledge evolves through atomic, ordered semantic changes.
 
-A Change contains ordered mutation operations (`CreateElement`, `UpdateElement`, `DeprecateElement`, `SupersedeElement`, `Link`, `Unlink`, `AccountArtifact`) that produce new versions of knowledge elements and relationships.
+A Change contains ordered mutation operations (`CreateElement`, `UpdateElement`, `DeprecateElement`, `SupersedeElement`, `Link`, `Unlink`, `AccountArtifact`) that evolve candidate semantic knowledge or record semantic evolution metadata such as artifact accountability reconciliation.
 
 ```text
 Accepted Semantic State S0
@@ -151,7 +151,7 @@ Physical artifact changes do not independently redefine authoritative knowledge.
 Artifacts remain traceable to authoritative knowledge through direct semantic relationships (`kat.core/represents`, `kat.core/derived-from`).
 
 The domain model tracks artifact accountability state as a derived query property:
-* **Accountability Baselines**: Recorded in accepted history when relationships are established or updated.
+* **Accountability Baselines**: Recorded when direct accountability relationships are initially accepted and subsequently reconciled through `AccountArtifact`.
 * **Reconciliation**: Executed via explicit `AccountArtifact` operations to re-baseline an artifact's direct accountability edges when target knowledge versions evolve.
 * **Accountability Status**: Categorized as `CURRENT`, `STALE`, or `UNACCOUNTED`.
 
