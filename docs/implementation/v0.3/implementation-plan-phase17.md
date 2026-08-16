@@ -32,11 +32,11 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
   ```
 
 - **CLI Parser Single Ownership Model**:
-  The `--compact` flag is owned by the top `Ontology` CLI command structure and applies globally across its subcommands:
+  The `--compact` flag is owned by the top `Ontology` CLI command structure and applies globally across its subcommands via `global = true`:
 
   ```rust
   Ontology {
-      #[arg(short, long)]
+      #[arg(short, long, global = true)]
       compact: bool,
       #[command(subcommand)]
       command: Option<OntologyCommand>,
@@ -48,7 +48,7 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
   ```
 
 - **Output Modes**:
-  - **Default**: Displays full canonical type IDs (`kat.core/...`) and human-readable `name` properties.
+  - **Default**: Displays full canonical type IDs (`kat.core/...`) and human-readable `name` properties across all summary tables and detail views.
   - **Compact (`--compact`)**: Displays shortened type IDs where unambiguous across the active ontology, omitting human-readable names.
 
 ### 1.3 `kat ontology` — Summary View
@@ -71,17 +71,17 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
     kat.core/validation        Validation
 
   RELATIONSHIP TYPES (10)
-    TYPE                  SOURCES                TARGETS
-    kat.core/motivates    kat.core/intent        kat.core/requirement, kat.core/design-decision
-    kat.core/addresses    kat.core/design-decision kat.core/requirement
-    kat.core/restricts    kat.core/constraint    kat.core/requirement, kat.core/design-decision, kat.core/implementation
-    kat.core/guides       kat.core/design-decision kat.core/implementation
-    kat.core/realizes     kat.core/implementation kat.core/requirement
-    kat.core/represents   kat.core/artifact      kat.core/implementation
-    kat.core/derived-from kat.core/artifact      kat.core/requirement, kat.core/constraint, kat.core/design-decision, kat.core/implementation
-    kat.core/validates    kat.core/validation    kat.core/requirement, kat.core/constraint, kat.core/implementation
-    kat.core/depends-on   kat.core/implementation kat.core/implementation
-    kat.core/supersedes   kat.core/design-decision kat.core/design-decision
+    TYPE                  NAME        SOURCES                  TARGETS
+    kat.core/motivates    Motivates   kat.core/intent          kat.core/requirement, kat.core/design-decision
+    kat.core/addresses    Addresses   kat.core/design-decision kat.core/requirement
+    kat.core/restricts    Restricts   kat.core/constraint      kat.core/requirement, kat.core/design-decision, kat.core/implementation
+    kat.core/guides       Guides      kat.core/design-decision kat.core/implementation
+    kat.core/realizes     Realizes    kat.core/implementation kat.core/requirement
+    kat.core/represents   Represents  kat.core/artifact        kat.core/implementation
+    kat.core/derived-from Derived From kat.core/artifact        kat.core/requirement, kat.core/constraint, kat.core/design-decision, kat.core/implementation
+    kat.core/validates    Validates   kat.core/validation      kat.core/requirement, kat.core/constraint, kat.core/implementation
+    kat.core/depends-on   Depends On  kat.core/implementation kat.core/implementation
+    kat.core/supersedes   Supersedes  kat.core/design-decision kat.core/design-decision
   ```
 
 - **Compact Summary Output (`--compact`)**:
@@ -121,7 +121,7 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
 
 - **Note**: Human-readable `name` properties (e.g. `"Design Decision"`) are presentation metadata and do not participate in short-name resolution.
 
-- **Element Type Detail** (e.g. `kat.core/implementation`):
+- **Default Element Type Detail** (e.g. `kat ontology show implementation`):
 
   ```text
   kat.core/implementation
@@ -133,18 +133,36 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
     Implementation
 
   Outgoing relationships:
-    realizes   -> kat.core/requirement
-    depends-on -> kat.core/implementation
+    kat.core/realizes   -> kat.core/requirement
+    kat.core/depends-on -> kat.core/implementation
 
   Incoming relationships:
-    restricts    <- kat.core/constraint
-    guides       <- kat.core/design-decision
-    represents   <- kat.core/artifact
-    derived-from <- kat.core/artifact
-    validates    <- kat.core/validation
+    kat.core/restricts    <- kat.core/constraint
+    kat.core/guides       <- kat.core/design-decision
+    kat.core/represents   <- kat.core/artifact
+    kat.core/derived-from <- kat.core/artifact
+    kat.core/validates    <- kat.core/validation
   ```
 
-- **Relationship Type Detail** (e.g. `kat.core/realizes`):
+- **Compact Element Type Detail (`--compact`)**:
+
+  ```text
+  implementation
+  kind: element
+
+  outgoing:
+    realizes -> requirement
+    depends-on -> implementation
+
+  incoming:
+    restricts <- constraint
+    guides <- design-decision
+    represents <- artifact
+    derived-from <- artifact
+    validates <- validation
+  ```
+
+- **Default Relationship Type Detail** (e.g. `kat ontology show realizes`):
 
   ```text
   kat.core/realizes
@@ -160,6 +178,19 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
 
   Targets:
     kat.core/requirement
+  ```
+
+- **Compact Relationship Type Detail (`--compact`)**:
+
+  ```text
+  realizes
+  kind: relationship
+
+  sources:
+    implementation
+
+  targets:
+    requirement
   ```
 
 - **Capabilities Derivation**:
@@ -203,17 +234,18 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
 ### Step 17.2 — CLI Wiring & Output Formatting
 
 - `src/main.rs`:
-  - Wire `Ontology` clap subcommand with `compact: bool` flag and `command: Option<OntologyCommand>` sub-subcommand (`Show { type_id: String }`).
-  - Implement summary renderer for default and `--compact` modes.
-  - Implement detailed renderer for default and `--compact` modes.
+  - Wire `Ontology` clap subcommand with `#[arg(short, long, global = true)] compact: bool` flag and `command: Option<OntologyCommand>` sub-subcommand (`Show { type_id: String }`).
+  - Implement summary renderer for default (with `NAME` column) and `--compact` modes.
+  - Implement detailed renderer for default (with full canonical IDs) and `--compact` (with short IDs) modes.
 - Integration tests in `tests/cli.rs`.
 
-### Step 17.3 — Phase 17 Closure & Acceptance Test Suite
+### Step 17.3 — Phase 17 Closure, Documentation Update & Acceptance Test Suite
 
 - Add `phase17_acceptance_cli_flow_end_to_end` test verifying:
   - `kat ontology`
   - `kat ontology --compact`
   - `kat ontology show requirement`
+  - `kat ontology show requirement --compact`
   - `kat ontology show kat.core/realizes`
   - `kat ontology show does-not-exist` (returns exit status 1 with clear unknown type error)
   - Extension ontology fixture test with ambiguous short name (returns exit status 1 listing candidate matches).
@@ -222,4 +254,5 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
     - `accepted.change` is unchanged
     - ObjectStore contents are unchanged
     - Local draft session state is unchanged (if present)
+- Update `docs/specification/operations.md` and `docs/vision/architecture.md` to document the new `InspectOntology` query semantics.
 - Verify `cargo test`, `cargo fmt --check`, and `cargo clippy --all-targets -- -D warnings`.
