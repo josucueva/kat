@@ -203,8 +203,6 @@ Security analysis
 Manual verification
 ```
 
-A validation element represents evidence or a validation result.
-
 The mechanism that produces that evidence, such as a test file, may itself be represented as an Artifact.
 
 # Relationship Types
