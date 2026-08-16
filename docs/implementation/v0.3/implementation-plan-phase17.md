@@ -20,7 +20,8 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
 ### 1.1 Active Ontology Access & Identity
 
 - **Repository Context**: Inspects the active `OntologyVersion` associated with the current repository state context (not embedded inside `SemanticState`).
-- **Identity Distinction**: Exposes both stable semantic identity (`OntologyId`, UUID) and immutable version identity (`ObjectId`, SHA-256 hash).
+- **Draft Session Independence**: Ontology discovery reads the repository's active ontology as repository context and is independent of candidate draft semantic state ($S_{\text{working}}$). An open draft session neither alters ontology discovery results nor blocks the command.
+- **Identity Distinction**: Exposes both stable semantic identity (`OntologyId`, UUID) and immutable version identity (`ObjectId`, SHA-256 hash) in the default summary view.
 
 ### 1.2 Command Grammar & Output Modes
 
@@ -29,6 +30,23 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
   kat ontology [--compact]
   kat ontology show <type-id> [--compact]
   ```
+
+- **CLI Parser Single Ownership Model**:
+  The `--compact` flag is owned by the top `Ontology` CLI command structure and applies globally across its subcommands:
+
+  ```rust
+  Ontology {
+      #[arg(short, long)]
+      compact: bool,
+      #[command(subcommand)]
+      command: Option<OntologyCommand>,
+  }
+
+  OntologyCommand::Show {
+      type_id: String,
+  }
+  ```
+
 - **Output Modes**:
   - **Default**: Displays full canonical type IDs (`kat.core/...`) and human-readable `name` properties.
   - **Compact (`--compact`)**: Displays shortened type IDs where unambiguous across the active ontology, omitting human-readable names.
@@ -169,6 +187,7 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
     - `OntologySummary { ontology_id: OntologyId, ontology_version_id: ObjectId, element_types: Vec<ElementTypeSummary>, relationship_types: Vec<RelationshipTypeSummary> }`
     - `ElementTypeSummary { type_id: TypeId, name: String }`
     - `RelationshipTypeSummary { type_id: TypeId, name: String, allowed_source_types: Vec<TypeId>, allowed_target_types: Vec<TypeId> }`
+    - `enum OntologyTypeView { Element(ElementTypeView), Relationship(RelationshipTypeView) }`
     - `ElementTypeView { type_id: TypeId, name: String, outgoing: Vec<RelationshipCapability>, incoming: Vec<RelationshipCapability> }`
     - `RelationshipTypeView { type_id: TypeId, name: String, allowed_source_types: Vec<TypeId>, allowed_target_types: Vec<TypeId> }`
     - `RelationshipCapability { relationship_type_id: TypeId, counterpart_type_id: TypeId }`
@@ -184,7 +203,7 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
 ### Step 17.2 — CLI Wiring & Output Formatting
 
 - `src/main.rs`:
-  - Add `Ontology` subcommand with `--compact` flag and optional `Show { type_id: String, compact: bool }` sub-subcommand.
+  - Wire `Ontology` clap subcommand with `compact: bool` flag and `command: Option<OntologyCommand>` sub-subcommand (`Show { type_id: String }`).
   - Implement summary renderer for default and `--compact` modes.
   - Implement detailed renderer for default and `--compact` modes.
 - Integration tests in `tests/cli.rs`.
@@ -198,5 +217,9 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
   - `kat ontology show kat.core/realizes`
   - `kat ontology show does-not-exist` (returns exit status 1 with clear unknown type error)
   - Extension ontology fixture test with ambiguous short name (returns exit status 1 listing candidate matches).
-  - No mutation invariant: verifies `accepted` ref, object store, and state count remain byte-for-byte unchanged.
+  - Draft-isolation and read-only invariant: before and after every query, verifies:
+    - `accepted.state` is unchanged
+    - `accepted.change` is unchanged
+    - ObjectStore contents are unchanged
+    - Local draft session state is unchanged (if present)
 - Verify `cargo test`, `cargo fmt --check`, and `cargo clippy --all-targets -- -D warnings`.
