@@ -2,62 +2,17 @@
 
 This document is the master tracker for implementing KAT in Rust, following the workflow and phasing defined in `prototype-design.md`. Per-phase detail lives in dedicated files linked from the [Phases](#phases) index. **v0.1** (Phases 0–10) is complete and released — its plans live in `v0.1/`. **v0.2** (Phases 11–16) is in planning — its plans live in `v0.2/` with the [v0.2 master tracker](v0.2/implementation-plan.md).
 
-Status (v0.1): **complete and released** — all ten phases (0–10) are implemented, tested, and frozen, and the project has shipped as **`v0.1.0`** (full semantic repository) and **`v0.1.1`** (CLI UX polish: clap v4 CLI with 14 subcommands, UNIX man pages, shell completions, `install.sh`/`uninstall.sh`, `kat status`). Every mutation (`create` / `update` / `deprecate` / `supersede` / `link` / `unlink`) runs the full engine pipeline — prepare → apply → ontology → invariants → revision → persist → CAS publish — and the read-side commands (`show` / `history` / `trace` / `impact` / `validate` / `artifacts`) operate on the accepted head. `cargo test` (346 passing), `cargo fmt --check`, and `cargo clippy -D warnings` all pass. Release acceptance was verified in `docs/v0-1-release-acceptance-review.md` (all requirements PASS, v0.1 semantics frozen). `origin/main` is in sync at `524b96d` ("Unify read-side CLI presentation"); Cargo version and `version.txt` are `0.1.1`.
+Status (v0.1): **complete and released** — all ten phases (0–10) are implemented, tested, and frozen, and the project has shipped as **`v0.1.0`** (full semantic repository) and **`v0.1.1`** (CLI UX polish).
 
-Status (v0.2): **in planning** — v0.2.0 planning documents are drafted in `docs/implementation/v0.2/`; no v0.2 code has been written yet. v0.2.0 theme: _make semantic repositories substantially easier to navigate, evolve, and operate while preserving v0.1's explicit, deterministic semantics_ — discovery (`kat list`, unique-prefix ID resolution, relationship-aware `kat show`), shared compact/full output modes, multi-operation Changes (`kat change begin/status/commit/abort`), and first-class artifact re-accountability (`kat account`).
+Status (v0.2): **complete and frozen** — all six phases (11–16) are implemented, verified by acceptance integration tests, committed, pushed, and frozen. All 388 workspace tests pass cleanly (`cargo test`). Specification document suite updated and frozen.
+
+Status (v0.3): **in planning** — v0.3.0 master tracker (`v0.3/implementation-plan.md`) and per-phase plans (17–21) drafted. v0.3.0 theme: _Semantic Discoverability and Inspection_ — ontology discovery (`kat ontology`, `kat ontology show`), scalable trace/impact tree inspection (`--paths`, `--max-depth`), validation result classification & evidence coverage (`kat validate --coverage`), Change authoring UX & draft inspection (`kat change status`), and artifact accountability inspection (`kat artifacts --stale`).
 
 Toolchain: Rust **stable**, pinned via `rust-toolchain.toml` (`channel = "stable"`); it resolves to each host's default target on both Linux and Windows. Machine-local toolchain flavour is set with `rustup override` and is not committed.
 
-## Authoritative Sources
-
-The implementation must not independently redefine semantics. Ground every decision in:
-
-| Concern                                                                | Normative source                                                   |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Structural schema (object kinds, envelopes, operations, ordering)      | `spec/canonical-format.cddl`                                       |
-| Encoding and semantics rules (deterministic CBOR, hashing, validation) | `docs/canonical-format.md`                                         |
-| Physical design, repository layout, phases, error categories           | `docs/prototype-design.md`                                         |
-| Semantic operations, change model, invariants                          | `docs/operations.md`, `docs/change-model.md`, `docs/invariants.md` |
-
-## First Technical Target
-
-Before building the full encoder, produce one tiny canonical fixture and make it pass permanently:
-
-```text
-KnowledgeElementVersion
-        ↓
-exact deterministic CBOR bytes
-        ↓
-known SHA-256 ObjectId
-        ↓
-test passes forever
-```
-
-The minimal fixture is a `KnowledgeElementVersion` with a fixed UUID, `kat.core/requirement` type, `active` lifecycle, and empty properties. Its authoritative bytes and ObjectId live in `spec/vectors/valid/knowledge-element-version-empty-properties.json` (already present). Once this passes, extend the encoder to the remaining canonical objects and generate the rest of the vector suite.
-
 ---
 
-## Phases
-
-Detailed, per-phase plans live in dedicated files so this master stays a lean tracker; each phase file links back here. v0.1 phase plans live in `v0.1/`; v0.2 phase plans live in `v0.2/`.
-
-### v0.1 (Phases 0–10) — complete and released
-
-| Phase                                                | File                                                                  | Status       |
-| ---------------------------------------------------- | --------------------------------------------------------------------- | ------------ |
-| Phase 0 — Canonical Repository Substrate             | [implementation-plan-phase0.md](v0.1/implementation-plan-phase0.md)   | **complete** |
-| Phase 1 — First Semantic Vertical Slice              | [implementation-plan-phase1.md](v0.1/implementation-plan-phase1.md)   | **complete** |
-| Phase 2 — UpdateElement vertical slice               | [implementation-plan-phase2.md](v0.1/implementation-plan-phase2.md)   | **complete** |
-| Phase 3 — `DeprecateElement`                         | [implementation-plan-phase3.md](v0.1/implementation-plan-phase3.md)   | **complete** |
-| Phase 4 — `SupersedeElement`                         | [implementation-plan-phase4.md](v0.1/implementation-plan-phase4.md)   | **complete** |
-| Phase 5 — `LinkKnowledgeElements`                    | [implementation-plan-phase5.md](v0.1/implementation-plan-phase5.md)   | **complete** |
-| Phase 6 — `UnlinkKnowledgeElements`                  | [implementation-plan-phase6.md](v0.1/implementation-plan-phase6.md)   | **complete** |
-| Phase 7 — Trace Origin (`kat trace`)                 | [implementation-plan-phase7.md](v0.1/implementation-plan-phase7.md)   | **complete** |
-| Phase 8 — Impact Analysis (`kat impact`)             | [implementation-plan-phase8.md](v0.1/implementation-plan-phase8.md)   | **complete** |
-| Phase 9 — Validate Consistency (`kat validate`)      | [implementation-plan-phase9.md](v0.1/implementation-plan-phase9.md)   | **complete** |
-| Phase 10 — Artifact Accountability (`kat artifacts`) | [implementation-plan-phase10.md](v0.1/implementation-plan-phase10.md) | **complete** |
-
-### v0.2 (Phases 11–16) — in progress
+### v0.2 (Phases 11–16) — complete and frozen
 
 | Phase                                                  | File                                                                  | Status  |
 | ------------------------------------------------------ | --------------------------------------------------------------------- | ------- |
@@ -65,8 +20,19 @@ Detailed, per-phase plans live in dedicated files so this master stays a lean tr
 | Phase 12 — Output Modes (compact/full rendering)       | [implementation-plan-phase12.md](v0.2/implementation-plan-phase12.md) | **complete** |
 | Phase 13 — Multi-Operation Change Design               | [implementation-plan-phase13.md](v0.2/implementation-plan-phase13.md) | **complete** |
 | Phase 14 — Multi-Operation Changes (`kat change`)      | [implementation-plan-phase14.md](v0.2/implementation-plan-phase14.md) | **complete** |
-| Phase 15 — Artifact Re-accountability (`kat account`)  | [implementation-plan-phase15.md](v0.2/implementation-plan-phase15.md) | planned |
-| Phase 16 — Real-Project Evaluation                     | [implementation-plan-phase16.md](v0.2/implementation-plan-phase16.md) | planned |
+| Phase 15 — Artifact Re-accountability (`kat account`)  | [implementation-plan-phase15.md](v0.2/implementation-plan-phase15.md) | **complete** |
+| Phase 16 — Real-Project Evaluation                     | [implementation-plan-phase16.md](v0.2/implementation-plan-phase16.md) | **complete** |
+
+### v0.3 (Phases 17–21) — in planning
+
+| Phase | File | Status |
+| :--- | :--- | :--- |
+| Phase 17 — Ontology Discovery (`kat ontology`, `kat ontology show`) | [implementation-plan-phase17.md](v0.3/implementation-plan-phase17.md) | planned |
+| Phase 18 — Scalable Query Inspection (`kat trace` / `impact` tree rendering & bounds) | [implementation-plan-phase18.md](v0.3/implementation-plan-phase18.md) | planned |
+| Phase 19 — Validation Result Classification & Coverage (`kat validate --coverage`) | [implementation-plan-phase19.md](v0.3/implementation-plan-phase19.md) | planned |
+| Phase 20 — Change UX & Draft Inspection (`kat change status` candidate status) | [implementation-plan-phase20.md](v0.3/implementation-plan-phase20.md) | planned |
+| Phase 21 — Accountability Inspection & Real-Project Evaluation (`kat artifacts --stale`) | [implementation-plan-phase21.md](v0.3/implementation-plan-phase21.md) | planned |
+
 
 ## Progress Log
 
