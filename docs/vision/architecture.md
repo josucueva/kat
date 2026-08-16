@@ -131,7 +131,7 @@ The Semantic Repository is the central logical boundary through which KAT access
 It provides controlled access to:
 * Accepted `SemanticState` ($S_n$)
 * Accepted `ChangeRevision` head ($C_n$)
-* Canonical objects (`KnowledgeElementVersion`, `RelationshipVersion`, `ChangeRevision`, `OntologyVersion`)
+* Canonical objects (`KnowledgeElementVersion`, `RelationshipVersion`, `ChangeRevision`, `SemanticState`, `OntologyVersion`)
 * Active `OntologyVersion`
 * Local draft session state ($S_{\text{working}}$)
 * Repository metadata (`RepositoryId`, `SoftwareId`, format version)
@@ -182,8 +182,8 @@ The Change Engine is the component responsible for producing candidate states an
 A Change may contain one or more ordered mutation operations (`CreateElement`, `UpdateElement`, `DeprecateElement`, `SupersedeElement`, `Link`, `Unlink`, `AccountArtifact`).
 
 The Change Engine distinguishes:
-* **State-Mutating Operations** (`CreateElement`, `Link`, etc.): Produce new element/relationship version objects and alter candidate state identity mappings.
-* **History-Only Operations** (`AccountArtifact`): Record explicit reconciliation baselines in accepted `ChangeRevision` history without mutating candidate `SemanticState` identity mappings ($S_{\text{result}} = S_{\text{base}}$).
+* **State-Mutating Operations** (`CreateElement`, `UpdateElement`, `DeprecateElement`, `SupersedeElement`, `Link`, `Unlink`): Change the selected element or relationship mappings of the candidate state and may produce new element or relationship version objects.
+* **History-Only Operations** (`AccountArtifact`): Record explicit reconciliation baselines in accepted `ChangeRevision` history without altering candidate state identity mappings at that step (and leaving $S_{\text{result}} = S_{\text{base}}$ for standalone/history-only Changes).
 
 For staged multi-operation Changes, operations are evaluated sequentially against candidate state $S_{\text{working}}$:
 
@@ -266,7 +266,7 @@ Represents one immutable version snapshot of a knowledge element, containing its
 Represents one immutable version snapshot of a typed semantic relationship, containing its stable `RelationshipId`, `type_id`, `source_element_id`, `target_element_id`, and properties map.
 
 ### Change Revision
-A `ChangeRevision` is an immutable canonical record of a Change revision. It contains `change_id`, `base_states` references, ordered semantic operations, `dependencies`, `result_state` reference, and description. Local draft Changes evolve in transient session state; canonical `ChangeRevision` objects are produced when a Change is committed.
+A `ChangeRevision` is an immutable canonical record of a Change revision. It contains `change_id`, `base_states` references, ordered semantic operations, `dependencies`, `result_state` reference, and description. Local draft Changes evolve in transient session state; canonical `ChangeRevision` objects are produced when a Change is materialized for attempted acceptance.
 
 ### Semantic State
 Represents one immutable composition of software knowledge. In the canonical format payload, `SemanticState` contains:
@@ -292,15 +292,22 @@ accepted
     change -> ChangeRevision ObjectId | none
 ```
 
-Local draft session state identifies:
+Refs allow advancing repository state without rewriting historical objects.
+
+---
+
+## Local Draft State
+
+Local draft state represents transient, unaccepted work being staged in a local transaction session:
+
 ```text
 local draft session
-    base_state -> SemanticState ObjectId
+    base_state        -> SemanticState ObjectId
     staged_operations -> [Operation]
     candidate_state   -> S_working
 ```
 
-Refs allow advancing repository state without rewriting historical objects.
+Local draft session state is stored separately from repository refs and does not pollute canonical persistence until committed.
 
 ---
 
@@ -329,7 +336,7 @@ The Ontology Service enforces structural and relationship type rules defined by 
 * Validates relationship type registration.
 * Enforces allowed source and target element type combinations for directed relationships.
 
-Ontology validation occurs during draft staging and pre-commit candidate verification.
+Ontology validation occurs during semantic mutation evaluation and during complete candidate-state validation before acceptance.
 
 ---
 
@@ -347,13 +354,13 @@ Semantic `Constraint` elements expressed in the model represent domain knowledge
 
 ## Validation Engine
 
-The Validation Engine coordinates consistency evaluation without mutating state.
+The Validation Engine coordinates semantic consistency evaluation without mutating state.
 
-It validates:
-* Structural integrity and canonical object envelopes.
+Repository integrity and canonical envelope decoding are validated by the persistence layer upon loading objects. The semantic Validation Engine evaluates:
+* Candidate state $S_{\text{working}}$ and accepted state $S_n$ semantic consistency.
 * Active ontology type rules and relationship endpoint constraints.
 * Lifecycle state rules.
-* Candidate state $S_{\text{working}}$ consistency prior to commit.
+* Core spec-defined structural and domain invariants.
 
 The engine explicitly reports unverified semantic `Constraint` elements rather than assuming compliance.
 
@@ -368,7 +375,7 @@ The Query Engine provides read-only semantic query operations over accepted repo
 * `Status`: Repository summary, latest accepted change, and state counts.
 * `Trace`: Origin provenance path traversal following normative origin policies.
 * `Impact`: Partitioned impact analysis (`Directly Changed Elements`, `Semantically Affected Elements`, `Accountable Artifacts`).
-* `History`: Accepted `ChangeRevision` graph traversal and element revision filtering (`history --element`).
+* `History`: Accepted history traversal and element revision filtering (`history --element`).
 * `ArtifactAccountability`: `CURRENT` / `STALE` / `UNACCOUNTED` status reporting (`kat artifacts`).
 
 Query operations produce results that are semantically equivalent to querying canonical repository objects directly.
