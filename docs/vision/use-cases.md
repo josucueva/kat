@@ -22,8 +22,8 @@ Use cases describe durable user interactions with the semantic repository. Relea
 1. The user defines a new knowledge element (specifying type, title, and optional description/properties).
 2. KAT validates the element type and required property structure against the active ontology.
 3. KAT assigns a stable 36-character `ElementId` (UUIDv4) to the element.
-4. KAT stages a `CreateElement` operation against the candidate draft state $S_{\text{working}}$.
-5. When the enclosing Change is accepted, the new element becomes part of authoritative `SemanticState` $S_{n+1}$.
+4. KAT applies the `CreateElement` operation through the Change Engine, either as part of an open draft Change or as a standalone Change.
+5. When accepted, the new element becomes part of authoritative `SemanticState` $S_{n+1}$.
 
 **Result:**
 The new element is recorded with stable identity and can participate in relationships, validation, evolution, and traceability.
@@ -44,7 +44,7 @@ The new element is recorded with stable identity and can participate in relation
 1. The user defines a new `kat.core/design-decision` element.
 2. The user describes the chosen approach and decision rationale in the element properties.
 3. The user establishes ontology-valid relationships involving the decision (e.g. `addresses` a requirement, or is `restricted` by a constraint).
-4. KAT stages the element creation and relationship links in candidate draft state $S_{\text{working}}$.
+4. KAT applies the element creation and relationship operations through the Change Engine, either as part of an open draft Change or as a standalone Change.
 5. Upon acceptance, the decision becomes authoritative within accepted state $S_{n+1}$.
 
 **Result:**
@@ -75,7 +75,7 @@ Requirement: "Payments must be processed asynchronously"
 1. The user selects the source and target elements and specifies the relationship type.
 2. KAT verifies that the relationship type is valid for the given source and target element types under the active ontology.
 3. KAT assigns a stable `RelationshipId` (UUIDv4).
-4. KAT stages a `Link` operation in candidate draft state $S_{\text{working}}$.
+4. KAT applies the `Link` operation through the Change Engine, either as part of an open draft Change or as a standalone Change.
 5. When accepted, the relationship becomes available for tracing, impact analysis, and validation.
 
 **Canonical Relationship Types:**
@@ -115,15 +115,14 @@ Design Decision  -- guides    --> Implementation
 3. KAT presents the provenance path connecting the element to upstream decisions, requirements, constraints, and intent.
 
 **Example:**
-User queries origin for `PaymentService` (`Implementation`):
+User queries origin for `payment_service.rs` (`Artifact`):
 
 ```text
-PaymentService (Implementation)
-    <-- represents -- payment_service.rs (Artifact)
-    -- realizes   --> Asynchronous Payment Processing (Requirement)
-    <-- addresses -- Event-Driven Payment Architecture (Design Decision)
-    <-- restricts -- Non-Blocking Checkout Policy (Constraint)
-    -- motivates  --> Immediate Checkout Confirmation (Intent)
+payment_service.rs (Artifact)
+    -- represents --> Payment Processing (Implementation)
+    <-- guides     -- Event-Driven Payment Architecture (Design Decision)
+    -- addresses   --> Asynchronous Payment Processing (Requirement)
+    <-- motivates  -- Immediate Checkout Confirmation (Intent)
 ```
 
 **Result:**
@@ -158,13 +157,13 @@ The user receives an explicit impact report outlining which semantic elements an
 
 **Actor:** Developer / Architect / CI Pipeline
 
-**Goal:** Evaluate whether the semantic state satisfies all mechanically enforced structural, domain, and ontology rules.
+**Goal:** Evaluate whether a semantic state satisfies all mechanically enforced structural, domain, and ontology rules.
 
 **Preconditions:**
-* Accepted state $S_n$ or candidate draft state $S_{\text{working}}$ is selected.
+* A KAT repository exists.
 
 **Main flow:**
-1. KAT inspects the selected semantic state.
+1. KAT inspects the semantic state: evaluating either accepted state $S_n$ during explicit validation queries (`kat validate`), or candidate state $S_{\text{working}}$ during Change evaluation and commit.
 2. KAT evaluates structural integrity, ontology type rules, valid endpoint combinations, and lifecycle consistency.
 3. KAT identifies any mechanical violations (e.g. relationship referencing a missing target version, or invalid relationship endpoint types).
 4. KAT identifies unverified semantic `Constraint` elements for explicit awareness.
@@ -195,7 +194,7 @@ The user receives deterministic feedback on structural/ontology compliance and u
 
 **Preconditions:**
 * The KAT repository exists.
-* The `Artifact` element exists with direct `kat.core/represents` or `kat.core/derived-from` relationships.
+* The `Artifact` element exists in the current accepted state $S_n$.
 
 **Main flow:**
 1. The user reviews artifact accountability (`kat artifacts`).
@@ -209,7 +208,7 @@ The user receives deterministic feedback on structural/ontology compliance and u
 6. When accepted, KAT records the updated target version baseline in accepted `ChangeRevision` history.
 
 **Result:**
-The artifact's accountability status returns to `CURRENT`, and the reconciliation is preserved as explicit historical record without mutating `SemanticState`.
+If a stale artifact is successfully reconciled, its accountability status returns to `CURRENT`. Accountability history remains explicit and traceable without mutating `SemanticState`.
 
 ---
 
@@ -224,12 +223,12 @@ The artifact's accountability status returns to `CURRENT`, and the reconciliatio
 * No uncommitted draft session is currently active.
 
 **Main flow:**
-1. The user opens a local draft session (`kat update`, `kat link`, etc.).
+1. The user opens a local draft session with `kat change begin`.
 2. The user stages one or more mutation operations (`CreateElement`, `UpdateElement`, `Link`, `AccountArtifact`, etc.).
 3. KAT evaluates each operation sequentially against working candidate state $S_{\text{working}}$.
-4. The user inspects candidate draft status (`kat status`, `kat show`).
+4. The user inspects candidate draft status with `kat change status`.
 5. KAT validates candidate state $S_{\text{working}}$ against ontology and structural rules.
-6. The user commits the draft. If accepted base state $S_n$ remains unchanged, KAT atomically publishes $(S_{n+1}, C_{n+1})$ as one `ChangeRevision` object.
+6. The user commits the draft (`kat change commit`). If accepted base state $S_n$ remains unchanged, KAT atomically publishes the new accepted repository state $(S_{n+1}, C_{n+1})$, where $C_{n+1}$ is the single `ChangeRevision` representing the Change.
 7. If base state $S_n$ changed concurrently, KAT rejects commit with a stale-base conflict error and preserves $S_n$.
 
 **Result:**
