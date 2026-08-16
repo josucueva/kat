@@ -70,7 +70,7 @@ KAT must evolve authoritative software knowledge through explicit Changes. A Cha
 
 #### Milestones
 * **v0.1**: Single-operation publication per `ChangeRevision`.
-* **v0.2**: Staged multi-operation local draft sessions ($S_{\text{working}}$), candidate state validation, atomic CAS publication, and stale-base conflict rejection.
+* **v0.2**: Staged multi-operation local draft sessions ($S_{\text{working}}$), candidate state validation, atomic publication with stale-base rejection.
 
 ---
 
@@ -79,18 +79,18 @@ KAT must evolve authoritative software knowledge through explicit Changes. A Cha
 KAT must navigate semantic relationships across abstraction levels and historical evolution. Traceability must explain why an element exists, what addresses or realizes it, and what artifacts depend on it.
 
 #### Milestones
-* **v0.1**: Origin trace (`trace`) traversing backward along motivations, requirements, decisions, and implementations.
+* **v0.1**: Origin trace (`trace`) using relationship-specific provenance traversal policies.
 * **v0.2**: Enhanced CLI query formatting and relationship display.
 
 ---
 
 ### R-005 Impact Analysis
 
-KAT must identify knowledge elements and artifacts affected by a proposed or accepted change, distinguishing directly changed elements from transitively affected knowledge and accountable artifacts.
+KAT must identify knowledge elements and artifacts that may be affected by semantic evolution, distinguishing directly changed elements from transitively affected knowledge and accountable artifacts.
 
 #### Milestones
-* **v0.1**: Forward impact analysis (`impact`) traversing semantic dependency graphs.
-* **v0.2**: Partitioned impact reporting (`Directly Affected`, `Transitively Affected`, `Accountable Artifacts`).
+* **v0.1**: Impact analysis (`impact`) using relationship-specific impact propagation policies.
+* **v0.2**: Partitioned impact reporting (`Directly Changed Elements`, `Semantically Affected Elements`, `Accountable Artifacts`).
 
 ---
 
@@ -109,8 +109,8 @@ KAT must mechanically validate all structural and domain rules for which executa
 KAT must preserve direct semantic accountability between Artifact elements and the knowledge they reference (`kat.core/represents`, `kat.core/derived-from`). KAT must determine whether recorded baselines remain aligned with target knowledge versions (`CURRENT`, `STALE`, `UNACCOUNTED`). Artifact accountability must not imply physical file verification, and physical edits must not independently redefine authoritative state.
 
 #### Milestones
-* **v0.1**: Initial relationship tracking for `represents` and `derived-from`.
-* **v0.2**: `CURRENT` / `STALE` / `UNACCOUNTED` status reporting, explicit `AccountArtifact` baseline reconciliation in accepted history.
+* **v0.1**: Direct accountability relationships, initial relationship baselines, and artifact accountability analysis.
+* **v0.2**: Explicit `AccountArtifact` reconciliation and refined `CURRENT` / `STALE` / `UNACCOUNTED` status reporting.
 * **Future**: Optional physical artifact verification bridges and file drift detection.
 
 ---
@@ -147,7 +147,7 @@ Demonstrate that authoritative software knowledge can be represented, persisted,
 * Canonical object storage for elements, relationships, changes, and ontologies.
 * Single-operation Change publication.
 * Command-line interface for `init`, `create`, `update`, `deprecate`, `supersede`, `link`, `unlink`, `show`, `trace`, `impact`, `validate`, `history`.
-* Basic `represents` and `derived-from` relationship tracking.
+* Direct accountability relationships, initial relationship baselines, and artifact accountability analysis.
 
 #### Explicitly Deferred
 * Multi-operation Changes.
@@ -164,9 +164,9 @@ Demonstrate that authoritative software knowledge can be represented, persisted,
 Make the semantic repository practical for deliberate multi-operation software evolution and explicit artifact accountability.
 
 #### Included Capabilities
-* **Discovery & Interaction**: `kat list`, `kat show`, `kat account`, `kat artifacts`, 8-character unique hex prefix resolution, compact table views.
-* **Multi-Operation Evolution**: Single local draft session (`.kat/work/change/session.json`), staged operations, candidate state $S_{\text{working}}$, atomic publication, stale-base rejection.
-* **Artifact Accountability**: `CURRENT` / `STALE` / `UNACCOUNTED` status evaluation, `kat account` query, explicit `AccountArtifact` baseline reconciliation in accepted `ChangeRevision` history.
+* **Discovery & Interaction**: `kat list`, `kat show`, `kat artifacts`, 8-character unique hex prefix resolution, compact table views.
+* **Multi-Operation Evolution**: Single local draft session, staged operations, candidate state $S_{\text{working}}$, atomic publication, stale-base rejection.
+* **Artifact Accountability**: `CURRENT` / `STALE` / `UNACCOUNTED` status evaluation via `kat artifacts`, plus explicit `kat account` / `AccountArtifact` baseline reconciliation in accepted `ChangeRevision` history.
 
 #### Explicitly Deferred
 * Distributed remote repository fetch/push.
@@ -184,9 +184,9 @@ Make the semantic repository practical for deliberate multi-operation software e
 | **R-001 Knowledge Representation** | Core ontology & versions | Enhanced discovery & lookup UX | Domain extensions |
 | **R-002 Identity & History** | Content-addressed store | Multi-op revisions, history filtering | Distributed graphs |
 | **R-003 Semantic Evolution** | Single-operation Changes | Multi-op staged drafts, atomic publication | Collaborative merge |
-| **R-004 Traceability** | Backward origin trace | Enhanced CLI presentation | Cross-repository trace |
-| **R-005 Impact Analysis** | Forward graph traversal | Partitioned impact reporting | Change simulation |
+| **R-004 Traceability** | Provenance traversal policies | Enhanced CLI presentation | Cross-repository trace |
+| **R-005 Impact Analysis** | Propagation policies | Partitioned impact reporting | Change simulation |
 | **R-006 Consistency Validation** | Structural & ontology rules | Candidate-state pre-commit validation | Executable constraint engine |
-| **R-007 Artifact Accountability** | Initial relationship edges | `CURRENT/STALE`, `AccountArtifact` baseline updates | Physical drift verification |
+| **R-007 Artifact Accountability** | Direct edges & baselines | `CURRENT / STALE / UNACCOUNTED`, `AccountArtifact` | Physical drift verification |
 | **R-008 Safe Collaboration** | Deferred | Local draft, stale-base rejection | Remote sync & semantic merge |
-| **R-009 Materialization Boundary** | Conceptual boundary | Conceptual boundary & accountability | Generator plugins & reverse infer |
+| **R-009 Materialization Boundary** | Conceptual boundary | Conceptual boundary & accountability | Generator plugins & reverse inference |
