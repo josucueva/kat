@@ -229,13 +229,32 @@ Provides a high-level summary of the current accepted repository state.
 
 ### Trace
 
-Traverses provenance paths associated with a knowledge element following the normative origin traversal policy defined by the ontology.
+Traverses provenance paths associated with a knowledge element following the normative origin traversal policy.
 
 **Input:**
 * Element identity
 
 **Result:**
 * Provenance paths and the relationships and elements traversed along each path.
+
+#### Origin Traversal Policy
+
+When performing Origin Tracing (`kat trace`), relationships participate in provenance navigation according to a normative direction relative to their canonical definitions:
+
+| Relationship Type | Canonical Form | Origin Traversal Direction | Semantic Rationale |
+| :--- | :--- | :--- | :--- |
+| `kat.core/motivates` | Intent $\xrightarrow{\text{motivates}}$ Req / Decision | Target $\to$ Source (**Backward**) | Requirement / Decision is motivated by Intent |
+| `kat.core/derived-from` | Artifact $\xrightarrow{\text{derived-from}}$ Auth Knowledge | Source $\to$ Target (**Forward**) | Artifact is derived from Requirement / Decision / Constraint / Impl |
+| `kat.core/realizes` | Impl $\xrightarrow{\text{realizes}}$ Requirement | Source $\to$ Target (**Forward**) | Implementation realizes Requirement |
+| `kat.core/represents` | Artifact $\xrightarrow{\text{represents}}$ Implementation | Source $\to$ Target (**Forward**) | Artifact represents Implementation |
+| `kat.core/validates` | Validation $\xrightarrow{\text{validates}}$ Subject | Source $\to$ Target (**Forward**) | Validation validates Requirement / Constraint / Implementation |
+| `kat.core/restricts` | Constraint $\xrightarrow{\text{restricts}}$ Req / Decision / Impl | Target $\to$ Source (**Backward**) | Element is restricted by Constraint |
+| `kat.core/addresses` | Decision $\xrightarrow{\text{addresses}}$ Requirement | Source $\to$ Target (**Forward**) | Decision exists to address Requirement |
+| `kat.core/supersedes` | Replacement $\xrightarrow{\text{supersedes}}$ Existing Decision | Source $\to$ Target (**Forward**) | Replacement decision supersedes old decision |
+| `kat.core/guides` | Decision $\xrightarrow{\text{guides}}$ Implementation | Target $\to$ Source (**Backward**) | Implementation is guided by Decision |
+| `kat.core/depends-on` | Impl $\xrightarrow{\text{depends-on}}$ Implementation | *Excluded (Non-Origin)* | Structural dependency (reserved for Impact Analysis) |
+
+Relationships classified as *Excluded* (such as `kat.core/depends-on`) represent horizontal or operational dependencies rather than authoritative origin or rationale, and are omitted from Origin Tracing.
 
 ### Impact
 
@@ -246,6 +265,32 @@ Evaluates which knowledge and artifacts may be affected if a selected knowledge 
 
 **Result:**
 * The selected root element (`directly_changed` in the query model), `semantically_affected` elements, and `affected_artifacts`.
+
+#### Impact Propagation Policy
+
+Impact Analysis (`kat impact`) answers: *If a knowledge element changes, what other current knowledge may be affected?*
+
+Impact propagation travels through relationships according to a normative direction relative to their canonical definitions:
+
+| Relationship Type | Canonical Form | Impact Propagation Direction | Semantic Rationale |
+| :--- | :--- | :--- | :--- |
+| `kat.core/motivates` | Intent $\xrightarrow{\text{motivates}}$ Req / Decision | Source $\to$ Target (**Forward**) | Changed Intent affects motivated Requirement / Decision |
+| `kat.core/addresses` | Decision $\xrightarrow{\text{addresses}}$ Requirement | Target $\to$ Source (**Backward**) | Changed Requirement affects addressing Decision |
+| `kat.core/restricts` | Constraint $\xrightarrow{\text{restricts}}$ Req / Decision / Impl | Source $\to$ Target (**Forward**) | Changed Constraint affects restricted elements |
+| `kat.core/guides` | Decision $\xrightarrow{\text{guides}}$ Implementation | Source $\to$ Target (**Forward**) | Changed Decision affects guided Implementation |
+| `kat.core/realizes` | Impl $\xrightarrow{\text{realizes}}$ Requirement | Target $\to$ Source (**Backward**) | Changed Requirement affects realizing Implementation |
+| `kat.core/represents` | Artifact $\xrightarrow{\text{represents}}$ Implementation | Target $\to$ Source (**Backward**) | Changed Implementation affects representing Artifact |
+| `kat.core/derived-from` | Artifact $\xrightarrow{\text{derived-from}}$ Auth Knowledge | Target $\to$ Source (**Backward**) | Changed Auth Knowledge affects derived Artifact |
+| `kat.core/validates` | Validation $\xrightarrow{\text{validates}}$ Subject | Target $\to$ Source (**Backward**) | Changed Subject affects validating evidence |
+| `kat.core/depends-on` | Impl A $\xrightarrow{\text{depends-on}}$ Impl B | Target $\to$ Source (**Backward**) | Changed Dependency B affects dependent Implementation A |
+| `kat.core/supersedes` | Replacement $\xrightarrow{\text{supersedes}}$ Existing Decision | *Excluded (Non-Impact)* | Historical evolution relation (omitted from current impact) |
+
+Impact Analysis categorizes impacted elements into three distinct buckets:
+1. **Directly Changed Elements**: The root element(s) being analyzed.
+2. **Semantically Affected Elements**: Non-artifact Active elements reached via impact propagation (`Requirement`, `Constraint`, `Design Decision`, `Implementation`, `Validation`, `Intent`).
+3. **Affected Artifacts**: Active elements of type `kat.core/artifact` reached via impact propagation.
+
+> **Lifecycle Policy Distinction**: Filtering reached target elements to `Lifecycle::Active` is an **Impact-specific query policy**. Because Impact Analysis identifies potential consequences for the *current accepted operational state*, historical (`Deprecated` or `Superseded`) targets are excluded from impact results. By contrast, **Trace Origin** retains all historical lifecycle states in trace paths to preserve full provenance history.
 
 ### History
 

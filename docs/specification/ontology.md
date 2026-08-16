@@ -23,7 +23,7 @@ The ontology follows the core principles of KAT.
 
 The ontology represents knowledge across different levels of software development, including intent, requirements, constraints, decisions, implementations, artifacts, and validation.
 
-Source code is represented as an artifact rather than as the software model itself.
+Source code is represented as an Artifact and may represent or derive from semantic Implementation knowledge; it is not itself the authoritative semantic model.
 
 ### The specification is authoritative
 
@@ -107,7 +107,9 @@ The API must return a response within an accepted time.
 
 ## Constraint
 
-A Constraint represents a rule, limitation, or condition that restricts possible software states or decisions.
+A Constraint expresses a semantic restriction, limitation, or condition that restricts possible software states or decisions.
+
+Whether KAT can mechanically verify a restriction depends on whether executable semantics are available.
 
 Examples:
 
@@ -186,6 +188,8 @@ Artifacts do not independently define the intended state of the software.
 ## Validation
 
 Validation represents evidence used to determine whether software knowledge or its realization satisfies expected requirements, constraints, or properties.
+
+A Validation element records validation evidence or a validation result; KAT does not necessarily execute the validation mechanism.
 
 Examples:
 
@@ -342,9 +346,9 @@ Payments must support refunds
 
 ## represents
 
-Indicates that an Artifact provides a concrete representation of another knowledge element.
+Indicates that an Artifact provides a concrete representation of an implementation concept.
 
-Initial valid relationship:
+Valid relationship:
 
 ```text
 Artifact -> Implementation
@@ -362,9 +366,11 @@ Implementation:
 Payment processing component
 ```
 
-## derived_from
+`represents` asserts that the target `Implementation` concept is concretely materialized by the artifact.
 
-Indicates that an Artifact originates from or is produced from represented software knowledge.
+## derived-from
+
+Indicates that an Artifact originated from, was produced by, or was constrained by software knowledge.
 
 Initial valid relationships:
 
@@ -381,13 +387,13 @@ Example:
 Artifact:
 openapi.yaml
 
-    derived_from
+    derived-from
 
 Requirement:
 Expose refund operation
 ```
 
-The exact difference between `represents` and `derived_from` may be refined as the materialization model is defined.
+Unlike `represents`, which links an artifact specifically to its semantic implementation realization, `derived-from` links an artifact to any knowledge element that informed, constrained, or produced it.
 
 ## validates
 
@@ -413,7 +419,7 @@ Requirement:
 Payments must support refunds
 ```
 
-## depends_on
+## depends-on
 
 Indicates that one knowledge element requires another for its meaning or realization.
 
@@ -427,7 +433,7 @@ Example:
 
 ```text
 Refund Processing
-    depends_on
+    depends-on
 Payment Provider Integration
 ```
 
@@ -436,6 +442,8 @@ Additional valid source and target combinations may be introduced when justified
 ## supersedes
 
 Indicates that one knowledge element replaces another while preserving historical traceability.
+
+`supersedes` is an evolution relationship. It preserves explicit replacement history between knowledge elements and is not treated as a current-impact dependency.
 
 Initial valid relationship:
 
@@ -477,26 +485,18 @@ Design Decision
         Requirement
 ```
 
-The direction does not determine how KAT may traverse the relationship.
+Relationship direction and query traversal direction are distinct concepts.
 
-Trace operations may navigate relationships in either direction.
+KAT queries may traverse a relationship in its canonical direction, the reverse direction, or exclude it entirely according to query-specific traversal policies defined by `operations.md`.
 
-Therefore:
+# Relationship Conformance
 
-```text
-Relationship direction != trace direction
-```
+A relationship conforms to the core ontology when:
 
-# Relationship Validity
-
-A relationship is valid only when:
-
-* The source element exists
-* The target element exists
-* The relationship type exists
-* The source type is allowed for the relationship
-* The target type is allowed for the relationship
-* Any additional ontology rules are satisfied
+* Its relationship type is defined in the ontology.
+* Its source element type is allowed for that relationship type.
+* Its target element type is allowed for that relationship type.
+* Any relationship-type-specific ontology constraints are satisfied.
 
 For example:
 
@@ -504,15 +504,13 @@ For example:
 Intent -> motivates -> Requirement
 ```
 
-may be valid, while:
+conforms to the ontology, while:
 
 ```text
 Artifact -> motivates -> Requirement
 ```
 
-is not valid in the core ontology.
-
-Invalid relationships must not silently become part of an accepted semantic state.
+does not conform to the core ontology.
 
 # Extensibility
 
@@ -520,36 +518,26 @@ The core ontology defines only concepts that are broadly applicable to software 
 
 Architecture-specific or technology-specific concepts should be introduced through extensions rather than added directly to the core ontology.
 
-For example:
+An extension may introduce architecture-specific element types such as:
 
 ```text
-Core:
-
-Implementation
-
-Extension:
-
-Implementation
-    |
-    +-- Service
-    +-- Controller
-    +-- Repository
-    +-- Adapter
+app/service
+app/controller
+app/repository
+app/adapter
 ```
 
-Another architecture may define:
+Or for another architecture:
 
 ```text
-Implementation
-    |
-    +-- Process
-    +-- Actor
-    +-- Message Handler
+app/process
+app/actor
+app/message-handler
 ```
 
 Both can use the same core KAT semantics without requiring KAT itself to assume either architecture.
 
-Extensions must preserve the semantics and invariants of the core ontology.
+Extensions may add element and relationship types, but must not redefine the meaning or protocol identity of existing `kat.core/*` types.
 
 # Evolution
 
@@ -574,7 +562,7 @@ The change model determines how those operations evolve the semantic state.
 
 The ontology determines whether the resulting elements and relationships are semantically valid.
 
-# Initial Core Ontology
+# Initial Core Ontology Summary
 
 The initial ontology can be summarized as:
 
@@ -616,7 +604,7 @@ Artifact
         Implementation
 
 Artifact
-    derived_from
+    derived-from
         Requirement
         Constraint
         Design Decision
@@ -629,7 +617,7 @@ Validation
         Implementation
 
 Implementation
-    depends_on
+    depends-on
         Implementation
 
 Design Decision
@@ -640,54 +628,3 @@ Design Decision
 This initial ontology is intentionally small.
 
 New element types and relationships should be added only when they represent concepts that cannot be expressed clearly through the existing ontology.
-
-# Origin Traversal Policy
-
-Relationships carry semantic directionality that defines how KAT queries navigate the semantic graph to trace authoritative origin and provenance.
-
-When performing **Origin Tracing** (`kat trace`), relationships participate in provenance navigation according to a normative direction relative to their canonical definitions:
-
-| Relationship Type | Canonical Form | Origin Traversal Direction | Semantic Rationale |
-| :--- | :--- | :--- | :--- |
-| `kat.core/motivates` | Intent $\xrightarrow{\text{motivates}}$ Req / Decision | Target $\to$ Source (**Backward**) | Requirement / Decision is motivated by Intent |
-| `kat.core/derived-from` | Artifact $\xrightarrow{\text{derived-from}}$ Auth Knowledge | Source $\to$ Target (**Forward**) | Artifact is derived from Requirement / Decision / Constraint |
-| `kat.core/realizes` | Impl $\xrightarrow{\text{realizes}}$ Requirement | Source $\to$ Target (**Forward**) | Implementation realizes Requirement |
-| `kat.core/represents` | Artifact $\xrightarrow{\text{represents}}$ Implementation | Source $\to$ Target (**Forward**) | Artifact represents Implementation |
-| `kat.core/validates` | Validation $\xrightarrow{\text{validates}}$ Subject | Source $\to$ Target (**Forward**) | Validation validates Requirement / Constraint / Implementation |
-| `kat.core/restricts` | Constraint $\xrightarrow{\text{restricts}}$ Req / Decision / Impl | Target $\to$ Source (**Backward**) | Element is restricted by Constraint |
-| `kat.core/addresses` | Decision $\xrightarrow{\text{addresses}}$ Requirement | Source $\to$ Target (**Forward**) | Decision exists to address Requirement |
-| `kat.core/supersedes` | Replacement $\xrightarrow{\text{supersedes}}$ Existing Decision | Source $\to$ Target (**Forward**) | Replacement decision supersedes old decision |
-| `kat.core/guides` | Decision $\xrightarrow{\text{guides}}$ Implementation | Target $\to$ Source (**Backward**) | Implementation is guided by Decision |
-| `kat.core/depends-on` | Impl $\xrightarrow{\text{depends-on}}$ Implementation | *Excluded (Non-Origin)* | Structural dependency (reserved for Impact Analysis) |
-
-Relationships classified as *Excluded* (such as `kat.core/depends-on`) represent horizontal or operational dependencies rather than authoritative origin or rationale, and are omitted from Origin Tracing.
-
-# Impact Propagation Policy
-
-Impact Analysis (`kat impact`) answers: *If a knowledge element changes, what other current knowledge may be affected?*
-
-Impact propagation travels through relationships according to a normative direction relative to their canonical definitions:
-
-| Relationship Type | Canonical Form | Impact Propagation Direction | Semantic Rationale |
-| :--- | :--- | :--- | :--- |
-| `kat.core/motivates` | Intent $\xrightarrow{\text{motivates}}$ Req / Decision | Source $\to$ Target (**Forward**) | Changed Intent affects motivated Requirement / Decision |
-| `kat.core/addresses` | Decision $\xrightarrow{\text{addresses}}$ Requirement | Target $\to$ Source (**Backward**) | Changed Requirement affects addressing Decision |
-| `kat.core/restricts` | Constraint $\xrightarrow{\text{restricts}}$ Req / Decision / Impl | Source $\to$ Target (**Forward**) | Changed Constraint affects restricted elements |
-| `kat.core/guides` | Decision $\xrightarrow{\text{guides}}$ Implementation | Source $\to$ Target (**Forward**) | Changed Decision affects guided Implementation |
-| `kat.core/realizes` | Impl $\xrightarrow{\text{realizes}}$ Requirement | Target $\to$ Source (**Backward**) | Changed Requirement affects realizing Implementation |
-| `kat.core/represents` | Artifact $\xrightarrow{\text{represents}}$ Implementation | Target $\to$ Source (**Backward**) | Changed Implementation affects representing Artifact |
-| `kat.core/derived-from` | Artifact $\xrightarrow{\text{derived-from}}$ Auth Knowledge | Target $\to$ Source (**Backward**) | Changed Auth Knowledge affects derived Artifact |
-| `kat.core/validates` | Validation $\xrightarrow{\text{validates}}$ Subject | Target $\to$ Source (**Backward**) | Changed Subject affects validating evidence |
-| `kat.core/depends-on` | Impl A $\xrightarrow{\text{depends-on}}$ Impl B | Target $\to$ Source (**Backward**) | Changed Dependency B affects dependent Implementation A |
-| `kat.core/supersedes` | Replacement $\xrightarrow{\text{supersedes}}$ Existing Decision | *Excluded (Non-Impact)* | Historical evolution relation (omitted from current impact) |
-
-Impact Analysis categorizes impacted elements into three distinct buckets:
-1. **Directly Changed Elements**: The root element(s) being modified.
-2. **Semantically Affected Elements**: Non-artifact Active elements reached via impact propagation (`Requirement`, `Constraint`, `Design Decision`, `Implementation`, `Validation`, `Intent`).
-3. **Affected Artifacts**: Active elements of type `kat.core/artifact` reached via impact propagation.
-
-> **Lifecycle Policy Distinction**: Filtering reached target elements to `Lifecycle::Active` is an **Impact-specific query policy**. Because Impact Analysis identifies potential consequences for the *current accepted operational state*, historical (`Deprecated` or `Superseded`) targets are excluded from impact results. By contrast, **Trace Origin** retains all historical lifecycle states in trace paths to preserve full provenance history.
-
-
-
-
