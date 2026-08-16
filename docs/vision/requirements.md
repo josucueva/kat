@@ -1,128 +1,192 @@
-# KAT v0.1 Requirements
+# KAT Product Requirements
 
 ## Purpose
 
-KAT v0.1 should demonstrate that software knowledge can be represented, changed, traced, and validated independently from source code artifacts.
+This document defines the product-level functional requirements and release roadmap for the Knowledge Architecture Tool (KAT).
 
-The version should preserve the specification-first model, where authoritative software knowledge defines the intended state of the system and artifacts remain traceable to that knowledge.
+Requirements describe what KAT fundamentally accomplishes as a specification-first semantic repository. Release milestones describe the progressive capability increments demonstrated across releases.
 
-## Functional Requirements
+---
 
-### Knowledge Representation
+## Primary System Goal
 
-The system must represent:
+> **KAT must provide a specification-first semantic repository in which software knowledge is represented as authoritative, versioned, traceable, and evolvable independently from its physical artifacts.**
 
-* Intent
-* Requirements
-* Constraints
-* Design Decisions
-* Implementations
-* Artifacts
-* Validation evidence
-* Relationships between knowledge elements
+---
 
-Each knowledge element must have a stable identity.
+## Requirement Model
 
-### Traceability
+KAT requirements are structured around product capabilities rather than single-release feature lists:
 
-The system must allow:
+```text
+Project Primary Goal
+    |
+    +--> Core Product Requirements (R-001 .. R-009)
+    |
+    +--> Release Capability Increments
+            |
+            +--> v0.1: Semantic Repository Foundation
+            +--> v0.2: Usable Semantic Evolution
+            +--> Future: Distributed Collaboration & Automation
+```
 
-* Navigating relationships between knowledge elements
-* Tracing an element back to its origin
-* Understanding why an element exists
-* Identifying what depends on an element
-* Identifying elements that may be affected by a change
-* Tracing validation evidence to the knowledge it validates
+* **Product Requirements** define long-lived functional boundaries.
+* **Release Milestones** define the specific degree of capability achieved in each version.
 
-Traceability must remain available as the software evolves.
+---
 
-### Evolution
+## Core Product Requirements
 
-The system must represent meaningful changes to authoritative software knowledge.
+### R-001 Authoritative Knowledge Representation
 
-The system must support:
+KAT must represent software knowledge independently from physical artifacts. At minimum, the core semantic model must support:
+* Intent (*Why does this exist?*)
+* Requirements (*What is expected?*)
+* Constraints (*What restricts state or decisions?*)
+* Design Decisions (*What solution was chosen and why?*)
+* Implementations (*What realizes intended behavior?*)
+* Artifacts (*What concrete outputs represent or derive from knowledge?*)
+* Validation evidence (*What evidence verifies expected properties?*)
 
-* Creation of knowledge
-* Modification of knowledge
-* Deprecation of knowledge
-* Superseding existing knowledge
-* Creation and removal of relationships between knowledge elements
+#### Milestones
+* **v0.1**: Implemented core ontology and immutable `KnowledgeElementVersion` storage.
+* **v0.2**: Preserved ontology model; introduced rich identity discovery (`list`, `show`, unique prefix resolution).
 
-A change may contain multiple semantic operations that together represent one meaningful evolution of the software.
+---
 
-### Change History
+### R-002 Identity, Immutability, and History
 
-The system must preserve the history of authoritative software changes.
+KAT must preserve stable logical identities (`ElementId`, `RelationshipId`, `ChangeId`) distinct from content-addressed version object hashes (`ObjectId`). Accepted change history must remain immutable and traceable.
 
-History must allow identifying:
+#### Milestones
+* **v0.1**: Established content-addressed canonical object store and single-operation publication history.
+* **v0.2**: Multi-operation `ChangeRevision` objects, compact tabular rendering, element history filtering (`history --element`), and explicit `AccountArtifact` history logging.
 
-* What changed
-* Which knowledge was affected
-* Which operations were applied
-* The order or dependency between changes when relevant
+---
 
-Historical changes must not be silently removed when later changes supersede or reverse their effects.
+### R-003 Explicit Semantic Evolution
 
-### Consistency Validation
+KAT must evolve authoritative software knowledge through explicit Changes. A Change may contain one or more ordered mutation operations (`CreateElement`, `UpdateElement`, `DeprecateElement`, `SupersedeElement`, `Link`, `Unlink`, `AccountArtifact`) that together express one meaningful software evolution. Acceptance must be atomic: a Change becomes authoritative as a whole or not at all.
 
-The system must be able to evaluate the semantic model against defined consistency rules.
+#### Milestones
+* **v0.1**: Single-operation publication per `ChangeRevision`.
+* **v0.2**: Staged multi-operation local draft sessions ($S_{\text{working}}$), candidate state validation, atomic CAS publication, and stale-base conflict rejection.
 
-The system must:
+---
 
-* Detect invalid relationships
-* Detect violated constraints
-* Identify affected knowledge elements
-* Report consistency violations without silently modifying the semantic model
+### R-004 Traceability and Provenance
 
-### Impact Analysis
+KAT must navigate semantic relationships across abstraction levels and historical evolution. Traceability must explain why an element exists, what addresses or realizes it, and what artifacts depend on it.
 
-The system must be able to identify knowledge elements that may be affected by a proposed or applied change.
+#### Milestones
+* **v0.1**: Origin trace (`trace`) traversing backward along motivations, requirements, decisions, and implementations.
+* **v0.2**: Enhanced CLI query formatting and relationship display.
 
-Impact analysis must distinguish between:
+---
 
-* Directly changed elements
-* Semantically affected elements
-* Artifacts affected through traceability relationships
+### R-005 Impact Analysis
 
-Impact analysis indicates potential consequences and does not imply that every affected element is invalid.
+KAT must identify knowledge elements and artifacts affected by a proposed or accepted change, distinguishing directly changed elements from transitively affected knowledge and accountable artifacts.
 
-### Artifact Accountability
+#### Milestones
+* **v0.1**: Forward impact analysis (`impact`) traversing semantic dependency graphs.
+* **v0.2**: Partitioned impact reporting (`Directly Affected`, `Transitively Affected`, `Accountable Artifacts`).
 
-Artifacts must remain traceable to the authoritative knowledge they represent, implement, validate, or materialize.
+---
 
-The system must be able to identify when an artifact is not consistent with the current semantic model.
+### R-006 Semantic Consistency Validation
 
-An artifact modification must not independently redefine the authoritative software state.
+KAT must mechanically validate all structural and domain rules for which executable semantics are defined. Rules that cannot be mechanically verified (such as semantic `Constraint` elements without executable rules) must remain identifiable as unverified rather than being silently assumed compliant.
 
-For v0.1, the mechanism used to detect or reconcile artifact divergence may remain limited or manual.
+#### Milestones
+* **v0.1**: Accepted state structural and ontology validity checking (`validate`).
+* **v0.2**: Pre-commit candidate-state validation for staged multi-operation local drafts.
 
-### Persistence
+---
 
-The system must preserve:
+### R-007 Artifact Accountability
 
-* Knowledge elements
-* Relationships
-* Changes
-* Relevant history
+KAT must preserve direct semantic accountability between Artifact elements and the knowledge they reference (`kat.core/represents`, `kat.core/derived-from`). KAT must determine whether recorded baselines remain aligned with target knowledge versions (`CURRENT`, `STALE`, `UNACCOUNTED`). Artifact accountability must not imply physical file verification, and physical edits must not independently redefine authoritative state.
 
-between executions.
+#### Milestones
+* **v0.1**: Initial relationship tracking for `represents` and `derived-from`.
+* **v0.2**: `CURRENT` / `STALE` / `UNACCOUNTED` status reporting, explicit `AccountArtifact` baseline reconciliation in accepted history.
+* **Future**: Optional physical artifact verification bridges and file drift detection.
 
-Persistence must preserve stable identities and traceability relationships.
+---
 
-## Scope Limitations
+### R-008 Safe Collaborative Evolution
 
-Scope limitations are release-specific: they describe capabilities excluded from KAT v0.1 and may be explored in later releases. They are distinct from project-level non-goals, which describe what KAT fundamentally does not want to become and are listed in `non-goals.md`.
+KAT must permit multiple participants or repository instances to evolve semantic knowledge without reducing semantic conflict to file-level merging. Conflicting evolution must not silently enter accepted state.
 
-KAT v0.1 is not required to provide:
+#### Milestones
+* **v0.1**: Not addressed.
+* **v0.2**: Single local draft session per repository, stale-base conflict rejection at commit time, no automatic merge/rebase.
+* **Future**: Distributed repository synchronization, multi-branch proposal graphs, semantic merge, and conflict reconciliation.
 
-* Distributed synchronization
-* Branching
-* Remote repositories
-* Automatic semantic merge
-* Automatic conflict resolution
-* AI-based knowledge extraction
-* Full artifact generation
-* Automatic reconciliation of artifact divergence
-* Architecture-specific modeling
+---
 
-These concerns may be explored after the core semantic model, change model, traceability, and validation behavior are demonstrated.
+### R-009 Materialization Boundary
+
+KAT must permit authoritative semantic knowledge to be realized through concrete artifacts without transferring specification authority from the semantic model to those artifacts.
+
+#### Milestones
+* **v0.1 / v0.2**: Established conceptual materialization model and semantic artifact accountability boundary.
+* **Future**: Materialization rules, generator plugins, reverse specification inference.
+
+---
+
+## Release Milestones
+
+### v0.1 - Semantic Repository Foundation
+
+#### Goal
+Demonstrate that authoritative software knowledge can be represented, persisted, evolved, traced, analyzed, and validated independently from source code history.
+
+#### Included Capabilities
+* Canonical object storage for elements, relationships, changes, and ontologies.
+* Single-operation Change publication.
+* Command-line interface for `init`, `create`, `update`, `deprecate`, `supersede`, `link`, `unlink`, `show`, `trace`, `impact`, `validate`, `history`.
+* Basic `represents` and `derived-from` relationship tracking.
+
+#### Explicitly Deferred
+* Multi-operation Changes.
+* Staged local draft sessions.
+* Artifact accountability reconciliation (`AccountArtifact`).
+* Distributed collaboration and branch merging.
+* Materialization code generators.
+
+---
+
+### v0.2 - Usable Semantic Evolution
+
+#### Goal
+Make the semantic repository practical for deliberate multi-operation software evolution and explicit artifact accountability.
+
+#### Included Capabilities
+* **Discovery & Interaction**: `kat list`, `kat show`, `kat account`, `kat artifacts`, 8-character unique hex prefix resolution, compact table views.
+* **Multi-Operation Evolution**: Single local draft session (`.kat/work/change/session.json`), staged operations, candidate state $S_{\text{working}}$, atomic publication, stale-base rejection.
+* **Artifact Accountability**: `CURRENT` / `STALE` / `UNACCOUNTED` status evaluation, `kat account` query, explicit `AccountArtifact` baseline reconciliation in accepted `ChangeRevision` history.
+
+#### Explicitly Deferred
+* Distributed remote repository fetch/push.
+* Branching and multi-head accepted history.
+* Automatic semantic merge and conflict resolution.
+* Physical file hashing or physical drift detection.
+* Materialization generators/plugins.
+
+---
+
+## Release Requirements Matrix
+
+| Requirement | v0.1 Foundation | v0.2 Usable Evolution | Future Scope |
+| :--- | :--- | :--- | :--- |
+| **R-001 Knowledge Representation** | Core ontology & versions | Enhanced discovery & lookup UX | Domain extensions |
+| **R-002 Identity & History** | Content-addressed store | Multi-op revisions, history filtering | Distributed graphs |
+| **R-003 Semantic Evolution** | Single-operation Changes | Multi-op staged drafts, atomic publication | Collaborative merge |
+| **R-004 Traceability** | Backward origin trace | Enhanced CLI presentation | Cross-repository trace |
+| **R-005 Impact Analysis** | Forward graph traversal | Partitioned impact reporting | Change simulation |
+| **R-006 Consistency Validation** | Structural & ontology rules | Candidate-state pre-commit validation | Executable constraint engine |
+| **R-007 Artifact Accountability** | Initial relationship edges | `CURRENT/STALE`, `AccountArtifact` baseline updates | Physical drift verification |
+| **R-008 Safe Collaboration** | Deferred | Local draft, stale-base rejection | Remote sync & semantic merge |
+| **R-009 Materialization Boundary** | Conceptual boundary | Conceptual boundary & accountability | Generator plugins & reverse infer |
