@@ -17,7 +17,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::domain::change::ChangeRevision;
 use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
-use crate::domain::identity::{ElementId, ObjectId, RelationshipId, RepositoryId, SoftwareId};
+use crate::domain::identity::{
+    ElementId, ObjectId, OntologyId, RelationshipId, RepositoryId, SoftwareId,
+};
+use crate::domain::ontology::OntologyVersion;
 use crate::domain::operation::Operation;
 use crate::domain::property::PropertyValue;
 use crate::encoding::decode::DecodingError;
@@ -259,6 +262,17 @@ pub enum QueryError {
     /// than traversed forever.
     #[error("history contains a dependency cycle at revision {0}")]
     HistoryCycle(ObjectId),
+    /// The specified type ID or query short name is not registered in the active ontology.
+    #[error("unknown ontology type '{0}'")]
+    UnknownOntologyType(String),
+    /// The short type identifier query matches multiple registered types in the active ontology.
+    #[error("ontology type query '{query}' is ambiguous (matches: {matches:?})")]
+    AmbiguousOntologyType {
+        /// The query string provided by the user.
+        query: String,
+        /// The matching canonical type IDs.
+        matches: Vec<String>,
+    },
 }
 
 /// Detailed view of a single relationship attached to an element.
@@ -1065,12 +1079,14 @@ pub fn resolve_relationship_baseline_version(
     // that explicitly reconciled relationship_id!
     for entry in &entries {
         for op in &entry.change.operations {
-            if let Operation::AccountArtifact { reconciliations, .. } = op {
-                if let Some(recon) = reconciliations
-                    .iter()
-                    .find(|r| r.relationship_id == relationship_id)
-                {
-                    return Ok(recon.reconciled_target_version);
+            if let Operation::AccountArtifact {
+                reconciliations, ..
+            } = op
+            {
+                for recon in reconciliations {
+                    if recon.relationship_id == relationship_id {
+                        return Ok(recon.reconciled_target_version);
+                    }
                 }
             }
         }
@@ -1415,4 +1431,280 @@ pub fn repository_status(repository: &Repository) -> Result<RepositoryStatus, Qu
         consistency,
         accountability,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Ontology Discovery Query DTOs & Functions (Phase 17, Step 17.1)
+// ---------------------------------------------------------------------------
+
+/// Summary view of the active ontology.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OntologySummary {
+    /// Stable semantic identity of the active ontology.
+    pub ontology_id: OntologyId,
+    /// Content-addressed Object ID of the active `OntologyVersion`.
+    pub ontology_version_id: ObjectId,
+    /// Registered element type definitions, sorted by canonical `type_id`.
+    pub element_types: Vec<ElementTypeSummary>,
+    /// Registered relationship type definitions, sorted by canonical `type_id`.
+    pub relationship_types: Vec<RelationshipTypeSummary>,
+}
+
+/// Summary of a registered element type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElementTypeSummary {
+    /// Fully qualified element type ID (e.g. `kat.core/requirement`).
+    pub type_id: String,
+    /// Human-readable element type name (e.g. `"Requirement"`).
+    pub name: String,
+}
+
+/// Summary of a registered relationship type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelationshipTypeSummary {
+    /// Fully qualified relationship type ID (e.g. `kat.core/motivates`).
+    pub type_id: String,
+    /// Human-readable relationship type name (e.g. `"Motivates"`).
+    pub name: String,
+    /// Allowed source element type IDs, sorted alphabetically.
+    pub allowed_source_types: Vec<String>,
+    /// Allowed target element type IDs, sorted alphabetically.
+    pub allowed_target_types: Vec<String>,
+}
+
+/// Detailed inspection view of an element or relationship type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OntologyTypeView {
+    /// Detailed element type view.
+    Element(ElementTypeView),
+    /// Detailed relationship type view.
+    Relationship(RelationshipTypeView),
+}
+
+/// Detailed inspection view of a registered element type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElementTypeView {
+    /// Fully qualified element type ID (e.g. `kat.core/implementation`).
+    pub type_id: String,
+    /// Human-readable element type name (e.g. `"Implementation"`).
+    pub name: String,
+    /// Outgoing relationship capabilities (where this element type is an allowed source).
+    pub outgoing: Vec<RelationshipCapability>,
+    /// Incoming relationship capabilities (where this element type is an allowed target).
+    pub incoming: Vec<RelationshipCapability>,
+}
+
+/// Detailed inspection view of a registered relationship type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelationshipTypeView {
+    /// Fully qualified relationship type ID (e.g. `kat.core/realizes`).
+    pub type_id: String,
+    /// Human-readable relationship type name (e.g. `"Realizes"`).
+    pub name: String,
+    /// Allowed source element type IDs, sorted alphabetically.
+    pub allowed_source_types: Vec<String>,
+    /// Allowed target element type IDs, sorted alphabetically.
+    pub allowed_target_types: Vec<String>,
+}
+
+/// A single relationship capability connecting an element type to a counterpart type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelationshipCapability {
+    /// Fully qualified relationship type ID (e.g. `kat.core/realizes`).
+    pub relationship_type_id: String,
+    /// Fully qualified counterpart element type ID (e.g. `kat.core/requirement`).
+    pub counterpart_type_id: String,
+}
+
+/// Loads the active `OntologyVersion` associated with the repository state context.
+pub fn active_ontology(repository: &Repository) -> Result<(ObjectId, OntologyVersion), QueryError> {
+    let accepted = repository.ref_store().read_accepted()?;
+    let state_bytes = repository.object_store().get(accepted.state)?;
+    let state_obj = decode_canonical(&state_bytes)?;
+    let state = match state_obj.payload {
+        CanonicalPayload::SemanticState(state) => state,
+        _ => {
+            return Err(QueryError::UnexpectedObjectKind {
+                expected: ObjectKind::SemanticState,
+                actual: state_obj.object_kind(),
+            });
+        }
+    };
+
+    let ontology_version_id = state.ontology_version;
+    let ontology_bytes = repository.object_store().get(ontology_version_id)?;
+    let ontology_obj = decode_canonical(&ontology_bytes)?;
+    let ontology = match ontology_obj.payload {
+        CanonicalPayload::OntologyVersion(ontology) => ontology,
+        _ => {
+            return Err(QueryError::UnexpectedObjectKind {
+                expected: ObjectKind::OntologyVersion,
+                actual: ontology_obj.object_kind(),
+            });
+        }
+    };
+
+    Ok((ontology_version_id, ontology))
+}
+
+/// Inspects the active `OntologyVersion` associated with the repository state context,
+/// producing a summary view of registered element types and relationship types.
+pub fn inspect_ontology(repository: &Repository) -> Result<OntologySummary, QueryError> {
+    let (ontology_version_id, ontology) = active_ontology(repository)?;
+
+    let mut element_types: Vec<ElementTypeSummary> = ontology
+        .element_types
+        .iter()
+        .map(|def| ElementTypeSummary {
+            type_id: def.type_id.clone(),
+            name: def.name.clone(),
+        })
+        .collect();
+    element_types.sort_by(|a, b| a.type_id.cmp(&b.type_id));
+
+    let mut relationship_types: Vec<RelationshipTypeSummary> = ontology
+        .relationship_types
+        .iter()
+        .map(|def| {
+            let mut allowed_source_types = def.allowed_source_types.clone();
+            allowed_source_types.sort();
+            let mut allowed_target_types = def.allowed_target_types.clone();
+            allowed_target_types.sort();
+
+            RelationshipTypeSummary {
+                type_id: def.type_id.clone(),
+                name: def.name.clone(),
+                allowed_source_types,
+                allowed_target_types,
+            }
+        })
+        .collect();
+    relationship_types.sort_by(|a, b| a.type_id.cmp(&b.type_id));
+
+    Ok(OntologySummary {
+        ontology_id: ontology.ontology_id,
+        ontology_version_id,
+        element_types,
+        relationship_types,
+    })
+}
+
+/// Resolves `query` against the active `OntologyVersion` and returns a detailed view.
+///
+/// `query` can be an exact canonical type_id (e.g. `kat.core/requirement`) or a short type
+/// identifier (e.g. `requirement`).
+pub fn show_ontology_type(
+    repository: &Repository,
+    query: &str,
+) -> Result<OntologyTypeView, QueryError> {
+    let (_ontology_version_id, ontology) = active_ontology(repository)?;
+
+    // 1. Exact canonical type_id match.
+    let resolved_type_id = if ontology.element_types.iter().any(|e| e.type_id == query)
+        || ontology
+            .relationship_types
+            .iter()
+            .any(|r| r.type_id == query)
+    {
+        query.to_string()
+    } else {
+        // 2. Short identifier match.
+        let matches: Vec<String> = ontology
+            .element_types
+            .iter()
+            .map(|e| e.type_id.as_str())
+            .chain(
+                ontology
+                    .relationship_types
+                    .iter()
+                    .map(|r| r.type_id.as_str()),
+            )
+            .filter(|type_id| {
+                let short = type_id.rsplit('/').next().unwrap_or(type_id);
+                short == query
+            })
+            .map(String::from)
+            .collect();
+
+        match matches.len() {
+            1 => matches[0].clone(),
+            0 => return Err(QueryError::UnknownOntologyType(query.to_string())),
+            _ => {
+                let mut sorted_matches = matches;
+                sorted_matches.sort();
+                return Err(QueryError::AmbiguousOntologyType {
+                    query: query.to_string(),
+                    matches: sorted_matches,
+                });
+            }
+        }
+    };
+
+    // Check if resolved_type_id is an element type.
+    if let Some(elem_def) = ontology
+        .element_types
+        .iter()
+        .find(|e| e.type_id == resolved_type_id)
+    {
+        let mut outgoing = Vec::new();
+        let mut incoming = Vec::new();
+
+        for rel_def in &ontology.relationship_types {
+            if rel_def.allowed_source_types.contains(&resolved_type_id) {
+                for target in &rel_def.allowed_target_types {
+                    outgoing.push(RelationshipCapability {
+                        relationship_type_id: rel_def.type_id.clone(),
+                        counterpart_type_id: target.clone(),
+                    });
+                }
+            }
+            if rel_def.allowed_target_types.contains(&resolved_type_id) {
+                for source in &rel_def.allowed_source_types {
+                    incoming.push(RelationshipCapability {
+                        relationship_type_id: rel_def.type_id.clone(),
+                        counterpart_type_id: source.clone(),
+                    });
+                }
+            }
+        }
+
+        outgoing.sort_by(|a, b| {
+            a.relationship_type_id
+                .cmp(&b.relationship_type_id)
+                .then_with(|| a.counterpart_type_id.cmp(&b.counterpart_type_id))
+        });
+        incoming.sort_by(|a, b| {
+            a.relationship_type_id
+                .cmp(&b.relationship_type_id)
+                .then_with(|| a.counterpart_type_id.cmp(&b.counterpart_type_id))
+        });
+
+        return Ok(OntologyTypeView::Element(ElementTypeView {
+            type_id: elem_def.type_id.clone(),
+            name: elem_def.name.clone(),
+            outgoing,
+            incoming,
+        }));
+    }
+
+    // Check if resolved_type_id is a relationship type.
+    if let Some(rel_def) = ontology
+        .relationship_types
+        .iter()
+        .find(|r| r.type_id == resolved_type_id)
+    {
+        let mut allowed_source_types = rel_def.allowed_source_types.clone();
+        allowed_source_types.sort();
+        let mut allowed_target_types = rel_def.allowed_target_types.clone();
+        allowed_target_types.sort();
+
+        return Ok(OntologyTypeView::Relationship(RelationshipTypeView {
+            type_id: rel_def.type_id.clone(),
+            name: rel_def.name.clone(),
+            allowed_source_types,
+            allowed_target_types,
+        }));
+    }
+
+    Err(QueryError::UnknownOntologyType(query.to_string()))
 }

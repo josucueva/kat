@@ -2478,3 +2478,231 @@ fn show_element_includes_incoming_and_outgoing_relationships() {
         Some("Use WebAuthn")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Ontology Discovery Tests (Phase 17, Step 17.1)
+// ---------------------------------------------------------------------------
+
+use kat::domain::ontology::{ElementTypeDefinition, RelationshipTypeDefinition};
+use kat::encoding::decode_canonical;
+use kat::repository::query::{
+    OntologyTypeView, active_ontology, inspect_ontology, show_ontology_type,
+};
+
+#[test]
+fn inspect_ontology_returns_built_in_core_ontology() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+    let repo = open_repository(root).unwrap();
+
+    let summary = inspect_ontology(&repo).unwrap();
+    assert_eq!(summary.element_types.len(), 7);
+    assert_eq!(summary.relationship_types.len(), 10);
+
+    // Deterministic ordering check (alphabetical by type_id)
+    let elem_type_ids: Vec<&str> = summary
+        .element_types
+        .iter()
+        .map(|e| e.type_id.as_str())
+        .collect();
+    assert_eq!(
+        elem_type_ids,
+        vec![
+            "kat.core/artifact",
+            "kat.core/constraint",
+            "kat.core/design-decision",
+            "kat.core/implementation",
+            "kat.core/intent",
+            "kat.core/requirement",
+            "kat.core/validation",
+        ]
+    );
+
+    let rel_type_ids: Vec<&str> = summary
+        .relationship_types
+        .iter()
+        .map(|r| r.type_id.as_str())
+        .collect();
+    assert_eq!(
+        rel_type_ids,
+        vec![
+            "kat.core/addresses",
+            "kat.core/depends-on",
+            "kat.core/derived-from",
+            "kat.core/guides",
+            "kat.core/motivates",
+            "kat.core/realizes",
+            "kat.core/represents",
+            "kat.core/restricts",
+            "kat.core/supersedes",
+            "kat.core/validates",
+        ]
+    );
+}
+
+#[test]
+fn show_ontology_type_exact_canonical_and_short_resolution() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+    let repo = open_repository(root).unwrap();
+
+    // 1. Exact canonical lookup
+    let view_canon = show_ontology_type(&repo, "kat.core/requirement").unwrap();
+    if let OntologyTypeView::Element(e) = view_canon {
+        assert_eq!(e.type_id, "kat.core/requirement");
+        assert_eq!(e.name, "Requirement");
+        assert_eq!(e.outgoing.len(), 0);
+        assert!(
+            e.incoming
+                .iter()
+                .any(|cap| cap.relationship_type_id == "kat.core/realizes"
+                    && cap.counterpart_type_id == "kat.core/implementation")
+        );
+    } else {
+        panic!("expected ElementTypeView");
+    }
+
+    // 2. Short identifier lookup
+    let view_short = show_ontology_type(&repo, "requirement").unwrap();
+    if let OntologyTypeView::Element(e) = view_short {
+        assert_eq!(e.type_id, "kat.core/requirement");
+    } else {
+        panic!("expected ElementTypeView");
+    }
+
+    // 3. Relationship type lookup
+    let view_rel = show_ontology_type(&repo, "realizes").unwrap();
+    if let OntologyTypeView::Relationship(r) = view_rel {
+        assert_eq!(r.type_id, "kat.core/realizes");
+        assert_eq!(r.name, "Realizes");
+        assert_eq!(r.allowed_source_types, vec!["kat.core/implementation"]);
+        assert_eq!(r.allowed_target_types, vec!["kat.core/requirement"]);
+    } else {
+        panic!("expected RelationshipTypeView");
+    }
+}
+
+#[test]
+fn show_ontology_type_unknown_type_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+    let repo = open_repository(root).unwrap();
+
+    let err = show_ontology_type(&repo, "nonexistent-type").unwrap_err();
+    match err {
+        QueryError::UnknownOntologyType(query) => assert_eq!(query, "nonexistent-type"),
+        other => panic!("expected UnknownOntologyType, got {:?}", other),
+    }
+}
+
+#[test]
+fn inspect_and_show_ontology_type_do_not_mutate_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let objects_before = object_ids(root);
+    let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let _ = inspect_ontology(&repo).unwrap();
+    let _ = show_ontology_type(&repo, "requirement").unwrap();
+
+    assert_eq!(object_ids(root), objects_before);
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        refs_before
+    );
+}
+
+#[test]
+fn show_ontology_type_ambiguous_short_name_and_extension_ontology() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let (_orig_id, mut ontology) = active_ontology(&repo).unwrap();
+
+    ontology.element_types.push(ElementTypeDefinition {
+        type_id: "example/requirement".into(),
+        name: "Example Requirement".into(),
+    });
+    ontology.element_types.push(ElementTypeDefinition {
+        type_id: "example/service".into(),
+        name: "Example Service".into(),
+    });
+    ontology
+        .relationship_types
+        .push(RelationshipTypeDefinition {
+            type_id: "example/satisfies".into(),
+            name: "Satisfies".into(),
+            allowed_source_types: vec!["example/service".into()],
+            allowed_target_types: vec!["example/requirement".into(), "kat.core/requirement".into()],
+        });
+
+    ontology.element_types.sort();
+    ontology.relationship_types.sort();
+
+    let custom_ont_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::OntologyVersion(ontology),
+    })
+    .unwrap();
+    let custom_ont_id = repo.object_store().put(&custom_ont_bytes).unwrap();
+
+    let state_bytes = repo.object_store().get(repo.accepted.state).unwrap();
+    let mut state_obj = decode_canonical(&state_bytes).unwrap();
+    if let CanonicalPayload::SemanticState(ref mut state) = state_obj.payload {
+        state.ontology_version = custom_ont_id;
+    }
+    let new_state_bytes = canonical_bytes(&state_obj).unwrap();
+    let new_state_id = repo.object_store().put(&new_state_bytes).unwrap();
+
+    let accepted_path = root.join(".kat").join("refs").join("accepted");
+    let new_accepted = kat::repository::ref_store::AcceptedRef {
+        state: new_state_id,
+        change: repo.accepted.change,
+    };
+    fs::write(&accepted_path, new_accepted.to_string()).unwrap();
+
+    let repo_custom = open_repository(root).unwrap();
+
+    let view_core = show_ontology_type(&repo_custom, "kat.core/requirement").unwrap();
+    if let OntologyTypeView::Element(e) = view_core {
+        assert_eq!(e.type_id, "kat.core/requirement");
+    }
+
+    let view_example = show_ontology_type(&repo_custom, "example/requirement").unwrap();
+    if let OntologyTypeView::Element(e) = view_example {
+        assert_eq!(e.type_id, "example/requirement");
+    }
+
+    let err = show_ontology_type(&repo_custom, "requirement").unwrap_err();
+    match err {
+        QueryError::AmbiguousOntologyType { query, matches } => {
+            assert_eq!(query, "requirement");
+            assert_eq!(matches, vec!["example/requirement", "kat.core/requirement"]);
+        }
+        other => panic!("expected AmbiguousOntologyType, got {:?}", other),
+    }
+
+    let view_service = show_ontology_type(&repo_custom, "service").unwrap();
+    if let OntologyTypeView::Element(e) = view_service {
+        assert_eq!(e.type_id, "example/service");
+    }
+
+    let view_satisfies = show_ontology_type(&repo_custom, "satisfies").unwrap();
+    if let OntologyTypeView::Relationship(rel) = view_satisfies {
+        assert_eq!(rel.type_id, "example/satisfies");
+        assert_eq!(rel.allowed_source_types, vec!["example/service"]);
+        assert_eq!(
+            rel.allowed_target_types,
+            vec!["example/requirement", "kat.core/requirement"]
+        );
+    } else {
+        panic!("expected RelationshipTypeView");
+    }
+}

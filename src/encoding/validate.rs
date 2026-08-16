@@ -274,7 +274,10 @@ impl CanonicalValidate for ChangeRevision {
             return Err(CanonicalStructureError::ChangeOperationsEmpty);
         }
         for op in &self.operations {
-            if let Operation::AccountArtifact { reconciliations, .. } = op {
+            if let Operation::AccountArtifact {
+                reconciliations, ..
+            } = op
+            {
                 check_strictly_ascending(
                     reconciliations,
                     |r| &r.relationship_id,

@@ -136,7 +136,9 @@ pub enum PreconditionError {
     #[error("element {0} is not an artifact element type ('kat.core/artifact')")]
     NotAnArtifact(ElementId),
     /// Artifact has no active direct accountability relationships ('represents', 'derived-from').
-    #[error("artifact {0} has no active direct accountability relationships ('represents', 'derived-from')")]
+    #[error(
+        "artifact {0} has no active direct accountability relationships ('represents', 'derived-from')"
+    )]
     NoAccountabilityRelationships(ElementId),
 }
 
@@ -1255,11 +1257,8 @@ pub fn apply_account_artifact(
             PreconditionError::ElementNotFound(input.artifact_id),
         ))?;
 
-    let art_version = load_element_version_context(
-        &context,
-        repository.object_store(),
-        art_entry.version,
-    )?;
+    let art_version =
+        load_element_version_context(&context, repository.object_store(), art_entry.version)?;
 
     if art_version.lifecycle != Lifecycle::Active {
         return Err(ChangeError::Precondition(
@@ -1273,9 +1272,9 @@ pub fn apply_account_artifact(
         .next()
         .unwrap_or(&art_version.type_id);
     if type_short != "artifact" {
-        return Err(ChangeError::Precondition(
-            PreconditionError::NotAnArtifact(input.artifact_id),
-        ));
+        return Err(ChangeError::Precondition(PreconditionError::NotAnArtifact(
+            input.artifact_id,
+        )));
     }
 
     let mut reconciliations = Vec::new();
@@ -1292,15 +1291,16 @@ pub fn apply_account_artifact(
                 .rsplit('/')
                 .next()
                 .unwrap_or(&rel_v.relationship_type);
-            if rel_type_short == "represents"
-                || rel_type_short == "derived-from"
-                || rel_type_short == "derived_from"
-            {
-                if let Some(target_entry) = context
+            let is_accountability = matches!(
+                rel_type_short,
+                "represents" | "derived-from" | "derived_from"
+            );
+            if is_accountability {
+                for target_entry in context
                     .base_state
                     .elements
                     .iter()
-                    .find(|e| e.element_id == rel_v.target_element_id)
+                    .filter(|e| e.element_id == rel_v.target_element_id)
                 {
                     let target_v = load_element_version_context(
                         &context,
@@ -1330,7 +1330,7 @@ pub fn apply_account_artifact(
         ));
     }
 
-    reconciliations.sort_by(|a, b| a.relationship_id.cmp(&b.relationship_id));
+    reconciliations.sort_by_key(|a| a.relationship_id);
 
     let mut any_changed = false;
     for rec in &reconciliations {

@@ -1653,7 +1653,10 @@ fn run_account(artifact_id_str: String, description: Option<String>) -> ExitCode
 
         println!("staged account artifact");
         println!("  artifact_id:       {artifact_id}");
-        if let Operation::AccountArtifact { reconciliations, .. } = op {
+        if let Operation::AccountArtifact {
+            reconciliations, ..
+        } = op
+        {
             println!("  reconciliations:   {}", reconciliations.len());
         }
         println!("  change operations: {}", session.operations.len());

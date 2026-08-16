@@ -31,8 +31,8 @@ use kat::repository::change::{
     LinkElementInput, PreconditionError, PreparedElementUpdate, PublishedLinkChange,
     SupersedeElementInput, UnlinkElementInput, UpdateElementInput, account_artifact,
     apply_account_artifact, apply_create_element, apply_deprecate_element, apply_link_element,
-    apply_supersede_element, apply_unlink_element, apply_update_element,
-    persist_prepared_change, persist_prepared_deprecate_change, persist_prepared_link_change,
+    apply_supersede_element, apply_unlink_element, apply_update_element, persist_prepared_change,
+    persist_prepared_deprecate_change, persist_prepared_link_change,
     persist_prepared_supersede_change, persist_prepared_unlink_change,
     persist_prepared_update_change, prepare_change, prepare_change_revision,
     prepare_deprecate_change_revision, prepare_link_change_revision,
@@ -4981,7 +4981,9 @@ fn account_artifact_end_to_end_single_operation() {
     let repo4 = open_repository(root).unwrap();
     let pub_acc = account_artifact(
         &repo4,
-        AccountArtifactInput { artifact_id: art_id },
+        AccountArtifactInput {
+            artifact_id: art_id,
+        },
         Some("Re-baselined doc.md".into()),
     )
     .unwrap();
@@ -5057,7 +5059,9 @@ fn account_artifact_already_current_rejected_as_noop() {
     let repo3 = open_repository(root).unwrap();
     let err = account_artifact(
         &repo3,
-        AccountArtifactInput { artifact_id: art_id },
+        AccountArtifactInput {
+            artifact_id: art_id,
+        },
         None,
     )
     .unwrap_err();
@@ -5154,7 +5158,9 @@ fn account_artifact_target_deprecated_rejected() {
     let repo4 = open_repository(root).unwrap();
     let err = account_artifact(
         &repo4,
-        AccountArtifactInput { artifact_id: art_id },
+        AccountArtifactInput {
+            artifact_id: art_id,
+        },
         None,
     )
     .unwrap_err();

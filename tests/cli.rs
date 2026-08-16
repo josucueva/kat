@@ -3138,7 +3138,10 @@ fn phase15_acceptance_cli_flow_end_to_end() {
     let art_id = id_line(&art_out, "element_id");
     let art_short = &art_id[..8];
 
-    let (req_out, _, ok2) = run_kat(root, &["create", "requirement", "--title", "Layout Spec v1"]);
+    let (req_out, _, ok2) = run_kat(
+        root,
+        &["create", "requirement", "--title", "Layout Spec v1"],
+    );
     assert!(ok2);
     let req_id = id_line(&req_out, "element_id");
     let req_short = &req_id[..8];
@@ -3241,8 +3244,14 @@ fn phase15_staged_multi_op_account_composition() {
     // Verify single revision in history containing both operations
     let (hist_out, _, ok_hist) = run_kat(root, &["history"]);
     assert!(ok_hist);
-    assert!(hist_out.contains("update element") || hist_out.contains("update"), "hist_out: {hist_out}");
-    assert!(hist_out.contains("account artifact"), "hist_out: {hist_out}");
+    assert!(
+        hist_out.contains("update element") || hist_out.contains("update"),
+        "hist_out: {hist_out}"
+    );
+    assert!(
+        hist_out.contains("account artifact"),
+        "hist_out: {hist_out}"
+    );
 }
 
 #[test]
