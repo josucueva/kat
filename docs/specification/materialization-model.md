@@ -8,25 +8,24 @@ KAT follows a specification-first model. The semantic model defines the intended
 
 Materialization defines the relationship between those two levels.
 
-The materialization model describes:
+---
 
-* What materialization means
-* How knowledge relates to artifacts
-* How generated and handwritten artifacts are treated
-* How artifact provenance is preserved
-* How artifact consistency and divergence are represented
-* How reconciliation returns artifact differences to the authoritative semantic model
+## Scope and v0.2 Boundary
 
-The model does not define specific code generators, template engines, file formats, build systems, or programming languages.
+Materialization is a conceptual model for how semantic knowledge may be realized as artifacts.
 
-## Materialization
+KAT v0.2 does not implement materializers, physical artifact verification, automatic divergence detection, or reverse artifact-to-specification inference.
 
-Materialization is the process by which software knowledge is realized or represented through one or more concrete artifacts.
+Instead, KAT v0.2 implements **semantic artifact accountability**: tracking direct semantic relationships (`kat.core/represents`, `kat.core/derived-from`) and explicitly reconciling accountability baselines in accepted history.
 
-Conceptually:
+---
+
+## Semantic Knowledge and Artifacts
+
+Materialization flows conceptually from authoritative knowledge toward artifacts.
 
 ```text
-Authoritative Knowledge
+Authoritative Knowledge (Intent / Requirement / Constraint / Decision)
         |
         v
 Implementation Knowledge
@@ -38,71 +37,34 @@ Materialization
 Artifacts
 ```
 
-Materialization does not imply that an artifact must be automatically generated.
-
-An artifact may be generated, assisted, or manually created while still being a materialization of software knowledge.
-
-## Authority
-
-Materialization flows from authoritative knowledge toward artifacts.
-
-```text
-Semantic Model
-      |
-      | materialize
-      v
-Artifact
-```
-
 Materialization does not make the produced artifact authoritative.
 
-Changes to an artifact do not independently redefine the intended software state.
+Changes to a physical artifact do not independently redefine the intended software state.
 
-The reverse flow is handled through reconciliation.
+---
 
-```text
-Materialization
-
-Knowledge
-    |
-    v
-Artifact
-
-
-Reconciliation
-
-Artifact Difference
-    |
-    v
-Proposed Knowledge Change
-```
-
-## Implementation and Artifact
+## Implementation vs Artifact
 
 Implementation and Artifact represent different levels of the software model.
 
 ### Implementation
-
-Implementation represents semantic knowledge about how intended software behavior or design is realized.
+`Implementation` represents semantic knowledge about how intended software behavior or design is realized.
 
 Examples:
-
 * Payment processing component
 * Authentication mechanism
 * Refund workflow
 * Persistence implementation
 
-Implementation is not tied to a specific file or physical representation.
+Implementation is a semantic concept and is not tied to a specific file or physical representation.
 
 ### Artifact
-
-An artifact is a concrete representation associated with software knowledge.
+An `Artifact` is a concrete representation or output associated with software knowledge.
 
 Examples:
-
 * Source files
 * OpenAPI documents
-* Tests
+* Test files
 * Configuration files
 * Deployment definitions
 * Executables
@@ -120,490 +82,191 @@ Implementation
 
 One artifact may also represent or derive from multiple knowledge elements.
 
-## Materialization Modes
-
-KAT recognizes different ways in which artifacts may be materialized.
-
-### Deterministic Materialization
-
-The artifact is produced automatically from software knowledge using defined materialization rules.
-
-```text
-Semantic Model
-      |
-      v
-Materializer
-      |
-      v
-Artifact
-```
-
-Examples may include generated API descriptions, configuration, or source code.
-
-### Assisted Materialization
-
-Software knowledge is used to produce or propose an artifact, but human review or modification is part of the process.
-
-```text
-Semantic Model
-      |
-      v
-Proposed Artifact
-      |
-      v
-Human Review
-      |
-      v
-Artifact
-```
-
-The mechanism used to produce the proposal does not affect the authority of the semantic model.
-
-### Manual Materialization
-
-A developer manually creates or modifies an artifact according to the authoritative software knowledge.
-
-```text
-Semantic Model
-      |
-      | guides
-      v
-Developer
-      |
-      v
-Artifact
-```
-
-Manual artifacts remain subject to the same traceability and consistency expectations as generated artifacts.
-
-Materialized does not mean generated.
+---
 
 ## Artifact Relationships
 
-Artifacts must remain traceable to the knowledge they represent or originate from.
-
-Two relationships are used for different purposes.
+Artifacts remain traceable to the knowledge they represent or originate from through explicit typed relationships in the ontology.
 
 ### represents
+`represents` asserts that an Artifact element is a concrete representation of an `Implementation` element.
 
-`represents` expresses semantic correspondence between an artifact and a knowledge element.
+```text
+Artifact -> Implementation
+```
 
 Example:
 
 ```text
-payment_service.rs
+payment_service.rs (Artifact)
     represents
-Payment Processing Implementation
+Payment Processing (Implementation)
 ```
 
-The artifact is a concrete representation of that implementation.
+The artifact is a concrete representation of that implementation concept.
 
-### derived_from
+### derived-from
+`derived-from` indicates that an Artifact element originated from, was produced by, or was shaped by software knowledge.
 
-`derived_from` expresses provenance.
-
-It indicates that an artifact was produced or shaped using a knowledge element as an input.
+```text
+Artifact -> Requirement
+Artifact -> Constraint
+Artifact -> Design Decision
+Artifact -> Implementation
+```
 
 Example:
 
 ```text
-openapi.yaml
-    derived_from
-Refund API Requirement
+openapi.yaml (Artifact)
+    derived-from
+Expose refund operation (Requirement)
 ```
 
-An artifact may both represent one element and derive from others.
+An artifact may both `represents` an implementation concept and `derived-from` related requirements or design decisions.
 
-Example:
+---
 
-```text
-openapi.yaml
-    represents
-Refund API Interface
+## Materialization Modes (Future Conceptual Taxonomy)
 
-openapi.yaml
-    derived_from
-Refund Requirement
-```
+KAT recognizes different conceptual ways in which artifacts may be materialized:
 
-The exact relationship vocabulary may be refined as the ontology evolves.
+* **Deterministic Materialization**: The artifact is produced automatically from software knowledge using defined materialization rules.
+* **Assisted Materialization**: Software knowledge is used to propose an artifact, but human review or modification completes the process.
+* **Manual Materialization**: A developer manually creates or modifies an artifact according to authoritative software knowledge.
 
-## Materialization Provenance
+> **v0.2 Model Boundary**: KAT v0.2 does not persist materialization mode metadata in canonical objects. Materialized does not imply automatically generated; all artifacts are modeled uniformly as `kat.core/artifact` elements.
 
-A materialized artifact should preserve enough information to identify the knowledge responsible for its existence or form.
+---
 
-An artifact may be traceable to:
+## Artifact Accountability
 
-* Requirements
-* Constraints
-* Design Decisions
-* Implementations
-* Other relevant knowledge
+KAT v0.2 does not determine physical artifact correctness or inspect physical file contents.
 
-Conceptually:
+Instead, it evaluates semantic accountability between `Artifact` elements and the target knowledge elements they directly reference.
 
-```text
-Artifact
-    |
-    +-- represents -----> Implementation
-    |
-    +-- derived_from ---> Requirement
-    |
-    +-- derived_from ---> Design Decision
-    |
-    +-- derived_from ---> Constraint
-```
+Accountability status is categorized as:
 
-Materialization provenance supports:
+* `CURRENT`: All direct accountability baselines match current target element versions.
+* `STALE`: At least one direct accountability baseline differs from the current target element version, or a target element's lifecycle state has become invalid (`Deprecated` or `Superseded`).
+* `UNACCOUNTED`: No direct accountability relationship exists for the artifact in the current accepted state $S_n$.
 
-* Traceability
-* Explanation
-* Impact analysis
-* Divergence detection
-* Historical analysis
-* Reproducibility
+`CURRENT` status indicates semantic baseline alignment; it does not imply that the physical artifact has been inspected or verified on disk.
 
-## Materialization Cardinality
+---
 
-Materialization is not limited to one-to-one relationships.
+## Accountability Baselines & AccountArtifact
 
-One knowledge element may correspond to multiple artifacts.
+When a direct accountability relationship (`kat.core/represents`, `kat.core/derived-from`) is created, its initial accepted baseline is established by the target element version selected by that state.
+
+When target elements evolve ($V_{\text{initial}} \to V_{\text{next}}$), the artifact's accountability status becomes `STALE`.
+
+To acknowledge the target element evolution and re-baseline the artifact, a user submits an `AccountArtifact` operation:
 
 ```text
-Implementation
-    |
-    +--> Artifact A
-    +--> Artifact B
-    +--> Artifact C
-```
-
-One artifact may also correspond to multiple knowledge elements.
-
-```text
-Artifact
-    |
-    +--> Requirement A
-    +--> Requirement B
-    +--> Design Decision
-```
-
-The materialization model therefore supports many-to-many relationships between knowledge and artifacts.
-
-## Artifact State
-
-An artifact may have a state relative to the authoritative semantic model.
-
-### Consistent
-
-The artifact agrees with the currently accepted software knowledge it represents or derives from.
-
-### Outdated
-
-The authoritative knowledge relevant to the artifact has changed and the artifact has not yet been updated or rematerialized.
-
-Example:
-
-```text
-Requirement changed
+Target Element Update (V1 -> V2)
         |
         v
-Existing artifact no longer reflects current knowledge
-```
-
-### Incomplete
-
-The artifact represents only part of the currently required software knowledge.
-
-### Divergent
-
-The artifact contains behavior, structure, or constraints that cannot be explained by or conflict with the authoritative semantic model.
-
-Example:
-
-```text
-Artifact changed manually
+Artifact Status becomes STALE
         |
         v
-Behavior introduced
+User invokes AccountArtifact
         |
         v
-No corresponding authoritative knowledge
-```
-
-Outdated and divergent are different states.
-
-An outdated artifact reflects an older authoritative state.
-
-A divergent artifact contains meaning that is not represented by the authoritative state.
-
-## Materialization Inputs
-
-A materialization should be traceable to the semantic knowledge used to produce or define the artifact.
-
-Conceptually:
-
-```text
-Materialization
-
-Inputs:
-    Relevant semantic knowledge
-    Materialization rules
-    Target representation
-
-Result:
-    Artifact or artifacts
-```
-
-The model does not define how these inputs are physically stored.
-
-The materialization should preserve enough information to determine whether an artifact still corresponds to the current semantic state.
-
-## Materialization Rules
-
-Materialization rules define how software knowledge maps to concrete representations.
-
-Example:
-
-```text
-Requirement
-+
-Design Decision
-+
-Implementation
+New Baseline (V2) Recorded in Accepted History
         |
         v
-Materialization Rule
-        |
-        v
-Artifact
+Artifact Status returns to CURRENT
 ```
 
-Materialization rules are not necessarily part of the core KAT ontology.
+The `AccountArtifact` operation records explicit target version reconciliations in accepted `ChangeRevision` history without mutating the candidate `SemanticState` $S_{\text{working}}$.
 
-Architecture-specific or technology-specific rules may be provided through extensions.
+---
 
-For example:
+## Physical Artifact Divergence
 
-```text
-KAT Core
-    Materialization
+KAT v0.2 does not inspect physical artifact contents and therefore does not determine whether a physical artifact has diverged from the semantic model.
 
-Extensions
-    OpenAPI Materializer
-    Java Materializer
-    Terraform Materializer
-```
+Physical divergence may exist externally (e.g. uncommitted local code edits), but KAT only evaluates and reports semantic accountability status from accepted relationships and baselines.
 
-This preserves the architecture independence of the core model.
-
-## Materialization Scope
-
-Materialization may operate on different scopes.
-
-Examples:
-
-* Entire software system
-* Selected knowledge element
-* Selected implementation
-* Selected capability
-* Knowledge affected by a change
-
-Conceptually:
-
-```text
-Change
-    |
-    v
-Impact Analysis
-    |
-    v
-Affected Knowledge
-    |
-    v
-Materialization
-    |
-    v
-Affected Artifacts
-```
-
-The materialization model does not require the entire software system to be materialized at once.
+---
 
 ## Materialization and Validation
 
-Materialization and validation are separate concerns.
+Materialization and validation are separate concerns in the KAT model.
 
-Materialization answers:
-
-> How is this knowledge concretely represented or realized?
-
-Validation answers:
-
-> Does that realization satisfy the expected requirements, constraints, or properties?
-
-Conceptually:
+* **Materialization** answers: *How is this knowledge concretely represented or realized?*
+* **Validation** answers: *Does that realization or knowledge satisfy expected requirements, constraints, or properties?*
 
 ```text
 Knowledge
     |
     v
-Materialization
+Materialization (Artifact)
     |
     v
-Artifact
-    |
-    v
-Validation
+Validation (Validation Result)
 ```
 
-Successfully materializing an artifact does not prove that the resulting artifact is valid.
+Successfully materializing or accounting an artifact does not by itself prove that the resulting artifact is valid.
 
-## Materialization and Change
+---
 
-Materialization normally does not create a new authoritative semantic change.
+## Materialization and Semantic Change
 
-A change to authoritative knowledge may produce artifact effects.
-
-Example:
+Semantic changes to authoritative knowledge may create artifact accountability effects:
 
 ```text
-Change:
-Require MFA
-
+Semantic Change (e.g. Require MFA)
         |
         v
-
-Semantic Effects:
-Authentication design affected
-Authentication implementation affected
-
+Target Requirement / Decision Updated
         |
         v
-
-Artifact Effects:
-Authentication source outdated
-API description outdated
-Authentication tests outdated
+Accountability status of related Artifacts becomes STALE
+        |
+        v
+External source files updated physically
+        |
+        v
+AccountArtifact committed -> Baselines Reconciled
 ```
 
-Materialization may resolve those artifact effects by producing or updating the affected artifacts.
+Artifact updates do not directly mutate authoritative knowledge. Any intended change to software specification must be submitted as a formal Change through the KAT change model.
 
-The resulting artifact modifications remain consequences of the original semantic change.
+---
 
-## Artifact Divergence
+## Future Materialization Capabilities
 
-Artifact divergence occurs when an artifact no longer agrees with the authoritative semantic model.
+The following capabilities represent potential future extensions to the materialization model:
 
-This may occur when:
+* **Materialization Rules & Generators**: Defining executable materialization rules or plugins (e.g., OpenAPI generators, Infrastructure-as-Code emitters) driven by semantic state.
+* **Physical Inspection & Verification**: Tools for hashing or analyzing physical source files to detect physical artifact drift against recorded baselines.
+* **Reverse Reconciliation**: Tooling to infer or propose semantic specification changes from observed physical code diffs.
 
-* A developer modifies an artifact manually
-* External tooling modifies an artifact
-* An artifact is created without corresponding knowledge
-* Existing software is imported into KAT
-
-A divergent artifact must not silently redefine authoritative knowledge.
-
-The divergence should remain identifiable until it is resolved.
-
-## Reconciliation
-
-Reconciliation is the process of resolving a difference between an artifact and the authoritative semantic model.
-
-Conceptually:
-
-```text
-Artifact Modification
-        |
-        v
-Divergence
-        |
-        v
-Semantic Difference Identified
-        |
-        v
-Reconciliation
-```
-
-Reconciliation may produce different outcomes.
-
-### Artifact Reconciliation
-
-The artifact is changed to agree with the existing authoritative semantic model.
-
-```text
-Artifact Divergence
-        |
-        v
-Artifact Updated
-        |
-        v
-Consistent
-```
-
-### Knowledge Reconciliation
-
-The artifact reveals an intentional change that should become part of the software specification.
-
-In this case, reconciliation results in a proposed authoritative change.
-
-```text
-Artifact Difference
-        |
-        v
-Proposed Change
-        |
-        v
-Normal Change Process
-        |
-        v
-New Semantic State
-```
-
-The artifact does not directly modify authoritative knowledge.
-
-The change must pass through the normal KAT change process.
-
-## Historical Traceability
-
-Materialization should preserve enough history to explain the relationship between software knowledge and artifacts over time.
-
-KAT should be able to determine, when information is available:
-
-* Which knowledge caused an artifact to exist
-* Which knowledge state an artifact corresponds to
-* Which change caused an artifact to become outdated
-* Which artifacts were affected by a semantic change
-* Whether an artifact was generated, assisted, or manually maintained
-
-The exact persistence mechanism for this information is outside the scope of the materialization model.
+---
 
 ## Core Rules
 
-The materialization model follows these rules:
+The materialization model enforces the following normative rules:
 
-* Materialization flows from authoritative knowledge toward artifacts.
-* Materialized does not mean generated.
-* Artifacts do not independently redefine authoritative knowledge.
-* Implementation knowledge is distinct from its concrete artifacts.
-* Artifact provenance must remain traceable.
-* Materialization may be one-to-many or many-to-many.
-* Materialization and validation are separate concerns.
-* Artifact divergence must remain identifiable.
-* Reconciliation is required when artifact meaning differs from authoritative knowledge.
-* Changes to authoritative knowledge must pass through the normal change model.
+* Artifacts are semantic knowledge elements, not authoritative specifications.
+* `represents` and `derived-from` provide direct artifact accountability.
+* Materialized does not imply automatically generated.
+* KAT v0.2 does not inspect physical artifact contents.
+* Accountability status is distinct from physical verification.
+* Semantic changes may make artifact accountability `STALE`.
+* `AccountArtifact` explicitly reconciles accepted accountability baselines in history.
+* `AccountArtifact` does not change authoritative `SemanticState`.
+* Physical artifact changes do not directly mutate authoritative knowledge.
+* Any intended semantic evolution must pass through the normal Change model.
 
-## Open Questions
+---
 
-The following questions remain intentionally unresolved:
+## Future Research Questions
 
-* How is artifact consistency determined?
-* How is artifact divergence detected?
-* How are materialization rules represented?
-* How are materializers discovered or configured?
-* How is partial materialization tracked?
-* How are externally generated artifacts handled?
-* How are materialization dependencies ordered?
-* How is materialization provenance persisted?
-* Can a materialization itself have a stable identity?
-* How are artifacts associated with specific semantic states?
-* How are conflicting artifact and semantic changes reconciled?
+The following topics remain open for future research:
 
+* How will executable materialization plugins be configured and versioned?
+* How can physical artifact verification bridges integrate with build systems and CI/CD pipelines?
+* What protocol will govern automated reverse reconciliation from source code diffs to proposed semantic Changes?
