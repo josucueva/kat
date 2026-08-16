@@ -1,26 +1,32 @@
 # Use Cases
 
+## Purpose
+
+This document defines the core user goals and primary workflows supported by KAT. 
+
+Use cases describe durable user interactions with the semantic repository. Release-specific capability coverage for these use cases is defined in [`docs/vision/requirements.md`](requirements.md).
+
+---
+
 ## UC-001: Create Knowledge Element
 
 **Actor:** Developer / Architect
 
-**Goal:** Create a new element in the software's knowledge model.
+**Goal:** Create a new knowledge element in the software model.
 
 **Preconditions:**
-
-* The project exists in KAT.
-* The element type is defined by the project's domain model.
+* The KAT repository exists.
+* The element type is defined by the active `OntologyVersion`.
 
 **Main flow:**
-
-1. The user creates a knowledge element.
-2. The user provides the required information.
-3. KAT assigns a stable identity to the element.
-4. KAT stores the element in the semantic model.
+1. The user defines a new knowledge element (specifying type, title, and optional description/properties).
+2. KAT validates the element type and required property structure against the active ontology.
+3. KAT assigns a stable 36-character `ElementId` (UUIDv4) to the element.
+4. KAT stages a `CreateElement` operation against the candidate draft state $S_{\text{working}}$.
+5. When the enclosing Change is accepted, the new element becomes part of authoritative `SemanticState` $S_{n+1}$.
 
 **Result:**
-
-The new element becomes part of the project's knowledge and can participate in relationships, validation, evolution, and traceability.
+The new element is recorded with stable identity and can participate in relationships, validation, evolution, and traceability.
 
 ---
 
@@ -28,37 +34,29 @@ The new element becomes part of the project's knowledge and can participate in r
 
 **Actor:** Developer / Architect
 
-**Goal:** Record a decision about how the software should be designed and preserve the reasoning behind it.
+**Goal:** Record a decision about how the software should be designed and preserve the rationale behind it.
 
 **Preconditions:**
-
-* The project exists in KAT.
-* Relevant requirements or constraints may already exist.
+* The KAT repository exists.
+* Relevant requirements or constraints may already exist in accepted state.
 
 **Main flow:**
-
-1. The user creates a design decision.
-2. The user describes the chosen approach.
-3. The user records the reasoning behind the decision.
-4. The user links the decision to relevant requirements, constraints, or other decisions.
-5. KAT assigns a stable identity to the decision.
-6. The decision becomes part of the project's knowledge.
+1. The user defines a new `kat.core/design-decision` element.
+2. The user describes the chosen approach and decision rationale in the element properties.
+3. The user establishes ontology-valid relationships involving the decision (e.g. `addresses` a requirement, or is `restricted` by a constraint).
+4. KAT stages the element creation and relationship links in candidate draft state $S_{\text{working}}$.
+5. Upon acceptance, the decision becomes authoritative within accepted state $S_{n+1}$.
 
 **Result:**
-
-The project contains a traceable design decision that explains what was decided and why.
+The repository contains a traceable design decision explaining what was decided, why, and how it connects to requirements and constraints.
 
 **Example:**
-
 ```text
-Requirement
-"Payments must be processed asynchronously"
-
-Constraint
-"Payment processing must not block checkout"
-
-Design Decision
-"Use an event-driven payment workflow"
+Constraint: "Payment processing must not block checkout"
+    -- restricts -->
+Design Decision: "Use an event-driven payment workflow"
+    -- addresses -->
+Requirement: "Payments must be processed asynchronously"
 ```
 
 ---
@@ -67,47 +65,37 @@ Design Decision
 
 **Actor:** Developer / Architect
 
-**Goal:** Establish a meaningful relationship between two or more elements of the software's knowledge.
+**Goal:** Establish a meaningful typed relationship between two knowledge elements.
 
 **Preconditions:**
-
-* The elements exist in the semantic model.
-* The relationship type is defined.
+* Source and target knowledge elements exist in candidate or accepted state.
+* The relationship type is defined by the active `OntologyVersion`.
 
 **Main flow:**
+1. The user selects the source and target elements and specifies the relationship type.
+2. KAT verifies that the relationship type is valid for the given source and target element types under the active ontology.
+3. KAT assigns a stable `RelationshipId` (UUIDv4).
+4. KAT stages a `Link` operation in candidate draft state $S_{\text{working}}$.
+5. When accepted, the relationship becomes available for tracing, impact analysis, and validation.
 
-1. The user selects the knowledge elements.
-2. The user specifies the relationship between them.
-3. KAT verifies that the relationship is allowed.
-4. KAT records the relationship.
-5. The relationship becomes available for tracing and validation.
-
-**Example:**
-
+**Canonical Relationship Types:**
 ```text
-Requirement
-    |
-    | addressed_by
-    v
-Design Decision
-    |
-    | guides
-    v
-Implementation
+kat.core/motivates
+kat.core/addresses
+kat.core/restricts
+kat.core/guides
+kat.core/realizes
+kat.core/represents
+kat.core/derived-from
+kat.core/validates
+kat.core/depends-on
+kat.core/supersedes
 ```
 
-Possible relationship types include:
-
+**Example:**
 ```text
-motivates
-addresses
-realizes
-guides
-depends_on
-restricts
-validates
-supersedes
-derived_from
+Design Decision  -- addresses --> Requirement
+Design Decision  -- guides    --> Implementation
 ```
 
 ---
@@ -116,45 +104,30 @@ derived_from
 
 **Actor:** Developer / Architect
 
-**Goal:** Determine why a software element exists and trace it back to its originating knowledge.
+**Goal:** Determine why a software element exists and trace it back to its originating intent or specification.
 
 **Preconditions:**
-
-* The selected element exists.
-* Traceability relationships exist between the element and its origin.
+* The targeted element exists in the current accepted `SemanticState` $S_n$.
 
 **Main flow:**
-
-1. The user selects an element.
-2. KAT follows its traceability relationships backwards.
-3. KAT presents the relevant chain of knowledge.
-4. The user can continue following relationships to understand the origin.
+1. The user requests an origin trace (`kat trace`) for a specific element.
+2. KAT traverses applicable relationships according to the Origin Trace policy defined in [`docs/specification/operations.md`](../specification/operations.md).
+3. KAT presents the provenance path connecting the element to upstream decisions, requirements, constraints, and intent.
 
 **Example:**
-
-The user asks:
-
-```text
-Why does PaymentService exist?
-```
-
-KAT could return:
+User queries origin for `PaymentService` (`Implementation`):
 
 ```text
-PaymentService
-    ↑
-Payment Implementation
-    ↑
-"Use asynchronous payment processing"
-    ↑
-"Checkout must not block on payment"
-    ↑
-"Users should receive immediate checkout confirmation"
+PaymentService (Implementation)
+    <-- represents -- payment_service.rs (Artifact)
+    -- realizes   --> Asynchronous Payment Processing (Requirement)
+    <-- addresses -- Event-Driven Payment Architecture (Design Decision)
+    <-- restricts -- Non-Blocking Checkout Policy (Constraint)
+    -- motivates  --> Immediate Checkout Confirmation (Intent)
 ```
 
 **Result:**
-
-The user can understand the purpose and origin of the selected element.
+The user understands the origin, design context, and business motivation behind the element.
 
 ---
 
@@ -162,115 +135,102 @@ The user can understand the purpose and origin of the selected element.
 
 **Actor:** Developer / Architect
 
-**Goal:** Determine which parts of the software may be affected by changing a knowledge element.
+**Goal:** Determine which parts of the software knowledge model and accountable artifacts may be affected by semantic evolution.
 
 **Preconditions:**
-
-* The selected element exists.
-* Relevant traceability relationships exist.
+* The root element exists in accepted state $S_n$.
 
 **Main flow:**
-
-1. The user selects an element to change.
-2. KAT follows relevant outgoing traceability relationships.
-3. KAT identifies directly and indirectly related elements.
-4. KAT groups the affected elements by type or relationship.
-5. KAT reports the potential impact.
-
-**Example:**
-
-The developer changes:
-
-```text
-Requirement
-"All payments must support refunds."
-```
-
-KAT might identify:
-
-```text
-Affected:
-
-Design Decisions
-    Refund workflow
-
-Interfaces
-    POST /refunds
-
-Implementations
-    RefundService
-    PaymentProviderAdapter
-
-Artifacts
-    OpenAPI specification
-
-Validation
-    RefundIntegrationTest
-```
+1. The user initiates impact analysis (`kat impact`) for a target element.
+2. KAT propagates impact through applicable relationships according to the Impact policy defined in [`docs/specification/operations.md`](../specification/operations.md).
+3. KAT partitions the result into three semantic impact categories:
+   * **Directly Changed Elements**: The root target element itself.
+   * **Semantically Affected Elements**: Downstream requirements, decisions, or implementations dependent on the target.
+   * **Accountable Artifacts**: `kat.core/artifact` elements that represent or derive from affected knowledge.
+4. KAT presents the partitioned impact report for review.
 
 **Result:**
-
-The user receives a traceable set of elements that may require review or modification.
-
-KAT reports potential impact. It does not assume that every affected element will become invalid or require modification.
+The user receives an explicit impact report outlining which semantic elements and accountable artifacts require review.
 
 ---
 
 ## UC-006: Validate Consistency
 
-**Actor:** Developer / Architect / KAT
+**Actor:** Developer / Architect / CI Pipeline
 
-**Goal:** Determine whether the current semantic model satisfies its defined consistency rules.
+**Goal:** Evaluate whether the semantic state satisfies all mechanically enforced structural, domain, and ontology rules.
 
 **Preconditions:**
-
-* The project has defined consistency rules.
-* The semantic model exists.
+* Accepted state $S_n$ or candidate draft state $S_{\text{working}}$ is selected.
 
 **Main flow:**
+1. KAT inspects the selected semantic state.
+2. KAT evaluates structural integrity, ontology type rules, valid endpoint combinations, and lifecycle consistency.
+3. KAT identifies any mechanical violations (e.g. relationship referencing a missing target version, or invalid relationship endpoint types).
+4. KAT identifies unverified semantic `Constraint` elements for explicit awareness.
+5. KAT reports validation results cleanly without mutating state.
 
-1. KAT examines the current semantic model.
-2. KAT evaluates the defined consistency rules.
-3. KAT identifies violations.
-4. KAT reports each violated rule and its affected elements.
-5. The user can inspect the relevant traceability relationships.
-
-**Example:**
-
-The project defines:
-
+**Example Violation Report:**
 ```text
-Every accepted Requirement must have
-at least one Implementation.
-```
+Validation Failure: Disallowed Relationship Endpoints
 
-The model contains:
+Relationship: rel-01010101
+Type: kat.core/guides
+Source: req-02020202 (Requirement)
+Target: impl-03030303 (Implementation)
 
-```text
-Requirement
-"Support Apple Pay"
-
-Status
-Accepted
-
-Implementation
-None
-```
-
-KAT reports:
-
-```text
-Consistency violation
-
-Requirement: Support Apple Pay
-
-Rule:
-Accepted requirements must have an implementation.
-
-Missing:
-Implementation
+Violation: Relationship 'kat.core/guides' allows source type 'kat.core/design-decision', got 'kat.core/requirement'.
 ```
 
 **Result:**
+The user receives deterministic feedback on structural/ontology compliance and unverified domain constraints.
 
-The user knows which consistency rules are violated and which knowledge elements are involved in the violations.
+---
+
+## UC-007: Review and Reconcile Artifact Accountability
+
+**Actor:** Developer / Architect
+
+**Goal:** Determine whether an `Artifact` element remains accountable to current versions of the knowledge it represents or derives from, and explicitly reconcile its baseline when appropriate.
+
+**Preconditions:**
+* The KAT repository exists.
+* The `Artifact` element exists with direct `kat.core/represents` or `kat.core/derived-from` relationships.
+
+**Main flow:**
+1. The user reviews artifact accountability (`kat artifacts`).
+2. KAT resolves direct accountability edges and their recorded baselines against current target element versions in $S_n$.
+3. KAT reports status:
+   * `CURRENT`: Baseline matches current target version.
+   * `STALE`: Baseline differs from current target version, or target lifecycle is invalid.
+   * `UNACCOUNTED`: No direct accountability edge exists.
+4. If `STALE`, the user updates physical source files or documentation externally as needed.
+5. The user executes `kat account` to stage an `AccountArtifact` reconciliation operation.
+6. When accepted, KAT records the updated target version baseline in accepted `ChangeRevision` history.
+
+**Result:**
+The artifact's accountability status returns to `CURRENT`, and the reconciliation is preserved as explicit historical record without mutating `SemanticState`.
+
+---
+
+## UC-008: Author a Multi-Operation Change
+
+**Actor:** Developer / Architect
+
+**Goal:** Express one meaningful software evolution using multiple ordered semantic operations and publish them atomically.
+
+**Preconditions:**
+* The KAT repository exists in accepted state $S_n$.
+* No uncommitted draft session is currently active.
+
+**Main flow:**
+1. The user opens a local draft session (`kat update`, `kat link`, etc.).
+2. The user stages one or more mutation operations (`CreateElement`, `UpdateElement`, `Link`, `AccountArtifact`, etc.).
+3. KAT evaluates each operation sequentially against working candidate state $S_{\text{working}}$.
+4. The user inspects candidate draft status (`kat status`, `kat show`).
+5. KAT validates candidate state $S_{\text{working}}$ against ontology and structural rules.
+6. The user commits the draft. If accepted base state $S_n$ remains unchanged, KAT atomically publishes $(S_{n+1}, C_{n+1})$ as one `ChangeRevision` object.
+7. If base state $S_n$ changed concurrently, KAT rejects commit with a stale-base conflict error and preserves $S_n$.
+
+**Result:**
+One multi-operation software evolution is committed atomically or rejected cleanly without partial state corruption.
