@@ -6,10 +6,10 @@
 
 Phase 17 delivers the **Ontology Discovery** capability of v0.3.0. The real-project evaluation (`docs/implementation/v0.3/experiment.md`) demonstrated that requiring users or AI agents to discover relationship type names, allowed source element types, and allowed target element types by trial-and-error or binary inspection is unacceptable.
 
-This phase introduces two CLI discovery commands operating over the active `OntologyVersion` referenced by the accepted repository state $S_n$:
+Phase 17 introduces two CLI discovery commands operating over the repository's active `OntologyVersion`:
 
-1. **`kat ontology`** — lists registered element types, relationship types, and allowed endpoint combinations in a clean diagnostic overview.
-2. **`kat ontology show <type-id>`** — displays detailed properties, endpoint admissibility, and incoming/outgoing relationship capabilities for a specific element or relationship type.
+1. **`kat ontology [--compact]`** — lists registered element types, relationship types, and allowed endpoint combinations in a clean diagnostic overview.
+2. **`kat ontology show <type-id> [--compact]`** — displays detailed properties, endpoint admissibility, and incoming/outgoing relationship capabilities for a specific element or relationship type.
 
 Phase 17 is **strictly read-side**: no repository mutation, no canonical format change, no new persistence objects. It makes the active semantic vocabulary fully discoverable.
 
@@ -17,56 +17,93 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
 
 ## 1. Frozen Design & Semantics
 
-### 1.1 `kat ontology` — summary view
+### 1.1 Active Ontology Access & Identity
 
-- **Read-only**: inspects the active `OntologyVersion` referenced by accepted state $S_n$.
-- **Interface** (clap subcommand `Ontology`):
+- **Repository Context**: Inspects the active `OntologyVersion` associated with the current repository state context (not embedded inside `SemanticState`).
+- **Identity Distinction**: Exposes both stable semantic identity (`OntologyId`, UUID) and immutable version identity (`ObjectId`, SHA-256 hash).
 
+### 1.2 Command Grammar & Output Modes
+
+- **Grammar**:
   ```bash
-  kat ontology
+  kat ontology [--compact]
+  kat ontology show <type-id> [--compact]
+  ```
+- **Output Modes**:
+  - **Default**: Displays full canonical type IDs (`kat.core/...`) and human-readable `name` properties.
+  - **Compact (`--compact`)**: Displays shortened type IDs where unambiguous across the active ontology, omitting human-readable names.
+
+### 1.3 `kat ontology` — Summary View
+
+- **Default Summary Output**:
+
+  ```text
+  ONTOLOGY
+    id:       37c891f2-70b9-4a92-9118-2e86bf12019a
+    version:  91fa2c19a8b276d49811029c...
+
+  ELEMENT TYPES (7)
+    TYPE                      NAME
+    kat.core/intent           Intent
+    kat.core/requirement      Requirement
+    kat.core/constraint       Constraint
+    kat.core/design-decision  Design Decision
+    kat.core/implementation   Implementation
+    kat.core/artifact          Artifact
+    kat.core/validation        Validation
+
+  RELATIONSHIP TYPES (10)
+    TYPE                  SOURCES                TARGETS
+    kat.core/motivates    kat.core/intent        kat.core/requirement, kat.core/design-decision
+    kat.core/addresses    kat.core/design-decision kat.core/requirement
+    kat.core/restricts    kat.core/constraint    kat.core/requirement, kat.core/design-decision, kat.core/implementation
+    kat.core/guides       kat.core/design-decision kat.core/implementation
+    kat.core/realizes     kat.core/implementation kat.core/requirement
+    kat.core/represents   kat.core/artifact      kat.core/implementation
+    kat.core/derived-from kat.core/artifact      kat.core/requirement, kat.core/constraint, kat.core/design-decision, kat.core/implementation
+    kat.core/validates    kat.core/validation    kat.core/requirement, kat.core/constraint, kat.core/implementation
+    kat.core/depends-on   kat.core/implementation kat.core/implementation
+    kat.core/supersedes   kat.core/design-decision kat.core/design-decision
   ```
 
-- **Output Structure**:
-  - **Element Types**: list of registered element type IDs (e.g. `kat.core/requirement`, `kat.core/design-decision`).
-  - **Relationship Types**: table listing relationship type IDs, allowed source element types, and allowed target element types.
-
-- **Example Output**:
+- **Compact Summary Output (`--compact`)**:
 
   ```text
   ELEMENT TYPES
-    kat.core/intent
-    kat.core/requirement
-    kat.core/constraint
-    kat.core/design-decision
-    kat.core/implementation
-    kat.core/artifact
-    kat.core/validation
+    intent
+    requirement
+    constraint
+    design-decision
+    implementation
+    artifact
+    validation
 
   RELATIONSHIP TYPES
-    TYPE                  SOURCE                TARGETS
-    kat.core/motivates    intent                requirement, design-decision
-    kat.core/addresses    design-decision       requirement
-    kat.core/restricts    constraint            requirement, design-decision, implementation
-    kat.core/guides       design-decision       implementation
-    kat.core/realizes     implementation        requirement
-    kat.core/represents   artifact              implementation
-    kat.core/derived-from artifact              requirement, constraint, design-decision, implementation
-    kat.core/validates    validation            requirement, constraint, implementation
-    kat.core/depends-on   implementation        implementation
-    kat.core/supersedes   design-decision       design-decision
+    TYPE          SOURCES         TARGETS
+    motivates     intent          requirement, design-decision
+    addresses     design-decision requirement
+    restricts     constraint      requirement, design-decision, implementation
+    guides        design-decision implementation
+    realizes      implementation  requirement
+    represents    artifact        implementation
+    derived-from  artifact        requirement, constraint, design-decision, implementation
+    validates     validation      requirement, constraint, implementation
+    depends-on    implementation  implementation
+    supersedes    design-decision design-decision
   ```
 
-### 1.2 `kat ontology show <type-id>` — detailed type view
+### 1.4 `kat ontology show <type-id>` — Detailed Type View
 
-- **Interface** (clap subcommand `Ontology` with positional argument):
+- **Resolution Rules**:
+  1. Exact canonical `type_id` match wins (e.g. `kat.core/requirement`).
+  2. Otherwise, input is evaluated as a short identifier (the final path segment after `/` in `type_id`, e.g. `requirement`).
+  3. If exactly one registered type matches the short identifier $\to$ resolve.
+  4. If 0 registered types match $\to$ `QueryError::UnknownOntologyType(query)`.
+  5. If $>1$ registered types match $\to$ `QueryError::AmbiguousOntologyType { query, matches }` listing canonical candidates.
 
-  ```bash
-  kat ontology show requirement
-  kat ontology show kat.core/realizes
-  ```
+- **Note**: Human-readable `name` properties (e.g. `"Design Decision"`) are presentation metadata and do not participate in short-name resolution.
 
-- **Short Name Resolution**: accepts canonical IDs (e.g. `kat.core/requirement`) or short names (e.g. `requirement`, `realizes`).
-- **Detail View for Element Type** (e.g. `kat.core/implementation`):
+- **Element Type Detail** (e.g. `kat.core/implementation`):
 
   ```text
   kat.core/implementation
@@ -74,19 +111,22 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
   Kind:
     element
 
+  Name:
+    Implementation
+
   Outgoing relationships:
-    realizes   -> requirement
-    depends-on -> implementation
+    realizes   -> kat.core/requirement
+    depends-on -> kat.core/implementation
 
   Incoming relationships:
-    restricts  <- constraint
-    guides     <- design-decision
-    represents <- artifact
-    derived-from <- artifact
-    validates  <- validation
+    restricts    <- kat.core/constraint
+    guides       <- kat.core/design-decision
+    represents   <- kat.core/artifact
+    derived-from <- kat.core/artifact
+    validates    <- kat.core/validation
   ```
 
-- **Detail View for Relationship Type** (e.g. `kat.core/realizes`):
+- **Relationship Type Detail** (e.g. `kat.core/realizes`):
 
   ```text
   kat.core/realizes
@@ -94,14 +134,27 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
   Kind:
     relationship
 
-  Source:
+  Name:
+    Realizes
+
+  Sources:
     kat.core/implementation
 
   Targets:
     kat.core/requirement
   ```
 
-- **Unknown Type Handling**: if `<type-id>` is not present in the active ontology, prints a clear diagnostic error message and exits with status 1.
+- **Capabilities Derivation**:
+  For element type $T$:
+  - **Outgoing**: Every relationship type $R$ where $T \in R.\text{allowed\_source\_types}$, paired with each target type in $R.\text{allowed\_target\_types}$.
+  - **Incoming**: Every relationship type $R$ where $T \in R.\text{allowed\_target\_types}$, paired with each source type in $R.\text{allowed\_source\_types}$.
+
+### 1.5 Deterministic Ordering Rules
+
+- Element types: sorted alphabetically by canonical `type_id`.
+- Relationship types: sorted alphabetically by canonical `type_id`.
+- Sources / targets collections: sorted alphabetically by canonical `type_id`.
+- Incoming / outgoing capabilities: sorted by relationship `type_id`, then counterpart `type_id`.
 
 ---
 
@@ -109,24 +162,41 @@ Phase 17 is **strictly read-side**: no repository mutation, no canonical format 
 
 > Each step is atomic: implement, add tests, then **validate** (`cargo test`, `cargo fmt --check`, `cargo clippy -D warnings`) before starting the next step. Commit after validation.
 
-### Step 17.1 — Query layer: `ontology` inspection functions
+### Step 17.1 — Query projection DTOs & Resolution Logic
 
 - `src/repository/query.rs`:
-  - `OntologySummary`: data structure containing active `OntologyVersion` ID, registered element types, and relationship definitions with resolved endpoint names.
-  - `OntologyTypeView`: enum covering `ElementTypeView` (with incoming/outgoing allowed relationships) and `RelationshipTypeView` (with source/targets).
-  - `inspect_ontology(&Repository) -> Result<OntologySummary, QueryError>`
-  - `show_ontology_type(&Repository, type_id: &str) -> Result<OntologyTypeView, QueryError>`
-- Unit & integration tests in `tests/query.rs`.
+  - Data structures:
+    - `OntologySummary { ontology_id: OntologyId, ontology_version_id: ObjectId, element_types: Vec<ElementTypeSummary>, relationship_types: Vec<RelationshipTypeSummary> }`
+    - `ElementTypeSummary { type_id: TypeId, name: String }`
+    - `RelationshipTypeSummary { type_id: TypeId, name: String, allowed_source_types: Vec<TypeId>, allowed_target_types: Vec<TypeId> }`
+    - `ElementTypeView { type_id: TypeId, name: String, outgoing: Vec<RelationshipCapability>, incoming: Vec<RelationshipCapability> }`
+    - `RelationshipTypeView { type_id: TypeId, name: String, allowed_source_types: Vec<TypeId>, allowed_target_types: Vec<TypeId> }`
+    - `RelationshipCapability { relationship_type_id: TypeId, counterpart_type_id: TypeId }`
+  - Error variants added to `QueryError`:
+    - `UnknownOntologyType(String)`
+    - `AmbiguousOntologyType { query: String, matches: Vec<String> }`
+  - Functions:
+    - `inspect_ontology(&Repository) -> Result<OntologySummary, QueryError>`
+    - `show_ontology_type(&Repository, query: &str) -> Result<OntologyTypeView, QueryError>`
+  - Uses `repository.active_ontology()` resolution path.
+- Unit tests in `tests/query.rs` testing built-in core ontology, custom extension ontologies (with multiple source/target types and custom namespaces), canonical lookup, short lookup, ambiguity handling, and deterministic ordering.
 
-### Step 17.2 — CLI wiring: `kat ontology` and `kat ontology show`
+### Step 17.2 — CLI Wiring & Output Formatting
 
 - `src/main.rs`:
-  - Add `Ontology` subcommand to `clap` CLI parser with optional `show` subcommand / positional type argument.
-  - Format diagnostic rendering for `kat ontology` (default and `--compact` modes).
-  - Format detailed rendering for `kat ontology show <type-id>`.
+  - Add `Ontology` subcommand with `--compact` flag and optional `Show { type_id: String, compact: bool }` sub-subcommand.
+  - Implement summary renderer for default and `--compact` modes.
+  - Implement detailed renderer for default and `--compact` modes.
 - Integration tests in `tests/cli.rs`.
 
-### Step 17.3 — Phase 17 Closure & End-to-End Acceptance Test
+### Step 17.3 — Phase 17 Closure & Acceptance Test Suite
 
-- Add `phase17_acceptance_cli_flow_end_to_end` test verifying `kat ontology` and `kat ontology show` on a populated repository.
+- Add `phase17_acceptance_cli_flow_end_to_end` test verifying:
+  - `kat ontology`
+  - `kat ontology --compact`
+  - `kat ontology show requirement`
+  - `kat ontology show kat.core/realizes`
+  - `kat ontology show does-not-exist` (returns exit status 1 with clear unknown type error)
+  - Extension ontology fixture test with ambiguous short name (returns exit status 1 listing candidate matches).
+  - No mutation invariant: verifies `accepted` ref, object store, and state count remain byte-for-byte unchanged.
 - Verify `cargo test`, `cargo fmt --check`, and `cargo clippy --all-targets -- -D warnings`.
