@@ -159,7 +159,7 @@ Accountability status is categorized as:
 
 When a direct accountability relationship (`kat.core/represents`, `kat.core/derived-from`) is created, its initial accepted baseline is established by the target element version selected by that state.
 
-When target elements evolve ($V_{\text{initial}} \to V_{\text{next}}$), the artifact's accountability status becomes `STALE`.
+When a directly accountable target element evolves from its recorded baseline version, the artifact's accountability status becomes `STALE`.
 
 To acknowledge the target element evolution and re-baseline the artifact, a user submits an `AccountArtifact` operation:
 
