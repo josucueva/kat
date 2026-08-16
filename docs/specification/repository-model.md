@@ -9,18 +9,16 @@ A KAT repository contains the knowledge, rules, history, and references required
 The repository provides a boundary for:
 
 * Authoritative software knowledge
-* Semantic state
-* Accepted change history
-* Ontology
-* Invariants
-* Working changes
-* Materialization information
-* Artifact references
-* Collaboration state
+* Accepted semantic state and history
+* Active ontology and domain constraints
+* Local draft transaction state
+* Artifact accountability state
 
 The repository model does not define filesystem layout, database structure, network protocols, serialization formats, or storage technology.
 
-## Repository
+---
+
+## Repository Boundary
 
 A KAT Repository is the unit through which KAT manages the knowledge and evolution of a software system.
 
@@ -29,28 +27,28 @@ Conceptually:
 ```text
 KAT Repository
         |
-        +--> Software
+        +--> Software System
         |
-        +--> Semantic Model
+        +--> Accepted Repository State
+        |       |-- SemanticState (Sn)
+        |       +-- ChangeRevision Head (Cn)
         |
-        +--> Ontology
+        +--> Persistent Repository Knowledge
+        |       |-- Active Ontology (OntologyVersion)
+        |       +-- Immutable Canonical Object Store
         |
-        +--> Invariants
+        +--> Local Working State (Draft Session)
         |
-        +--> Change History
-        |
-        +--> Working State
-        |
-        +--> Materialization Information
-        |
-        +--> Artifact References
+        +--> Derived State (Indexes & Accountability Reports)
 ```
 
 The repository is not the software itself.
 
 It is the KAT-managed environment in which the software's authoritative knowledge, evolution, and relationships are maintained.
 
-## Software Boundary
+---
+
+## Software System Boundary
 
 A repository manages one logical software system.
 
@@ -61,491 +59,320 @@ KAT Repository
         |
         | manages
         v
-Software
+Software System
 ```
 
-The exact physical boundaries of the software are not determined by KAT.
+The physical boundaries of the software system are not determined by KAT. A software system may be realized as a monolith, microservices, libraries, configuration files, or infrastructure definitions. All these elements belong to the same repository when they form part of the same logical software system.
 
-A software system may be implemented as:
-
-* A monolith
-* Multiple services
-* Multiple applications
-* Libraries
-* Infrastructure components
-* Other architectural structures
-
-These may all belong to the same repository when they form part of the same logical software system.
-
-The criteria for splitting or combining software systems across repositories may be refined later.
-
-## Authoritative Repository State
-
-A repository maintains an accepted semantic state representing the currently authoritative knowledge of the software.
-
-It also maintains an accepted change head identifying the latest accepted Change Revision associated with that state.
-
-Conceptually:
-
-```text
-Repository
-    |
-    v
-Accepted Repository State
-    |
-    +--> Accepted Semantic State
-    |
-    +--> Accepted Change Head
-```
-
-The accepted semantic state defines the currently authoritative software knowledge.
-
-The accepted change head identifies the current root of accepted semantic history.
-
-For the initial repository state, no accepted Change may exist yet:
-
-```text
-Accepted Repository State
-    |
-    +--> Semantic State S0
-    |
-    +--> Change Head: none
-```
-
-After an accepted change:
-
-```text
-Accepted Repository State
-    |
-    +--> Semantic State S1
-    |
-    +--> Change Head C1
-```
-
-The accepted semantic state must satisfy:
-
-* The repository ontology
-* Required invariants
-* Applicable consistency rules
-* Accepted changes and their postconditions
-
-Working or proposed changes do not redefine either the authoritative semantic state or accepted history until they are accepted.
-
-The accepted semantic state and accepted change head must advance together as one repository-level transition.
-
-## Working State
-
-A repository may contain semantic work that has not yet become part of the accepted state.
-
-Working state may contain:
-
-* Local changes
-* Proposed changes
-* Changes awaiting validation
-* Changes awaiting reconciliation
-* Unresolved collaborative work
-
-Conceptually:
-
-```text
-Accepted State
-      |
-      +--> Working Change A
-      |
-      +--> Working Change B
-```
-
-Working state and accepted state are distinct.
-
-Incomplete or unresolved work must not silently become authoritative.
-
-## Ontology
-
-A repository is associated with an ontology that defines the semantic vocabulary available to the software model.
-
-The ontology defines:
-
-* Knowledge element types
-* Relationship types
-* Valid source and target combinations
-* Basic relationship semantics
-
-The repository must support the KAT core ontology.
-
-A repository may also use ontology extensions when additional domain, architecture, or technology-specific concepts are required.
-
-```text
-Repository Ontology
-        |
-        +--> KAT Core Ontology
-        |
-        +--> Repository Extensions
-```
-
-Extensions must remain compatible with the rules and principles of the core ontology.
-
-## Invariants
-
-A repository maintains the invariants required for its accepted semantic states.
-
-These may include:
-
-### Core Invariants
-
-Rules required by KAT itself.
-
-Examples include:
-
-* Stable knowledge identity
-* Relationship validity
-* Historical traceability
-* Authority of the semantic model
-
-### Repository Invariants
-
-Rules that apply specifically to the software being managed.
-
-Example:
-
-```text
-Every accepted payment Requirement
-must have at least one Implementation.
-```
-
-Repository-specific invariants may strengthen the rules of the model but must not contradict required KAT invariants.
-
-## Change History
-
-A repository preserves the semantic evolution of the software through changes.
-
-```text
-Semantic State S0
-        |
-        | Change A
-        v
-Semantic State S1
-        |
-        | Change B
-        v
-Semantic State S2
-```
-
-Change history preserves, when applicable:
-
-* Change identity
-* Semantic operations
-* Causal dependencies
-* Affected knowledge
-* Preconditions
-* Postconditions
-* Supersession or compensation
-* Relationships between semantic states
-
-History represents the evolution of authoritative software knowledge rather than a sequence of file modifications.
-
-Independent changes do not require an artificial semantic ordering when no causal relationship exists between them.
-
-The repository maintains an accepted change head identifying the latest accepted Change Revision associated with the accepted semantic state.
-
-Conceptually:
-
-```text
-Accepted Change Head
-        |
-        v
-Change B
-        |
-        +--> base state: S1
-        |
-        +--> result state: S2
-```
-
-Together with the accepted semantic state:
-
-```text
-Accepted Repository State
-
-    state  -> S2
-    change -> Change B
-```
-
-This allows KAT to distinguish accepted Change Revisions from Changes or Change Revisions that may exist in repository storage but were never accepted.
-
-The accepted change head does not replace causal dependencies between Changes.
-
-It provides a repository root from which accepted semantic history can be identified.
-
-The change graph may still contain causal branching or reconciliation and does not require a globally linear history.
-
-## Repository State
-
-The state of a repository consists of the information necessary to understand the current accepted software knowledge and its evolution.
-
-Conceptually:
-
-```text
-Repository State
-
-    Accepted Semantic State
-    Accepted Change Head
-    Ontology
-    Invariants
-    Change History
-    Working State
-    Materialization State
-```
-
-Not every part of repository state is authoritative software knowledge.
-
-For example:
-
-* The accepted semantic state represents authoritative software knowledge.
-* The accepted change head identifies the current root of accepted semantic history.
-* Change history represents the evolution of authoritative software knowledge.
-* Working state represents proposed evolution.
-* Materialization state describes the relationship between knowledge and artifacts.
-
-These roles must remain distinguishable.
-
-## Artifacts
-
-Artifacts associated with the software may exist within or outside the physical storage used by the KAT repository.
-
-The repository maintains references necessary to relate those artifacts to software knowledge.
-
-```text
-Repository
-    |
-    | references
-    v
-Artifact
-    |
-    | represents / derived_from
-    v
-Knowledge
-```
-
-An artifact's location is not its semantic identity.
-
-Moving or renaming an artifact must not by itself create a new knowledge identity.
-
-Artifact references may include information necessary for materialization, traceability, validation, and divergence detection.
-
-The exact representation of artifact references is an implementation concern.
-
-## Materialization State
-
-The repository maintains enough information to understand how artifacts relate to the authoritative semantic model.
-
-This may include:
-
-* Which knowledge an artifact represents
-* Which knowledge an artifact derives from
-* Relevant materialization relationships
-* Whether an artifact is consistent, outdated, incomplete, or divergent
-* The semantic state or knowledge from which an artifact was materialized, when known
-
-Materialization information does not make artifacts authoritative.
-
-## Collaboration State
-
-A repository may contain information necessary to support collaborative semantic evolution.
-
-This may include:
-
-* Working changes
-* Shared changes
-* Causal dependencies
-* Reconciliation state
-* Conflict information
-
-The repository must distinguish collaborative working state from accepted authoritative state.
-
-The exact synchronization mechanism between repositories is outside the scope of this model.
-
-## Repository Validity
-
-A repository is semantically valid when its accepted state satisfies all required rules.
-
-At minimum:
-
-* The semantic model conforms to the active ontology.
-* Required invariants are satisfied.
-* Relationships reference valid knowledge elements.
-* Accepted changes satisfy their required conditions.
-* Historical traceability required by KAT is preserved.
-* The accepted change head, when present, references an accepted Change Revision whose resulting semantic state is the accepted semantic state.
-
-Conceptually:
-
-```text
-accepted.change.result_state
-            ==
-accepted.state
-```
-
-For the initial repository state:
-
-```text
-accepted.state  = S0
-accepted.change = none
-```
-
-Artifact divergence does not necessarily make the authoritative semantic state invalid.
-
-Instead, it indicates inconsistency between the semantic state and its materialization and must remain identifiable.
+---
 
 ## Repository Identity
 
-A repository should have a stable identity independent from its physical location.
+A repository has a stable `RepositoryId` (UUIDv4) independent from its physical location on disk or in version control.
+
+A managed software system has a stable `SoftwareId` (UUIDv4).
 
 Moving the repository, copying its storage, or changing its filesystem path does not by itself redefine the software knowledge represented by it.
 
-The exact repository identity format is an implementation concern.
+Canonical identity metadata is recorded by repository layout metadata (`.kat/repository.json`).
 
-## Repository and Artifact Storage
+---
 
-The conceptual repository boundary is different from the physical storage boundary.
+## Authoritative Repository State
 
-For example:
+A repository maintains an accepted semantic state $S_n$ representing the currently authoritative software knowledge.
+
+It also maintains an accepted change head $C_n$ identifying the latest accepted `ChangeRevision` associated with that state.
+
+Conceptually:
+
+```text
+Repository
+    |
+    v
+Accepted Repository State
+    |
+    +--> Accepted Semantic State (Sn)
+    +--> Accepted Change Head (Cn)
+```
+
+For the initial repository state after initialization:
+
+```text
+Accepted Repository State (S0)
+    |
+    +--> SemanticState S0
+    +--> Change Head: none
+```
+
+After accepting Change Revision $C_1$:
+
+```text
+Accepted Repository State (S1)
+    |
+    +--> SemanticState S1
+    +--> Change Head C1
+```
+
+The accepted semantic state $S_n$ must satisfy:
+* The active `OntologyVersion`
+* Level 1 domain invariants
+* Accepted changes and their postconditions
+
+Working or draft changes do not redefine either the authoritative semantic state or accepted history until successfully accepted.
+
+---
+
+## Accepted State Invariant
+
+The core structural invariant governing accepted repository state is:
+
+```text
+if accepted.change != none:
+    accepted.change.result_state == accepted.state
+```
+
+For fresh initialization ($S_0$), `accepted.change == none`.
+
+For any subsequent accepted transition $n \ge 1$:
+* `accepted.change` is a valid canonical `ChangeRevision` $C_n$.
+* `accepted.change.result_state` matches `accepted.state` ($S_n$).
+
+The accepted state reference and accepted change head are published together as one atomic repository-level transition. The accepted `SemanticState` reference may remain unchanged ($S_{n+1} = S_n$) when the accepted Change has no net state effect (such as `AccountArtifact`).
+
+---
+
+## Local Draft State
+
+A repository may contain at most **one local unaccepted draft Change** session at any time.
+
+The local draft:
+* is initialized from an explicit accepted state ($S_n$);
+* maintains an ordered sequence of staged mutation operations;
+* accumulates a candidate working semantic state $S_{\text{working}}$;
+* is strictly local and not part of accepted history;
+* may be committed (atomically accepted) or aborted (discarded);
+* becomes stale if the repository's accepted state advances concurrently.
+
+```text
+Accepted Repository State (Sn)
+      |
+      +--> Local Draft Session (S_working)
+             |-- Staged Op 1 (CreateElement)
+             |-- Staged Op 2 (Link)
+             +-- Staged Op 3 (AccountArtifact)
+```
+
+Incomplete or staged draft operations do not redefine authoritative state ($S_n$) until committed.
+
+---
+
+## Atomic Acceptance
+
+Publishing a draft Change into accepted repository history is an atomicCompare-And-Swap (CAS) transition:
+
+$$ (S_n, C_n) \xrightarrow{\text{Commit Draft}} (S_{n+1}, C_{n+1}) $$
+
+If the accepted state $S_n$ changed during draft preparation, acceptance is rejected with a conflict error. Upon successful publication:
+1. All newly produced canonical objects (element versions, relationship versions, `ChangeRevision`) are written to the object store.
+2. The accepted head reference is updated atomically.
+3. The local draft session is cleaned up.
+
+---
+
+## Core Invariants vs Domain Constraints
+
+A repository maintains the invariants required for its accepted semantic states.
+
+### Core Invariants
+Structural and semantic rules defined by KAT specification and mechanically enforced across all repositories:
+* Stable knowledge identity (`ElementId`, `RelationshipId`)
+* Domain relationship validity and type compatibility
+* Immutable historical traceability
+* Authority of accepted semantic state over source files
+
+### Domain Constraints
+Semantic restrictions expressed as `kat.core/constraint` knowledge elements within the software model (e.g. *"Payment data must not be stored unencrypted"*). Whether KAT can mechanically verify a constraint depends on whether executable validation semantics are available.
+
+---
+
+## Change History & Publication Order
+
+A repository preserves the semantic evolution of software knowledge through an immutable chain of `ChangeRevision` objects.
+
+```text
+SemanticState S0
+        |
+        | Change C1 (base: S0, result: S1)
+        v
+SemanticState S1
+        |
+        | Change C2 (base: S1, result: S2)
+        v
+SemanticState S2
+```
+
+Accepted revisions have a single linear publication order through the accepted change head $C_n$.
+
+Causal dependencies recorded in `ChangeRevision.dependencies` reflect semantic causal links between changes and need not correspond one-to-one with linear publication order.
+
+KAT v0.2 does not implement branching, merge, or multi-head accepted history.
+
+---
+
+## Repository State Layering
+
+The state of a KAT repository is categorized into four distinct functional layers:
+
+1. **Accepted Repository State** (Authoritative):
+   - Current `SemanticState` reference ($S_n$)
+   - Current `ChangeRevision` head ($C_n$)
+
+2. **Persistent Repository Knowledge** (Immutable Storage):
+   - Active `OntologyVersion`
+   - Immutable canonical object store (containing element versions, relationship versions, change revisions, ontology versions)
+
+3. **Local Working State** (Transient):
+   - Draft transaction session (`.kat/work/change/session.json`)
+
+4. **Derived State** (Computed Read-Side Views):
+   - Identity lookup indexes
+   - Trace origin paths and impact propagation graphs
+   - Artifact accountability reports (`CURRENT`, `STALE`, `UNACCOUNTED`)
+
+---
+
+## Artifact Knowledge Representation
+
+Artifacts associated with the software are represented as semantic knowledge elements of type `kat.core/artifact`.
+
+```text
+Artifact Element (kat.core/artifact)
+    |
+    |-- kat.core/represents   --> Implementation Element
+    +-- kat.core/derived-from --> Requirement / Constraint / Decision / Implementation
+```
+
+An artifact element's identity (`ElementId` UUID) is independent of its physical filesystem path or locator. Moving or renaming a source file does not by itself redefine its semantic knowledge identity.
+
+Physical artifact location or external resource addressing is not defined by the core repository model.
+
+---
+
+## Artifact Accountability State
+
+Artifact accountability is a derived query state evaluated against the current accepted semantic state $S_n$ and accepted change history.
+
+Accountability is derived from:
+* Currently accepted direct `kat.core/represents` and `kat.core/derived-from` relationships.
+* Resolved accountability reconciliation baselines (from initial relationship acceptance or subsequent `AccountArtifact` operations).
+* Current target element version selected by $S_n$.
+
+Artifact accountability status is categorized as:
+* `CURRENT`: All direct accountability baselines match current target element versions.
+* `STALE`: At least one direct accountability baseline differs from the current target element version.
+* `UNACCOUNTED`: No direct accountability relationship exists for the artifact in $S_n$.
+
+This state does not imply physical artifact inspection or verification.
+
+---
+
+## Collaboration Boundary
+
+KAT v0.2 supports local draft transaction sessions and concurrent stale-draft detection.
+
+Distributed synchronization, shared draft state, multi-repository remote fetch/push, branch merge, and conflict reconciliation are outside the current repository model and are defined as future collaboration concerns in [`docs/specification/collaboration-model.md`](collaboration-model.md).
+
+---
+
+## Repository Validity
+
+A repository is semantically valid when its accepted state satisfies all required structural and domain rules:
+
+1. The accepted `SemanticState` $S_n$ exists in store and is structurally valid.
+2. The active `OntologyVersion` exists in store and is valid.
+3. `accepted.change` is `none` if and only if $S_n = S_0$ (initial state).
+4. If `accepted.change` is not `none`, `accepted.change.result_state == accepted.state`.
+5. All element version and relationship version objects selected by $S_n$ exist in the object store and have expected kinds.
+6. The accepted state $S_n$ conforms to the active ontology and Level 1 domain invariants.
+
+Artifact accountability staleness does not make the authoritative semantic state invalid. Physical artifact divergence is outside KAT v0.2 and is not inferred from accountability status.
+
+---
+
+## Physical Storage Boundary
+
+The conceptual repository boundary is distinct from the physical storage boundary:
 
 ```text
 Conceptual KAT Repository
-        |
-        +--> Semantic knowledge
-        +--> History
-        +--> Rules
-        +--> Artifact references
+        |-- Semantic knowledge
+        |-- Accepted history
+        |-- Active ontology
+        +-- Artifact accountability baselines
 
-Physical environment
-        |
-        +--> KAT internal storage
-        +--> Source directories
-        +--> Generated artifacts
-        +--> External resources
+Physical Environment
+        |-- KAT internal metadata (.kat/)
+        |-- Canonical object store (.kat/objects/)
+        |-- Local draft session (.kat/work/change/session.json)
+        +-- Project source files & build outputs
 ```
 
-KAT should therefore not assume that every artifact must physically exist inside a specific repository directory.
+`Artifact semantic identity (ElementId UUID) != filesystem path`. KAT does not require managed artifacts to physically reside within the `.kat/` workspace directory.
 
-This distinction allows KAT to manage software whose artifacts are distributed across different locations or systems.
+---
 
-## Repository and Version Control
+## Version Control Boundary
 
-A KAT repository is not defined by file-based version control.
+A KAT repository is not defined by file-based version control (such as Git).
 
-External version control systems may be used to transport, store, or collaborate on artifacts, but their file history does not replace the semantic history maintained by KAT.
-
-Conceptually:
+External version control systems may transport, store, or collaborate on source code files, but file-level commits do not replace or modify the semantic history maintained by KAT `ChangeRevision` objects.
 
 ```text
-KAT Repository
-    |
-    +--> Semantic evolution
-    +--> Knowledge history
-    +--> Traceability
-
-Artifact Version Control
-    |
-    +--> File evolution
+KAT Repository             External Version Control
+  |                           |
+  +-- Semantic evolution      +-- File line modifications
+  +-- Knowledge history       +-- Blob tree commits
+  +-- System traceability     +-- Workspace branches
 ```
 
-The two systems may integrate, but they represent different forms of evolution.
+---
 
 ## Repository Lifecycle
 
-A repository conceptually moves through several lifecycle activities.
+A KAT repository moves through defined lifecycle activities:
 
-### Initialization
+1. **Initialization**: Establishing `RepositoryId`, `SoftwareId`, active `OntologyVersion`, initial state $S_0$, and setting `accepted.change = none`.
+2. **Draft Evolution**: Opening a draft session, staging mutation operations on $S_{\text{working}}$, and evaluating candidate consistency.
+3. **Atomic Acceptance**: Validating candidate state $S_{\text{working}}$, persisting canonical objects, publishing $(S_{n+1}, C_{n+1})$ via CAS, and clearing draft.
+4. **Validation**: Evaluating mechanical consistency and identifying unverified constraints on accepted state $S_n$.
+5. **Artifact Accountability Analysis**: Evaluating direct accountability baselines against current target element versions to report `CURRENT`, `STALE`, or `UNACCOUNTED` status.
 
-A repository is established with the information required to begin representing a software system.
-
-This includes at least:
-
-* Repository identity
-* Software identity
-* Core ontology
-* Required core invariants
-* Initial semantic state
-* An accepted repository state referencing the initial semantic state with no accepted Change head
-
-Conceptually:
-
-```text
-Accepted Repository State
-
-    state  -> S0
-    change -> none
-```
-
-### Evolution
-
-Authoritative software knowledge evolves through accepted changes.
-
-When a Change is accepted, the accepted semantic state and accepted change head advance together.
-
-Conceptually:
-
-```text
-Before:
-
-    state  -> S0
-    change -> C0
-
-After accepting C1:
-
-    state  -> S1
-    change -> C1
-```
-
-### Materialization
-
-Knowledge may be realized through artifacts.
-
-### Collaboration
-
-Participants may develop and reconcile changes to the shared semantic model.
-
-### Validation
-
-The repository's semantic state may be evaluated against ontology rules, invariants, and consistency requirements.
-
-These activities do not define a mandatory sequential workflow.
+---
 
 ## Core Rules
 
-The repository model follows these rules:
+The repository model enforces the following normative rules:
 
-* A repository manages one logical software system.
+* A repository manages exactly one logical software system.
 * The repository is not the software itself.
-* The accepted semantic state is authoritative.
-* The repository maintains both an accepted semantic state and an accepted change head.
-* The accepted semantic state and accepted change head advance together when a Change is accepted.
-* The accepted change head identifies accepted semantic history but does not itself define intended software state.
-* Working state must remain distinguishable from accepted state.
-* Semantic history records knowledge evolution rather than file evolution.
-* The repository ontology defines the vocabulary available to the semantic model.
-* Required invariants constrain accepted semantic states.
-* Artifacts remain traceable to knowledge without becoming authoritative.
-* Artifact location does not define artifact identity.
-* Repository identity is independent from physical location.
-* Collaboration and materialization state do not independently redefine authoritative knowledge.
-* Physical storage is an implementation concern.
+* The accepted semantic state $S_n$ is authoritative.
+* A repository has at most one accepted `SemanticState` reference ($S_n$).
+* A repository has at most one accepted `ChangeRevision` head ($C_n$).
+* A repository has at most one local unaccepted draft session.
+* A local draft session never changes accepted state until successful atomic acceptance.
+* Accepted publication is an atomic, repository-level transition.
+* Artifact location does not define artifact identity (`ElementId` UUID != file path).
+* Artifact accountability staleness does not invalidate accepted semantic state.
+* Repository identity (`RepositoryId` UUID) is independent of physical filesystem location.
 
-## Open Questions
+---
 
-The following questions remain intentionally unresolved:
+## Future Research Questions
 
-* Can one repository manage more than one logical software system?
-* Can repositories reference knowledge maintained by other repositories?
-* How are repository dependencies represented?
-* How are ontology extensions installed or versioned?
-* How are repository-specific invariants defined and evolved?
-* How is the initial semantic state created?
-* How are repositories copied or replicated without confusing repository identity?
-* Can a repository have multiple accepted semantic states simultaneously?
-* If multiple accepted semantic states are supported in the future, does each accepted state maintain its own accepted change head?
-* How are repository boundaries determined for large systems?
-* How are external artifacts referenced?
-* Which parts of repository state must be persisted?
-* Which parts may be derived from other repository information?
-* How are repositories exchanged between participants?
+The following topics are intentionally outside KAT v0.2 and represent future research areas:
+
+* Could future repository models support federated cross-repository knowledge references?
+* How will ontology extensions be packaged, published, and versioned across repositories?
+* How will distributed repositories synchronize accepted change revision graphs?
+* What protocol will define remote artifact metadata bridges for build systems and CI/CD pipelines?
