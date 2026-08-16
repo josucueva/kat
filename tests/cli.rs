@@ -4,6 +4,7 @@
 //! The CLI is thin parse + dispatch, so these tests assert the invocation
 //! contract from `docs/cli.md` without re-testing library semantics.
 
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::str::FromStr;
@@ -3292,4 +3293,115 @@ fn phase15_multiple_accountability_edges_reconciliation() {
     assert!(ok_curr);
     assert!(arts_curr.contains("current:      1"));
     assert!(arts_curr.contains("stale:        0"));
+}
+
+#[test]
+fn phase17_acceptance_cli_flow_end_to_end() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+
+    run_kat(root, &["init"]);
+
+    let kat_dir = |p: &Path| p.join(".kat");
+    let object_ids = |p: &Path| {
+        let mut ids = Vec::new();
+        let objects_dir = kat_dir(p).join("objects");
+        if objects_dir.is_dir() {
+            for entry in fs::read_dir(objects_dir).unwrap() {
+                let entry = entry.unwrap();
+                ids.push(entry.file_name().to_string_lossy().to_string());
+            }
+        }
+        ids.sort();
+        ids
+    };
+
+    let objects_before = object_ids(root);
+    let accepted_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
+
+    // 1. kat ontology (default summary)
+    let (out_summary, _, ok_sum) = run_kat(root, &["ontology"]);
+    assert!(ok_sum, "kat ontology failed: {out_summary}");
+    assert!(out_summary.contains("ONTOLOGY"));
+    assert!(out_summary.contains("ELEMENT TYPES (7)"));
+    assert!(out_summary.contains("RELATIONSHIP TYPES (10)"));
+    assert!(out_summary.contains("kat.core/requirement"));
+    assert!(out_summary.contains("kat.core/realizes"));
+    assert!(out_summary.contains("NAME")); // verifies NAME column present
+
+    // 2. kat ontology --compact (compact summary)
+    let (out_compact_sum, _, ok_csum) = run_kat(root, &["ontology", "--compact"]);
+    assert!(ok_csum, "kat ontology --compact failed: {out_compact_sum}");
+    assert!(out_compact_sum.contains("ELEMENT TYPES"));
+    assert!(out_compact_sum.contains("  requirement"));
+    assert!(out_compact_sum.contains("  realizes"));
+
+    // 3. kat ontology show requirement (default detail element view)
+    let (out_show_req, _, ok_sreq) = run_kat(root, &["ontology", "show", "requirement"]);
+    assert!(
+        ok_sreq,
+        "kat ontology show requirement failed: {out_show_req}"
+    );
+    assert!(out_show_req.contains("kat.core/requirement"));
+    assert!(out_show_req.contains("Kind:\n  element"));
+    assert!(out_show_req.contains("Name:\n  Requirement"));
+    assert!(out_show_req.contains("kat.core/realizes"));
+
+    // 4. kat ontology show requirement --compact (compact detail element view)
+    let (out_cshow_req, _, ok_csreq) =
+        run_kat(root, &["ontology", "show", "requirement", "--compact"]);
+    assert!(
+        ok_csreq,
+        "kat ontology show requirement --compact failed: {out_cshow_req}"
+    );
+    assert!(out_cshow_req.contains("requirement"));
+    assert!(out_cshow_req.contains("kind: element"));
+    assert!(out_cshow_req.contains("realizes <- implementation"));
+
+    // 5. kat ontology show kat.core/realizes (default detail relationship view)
+    let (out_show_rel, _, ok_srel) = run_kat(root, &["ontology", "show", "kat.core/realizes"]);
+    assert!(
+        ok_srel,
+        "kat ontology show kat.core/realizes failed: {out_show_rel}"
+    );
+    assert!(out_show_rel.contains("kat.core/realizes"));
+    assert!(out_show_rel.contains("Kind:\n  relationship"));
+    assert!(out_show_rel.contains("Name:\n  Realizes"));
+    assert!(out_show_rel.contains("kat.core/implementation"));
+    assert!(out_show_rel.contains("kat.core/requirement"));
+
+    // 6. kat ontology show realizes --compact (compact detail relationship view)
+    let (out_cshow_rel, _, ok_csrel) =
+        run_kat(root, &["ontology", "show", "realizes", "--compact"]);
+    assert!(
+        ok_csrel,
+        "kat ontology show realizes --compact failed: {out_cshow_rel}"
+    );
+    assert!(out_cshow_rel.contains("realizes"));
+    assert!(out_cshow_rel.contains("kind: relationship"));
+    assert!(out_cshow_rel.contains("implementation"));
+    assert!(out_cshow_rel.contains("requirement"));
+
+    // 7. kat ontology show does-not-exist (unknown type error)
+    let (out_err, err_stream, ok_err) = run_kat(root, &["ontology", "show", "does-not-exist"]);
+    assert!(!ok_err, "expected failure for unknown type");
+    assert!(
+        err_stream.contains("unknown ontology type 'does-not-exist'")
+            || out_err.contains("unknown ontology type")
+    );
+
+    // 8. Open draft session and verify ontology query works and leaves draft intact
+    run_kat(root, &["change", "begin", "--description", "Test draft"]);
+    let (out_draft_ont, _, ok_dont) = run_kat(root, &["ontology"]);
+    assert!(
+        ok_dont,
+        "ontology query during draft session failed: {out_draft_ont}"
+    );
+
+    // Verify repository objects and accepted ref unchanged
+    assert_eq!(object_ids(root), objects_before);
+    assert_eq!(
+        fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
+        accepted_before
+    );
 }

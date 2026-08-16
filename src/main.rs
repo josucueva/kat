@@ -62,7 +62,11 @@ use kat::repository::session::{
 pub mod cli;
 
 use clap::Parser;
-use cli::{Cli, Command};
+use cli::{Cli, Command, OntologyCommands};
+
+use kat::repository::query::{
+    OntologySummary, OntologyTypeView, inspect_ontology, show_ontology_type,
+};
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -131,6 +135,7 @@ fn main() -> ExitCode {
         Command::Validate { compact } => cmd_validate(compact),
         Command::Artifacts { compact } => cmd_artifacts(compact),
         Command::Change { command } => cmd_change(command),
+        Command::Ontology { compact, command } => cmd_ontology(compact, command),
     }
 }
 
@@ -2804,6 +2809,312 @@ fn cmd_change_abort() -> ExitCode {
         Err(err) => {
             eprintln!("kat change abort: {err}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+fn cmd_ontology(compact: bool, command: Option<OntologyCommands>) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("kat ontology: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match command {
+        None => match inspect_ontology(&repository) {
+            Ok(summary) => {
+                if compact {
+                    print_ontology_summary_compact(&summary);
+                } else {
+                    print_ontology_summary(&summary);
+                }
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("kat ontology: {err}");
+                ExitCode::FAILURE
+            }
+        },
+        Some(OntologyCommands::Show { type_id }) => {
+            match show_ontology_type(&repository, &type_id) {
+                Ok(view) => {
+                    if compact {
+                        print_ontology_type_view_compact(&view);
+                    } else {
+                        print_ontology_type_view(&view);
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("kat ontology show: {err}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+    }
+}
+
+fn print_ontology_summary(summary: &OntologySummary) {
+    println!("ONTOLOGY");
+    println!("  id:       {}", summary.ontology_id);
+    println!("  version:  {}", summary.ontology_version_id);
+    println!();
+
+    println!("ELEMENT TYPES ({})", summary.element_types.len());
+    let max_elem_type_len = summary
+        .element_types
+        .iter()
+        .map(|e| e.type_id.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    println!("  {:width$}  NAME", "TYPE", width = max_elem_type_len);
+    for elem in &summary.element_types {
+        println!(
+            "  {:width$}  {}",
+            elem.type_id,
+            elem.name,
+            width = max_elem_type_len
+        );
+    }
+    println!();
+
+    println!("RELATIONSHIP TYPES ({})", summary.relationship_types.len());
+    let max_rel_type_len = summary
+        .relationship_types
+        .iter()
+        .map(|r| r.type_id.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let max_rel_name_len = summary
+        .relationship_types
+        .iter()
+        .map(|r| r.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let max_sources_len = summary
+        .relationship_types
+        .iter()
+        .map(|r| r.allowed_source_types.join(", ").len())
+        .max()
+        .unwrap_or(7)
+        .max(7);
+
+    println!(
+        "  {:t_width$}  {:n_width$}  {:s_width$}  TARGETS",
+        "TYPE",
+        "NAME",
+        "SOURCES",
+        t_width = max_rel_type_len,
+        n_width = max_rel_name_len,
+        s_width = max_sources_len
+    );
+    for rel in &summary.relationship_types {
+        let sources_str = rel.allowed_source_types.join(", ");
+        let targets_str = rel.allowed_target_types.join(", ");
+        println!(
+            "  {:t_width$}  {:n_width$}  {:s_width$}  {}",
+            rel.type_id,
+            rel.name,
+            sources_str,
+            targets_str,
+            t_width = max_rel_type_len,
+            n_width = max_rel_name_len,
+            s_width = max_sources_len
+        );
+    }
+}
+
+fn print_ontology_summary_compact(summary: &OntologySummary) {
+    println!("ELEMENT TYPES");
+    for elem in &summary.element_types {
+        let short = elem.type_id.rsplit('/').next().unwrap_or(&elem.type_id);
+        println!("  {short}");
+    }
+    println!();
+
+    println!("RELATIONSHIP TYPES");
+    let max_rel_short_len = summary
+        .relationship_types
+        .iter()
+        .map(|r| r.type_id.rsplit('/').next().unwrap_or(&r.type_id).len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let max_sources_short_len = summary
+        .relationship_types
+        .iter()
+        .map(|r| {
+            r.allowed_source_types
+                .iter()
+                .map(|s| s.rsplit('/').next().unwrap_or(s))
+                .collect::<Vec<_>>()
+                .join(", ")
+                .len()
+        })
+        .max()
+        .unwrap_or(7)
+        .max(7);
+
+    println!(
+        "  {:t_width$}  {:s_width$}  TARGETS",
+        "TYPE",
+        "SOURCES",
+        t_width = max_rel_short_len,
+        s_width = max_sources_short_len
+    );
+    for rel in &summary.relationship_types {
+        let rel_short = rel.type_id.rsplit('/').next().unwrap_or(&rel.type_id);
+        let sources_short = rel
+            .allowed_source_types
+            .iter()
+            .map(|s| s.rsplit('/').next().unwrap_or(s))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let targets_short = rel
+            .allowed_target_types
+            .iter()
+            .map(|t| t.rsplit('/').next().unwrap_or(t))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        println!(
+            "  {:t_width$}  {:s_width$}  {}",
+            rel_short,
+            sources_short,
+            targets_short,
+            t_width = max_rel_short_len,
+            s_width = max_sources_short_len
+        );
+    }
+}
+
+fn print_ontology_type_view(view: &OntologyTypeView) {
+    match view {
+        OntologyTypeView::Element(elem) => {
+            println!("{}", elem.type_id);
+            println!();
+            println!("Kind:");
+            println!("  element");
+            println!();
+            println!("Name:");
+            println!("  {}", elem.name);
+            println!();
+            println!("Outgoing relationships:");
+            if elem.outgoing.is_empty() {
+                println!("  none");
+            } else {
+                let max_rel_id_len = elem
+                    .outgoing
+                    .iter()
+                    .map(|cap| cap.relationship_type_id.len())
+                    .max()
+                    .unwrap_or(0);
+                for cap in &elem.outgoing {
+                    println!(
+                        "  {:width$}   -> {}",
+                        cap.relationship_type_id,
+                        cap.counterpart_type_id,
+                        width = max_rel_id_len
+                    );
+                }
+            }
+            println!();
+            println!("Incoming relationships:");
+            if elem.incoming.is_empty() {
+                println!("  none");
+            } else {
+                let max_rel_id_len = elem
+                    .incoming
+                    .iter()
+                    .map(|cap| cap.relationship_type_id.len())
+                    .max()
+                    .unwrap_or(0);
+                for cap in &elem.incoming {
+                    println!(
+                        "  {:width$}   <- {}",
+                        cap.relationship_type_id,
+                        cap.counterpart_type_id,
+                        width = max_rel_id_len
+                    );
+                }
+            }
+        }
+        OntologyTypeView::Relationship(rel) => {
+            println!("{}", rel.type_id);
+            println!();
+            println!("Kind:");
+            println!("  relationship");
+            println!();
+            println!("Name:");
+            println!("  {}", rel.name);
+            println!();
+            println!("Sources:");
+            for src in &rel.allowed_source_types {
+                println!("  {src}");
+            }
+            println!();
+            println!("Targets:");
+            for tgt in &rel.allowed_target_types {
+                println!("  {tgt}");
+            }
+        }
+    }
+}
+
+fn print_ontology_type_view_compact(view: &OntologyTypeView) {
+    fn short(s: &str) -> &str {
+        s.rsplit('/').next().unwrap_or(s)
+    }
+
+    match view {
+        OntologyTypeView::Element(elem) => {
+            println!("{}", short(&elem.type_id));
+            println!("kind: element");
+            println!();
+            println!("outgoing:");
+            if elem.outgoing.is_empty() {
+                println!("  none");
+            } else {
+                for cap in &elem.outgoing {
+                    println!(
+                        "  {} -> {}",
+                        short(&cap.relationship_type_id),
+                        short(&cap.counterpart_type_id)
+                    );
+                }
+            }
+            println!();
+            println!("incoming:");
+            if elem.incoming.is_empty() {
+                println!("  none");
+            } else {
+                for cap in &elem.incoming {
+                    println!(
+                        "  {} <- {}",
+                        short(&cap.relationship_type_id),
+                        short(&cap.counterpart_type_id)
+                    );
+                }
+            }
+        }
+        OntologyTypeView::Relationship(rel) => {
+            println!("{}", short(&rel.type_id));
+            println!("kind: relationship");
+            println!();
+            println!("sources:");
+            for src in &rel.allowed_source_types {
+                println!("  {}", short(src));
+            }
+            println!();
+            println!("targets:");
+            for tgt in &rel.allowed_target_types {
+                println!("  {}", short(tgt));
+            }
         }
     }
 }

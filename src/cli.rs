@@ -198,6 +198,25 @@ pub enum Command {
         #[command(subcommand)]
         command: ChangeCommands,
     },
+
+    /// Discover active ontology element types, relationship types, and endpoint capabilities
+    Ontology {
+        /// Display compact shortened type IDs without human-readable names
+        #[arg(long, global = true)]
+        compact: bool,
+
+        #[command(subcommand)]
+        command: Option<OntologyCommands>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum OntologyCommands {
+    /// Inspect detailed capabilities and endpoint admissibility for a type
+    Show {
+        /// Type ID (e.g. `kat.core/requirement` or `requirement`)
+        type_id: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
