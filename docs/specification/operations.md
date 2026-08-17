@@ -294,10 +294,27 @@ Impact Analysis categorizes impacted elements into three distinct buckets:
 
 #### Query Scope Bounding & Representation
 
-Both `kat trace` and `kat impact` support optional scope bounding at the Query Engine level:
+Both `kat trace` and `kat impact` operate exclusively as read-only semantic queries over the accepted `SemanticState` ($S_n$). An open local draft session does not alter query results.
 
-* **Depth Bounding (`--max-depth <N>`)**: Bounds graph traversal at $N$ relationship hops ($N \ge 1$). Expansion halts when path length reaches $N$ hops. Specifying `--max-depth 0` returns an `InvalidMaxDepth(0)` error with exit status 1.
-* **Trace Representation (`kat trace`)**: Defaults to a collapsed, deduplicated ASCII tree view (`to_tree()`) showing hierarchical origin branches. Supplying `--paths` emits explicit exhaustive path enumerations.
+1. **Normative Depth Semantics (`max_depth: Option<usize>`)**:
+   - **Depth 0**: The queried root element.
+   - **Depth 1**: Elements reached after 1 relationship traversal.
+   - **Depth $N$**: Elements reached after $N$ relationship traversals.
+   - When `max_depth = Some(N)` ($N \ge 1$), nodes at depth $N$ are included in the evaluated result graph, but their outgoing traversal expansion is not performed.
+   - Traversal depth bounds in KAT are positive hop counts. Specifying `--max-depth 0` is invalid and returns a `QueryError::InvalidMaxDepth(0)` error with exit status 1.
+
+2. **Cycle Prevention Policy**:
+   - Graph exploration uses **path-local cycle prevention**: traversal does not revisit a relationship identity (`RelationshipId`) again within the same path branch.
+   - This guarantees finite traversal even on cyclic graphs without `max_depth`, while permitting an element reachable via multiple distinct parent paths to appear under each relevant branch (e.g. $A \to B \to D$ and $A \to C \to D$).
+
+3. **Trace Presentation Modes (`kat trace`)**:
+   - **Default Collapsed Tree**: Converts discrete origin trace paths into a hierarchical projection that avoids repeating identical path prefixes (`TraceResult::to_tree()`). Leading common path prefixes are structurally merged into shared visual branches, while nodes reached through different parent paths appear under each relevant branch.
+   - **Path Enumeration (`--paths`)**: Enumerates every discrete path returned by the evaluated Trace query. When `--max-depth <N>` is supplied, `--paths` enumerates all paths present in the $N$-hop bounded query result graph.
+   - **Compact Mode (`--compact`)**: Renders concise arrow-joined path chains.
+
+4. **Trace vs Impact Representation Asymmetry**:
+   - `kat trace` emphasizes provenance paths and path visualization (`--paths` and tree view).
+   - `kat impact` emphasizes affected-result category partitioning (`Directly Changed Elements`, `Semantically Affected Elements`, `Affected Artifacts`) with supporting propagation step details. `--paths` is intentionally omitted from `kat impact` to preserve focus on category status reporting.
 
 ### History
 

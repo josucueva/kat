@@ -23,18 +23,27 @@ Phase 18 is **strictly read-side**: no repository mutation, no canonical format 
 
 ### 1.1 Query Engine Scope vs Presentation Rendering
 
+- **Accepted State Read Isolation**:
+  - `Trace` and `Impact` operate exclusively over the accepted `SemanticState` ($S_n$). An open local draft session does not alter query results.
+
 - **Query Engine Scope (`max_depth: Option<usize>`)**:
   - Operating at the Query Engine layer in `src/repository/query.rs`.
-  - When `max_depth = Some(N)`, traversal expansion halts after traversing $N$ relationship hops from the root element.
-  - Traversal depth $N = 0$ is invalid; returns `QueryError::InvalidMaxDepth(0)`.
-  - Halting expansion at depth $N$ returns a bounded result graph up to depth $N$, avoiding unnecessary graph expansion.
+  - **Depth 0**: Queried root element.
+  - **Depth 1**: Elements reached after 1 relationship traversal.
+  - **Depth $N$**: Elements reached after $N$ relationship traversals.
+  - When `max_depth = Some(N)` ($N \ge 1$), nodes at depth $N$ are included in the evaluated result graph, but their outgoing traversal expansion is not performed.
+  - Traversal depth bounds in KAT are positive hop counts. Specifying `--max-depth 0` returns `QueryError::InvalidMaxDepth(0)`.
+
+- **Path-Local Cycle Prevention**:
+  - Graph traversal checks `visited_rels` per path branch to prevent cyclic looping (e.g. $A \to B \to A \to B$), while permitting elements reachable via multiple distinct parent paths (e.g. $A \to B \to D$ and $A \to C \to D$) to be explored under each branch.
 
 - **Result Graph vs Rendering Separation**:
   - `trace_origin` and `analyze_impact` return structured query result objects (`TraceResult`, `ImpactResult`).
   - Renderers process the result objects into:
-    - Default collapsed tree view (deduplicated hierarchy tree).
-    - `--paths` exhaustive view (enumerated linear paths for `kat trace`).
+    - Default collapsed path tree (`to_tree()`) with shared common path prefixes.
+    - `--paths` explicit discrete path enumeration (all paths present in the $N$-hop evaluated query result graph).
     - Compact table/single-line view (`--compact`).
+  - **Trace vs Impact Asymmetry**: `kat trace` supports `--paths` for discrete provenance path enumeration. `kat impact` focuses on category partitions (`directly_changed`, `semantically_affected`, `affected_artifacts`) with supporting propagation context; `--paths` is intentionally omitted from `kat impact`.
 
 ### 1.2 CLI Grammar & Flag Ownership
 
