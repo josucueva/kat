@@ -367,7 +367,7 @@ Evaluates mechanical consistency rules, natural-language constraint verification
 
 **Result:**
 * **Mechanical Violations**: Structural, ontology, or state invariant failures evaluated directly by KAT's engine (causes exit code 1 if non-empty).
-* **Mechanically Unverified Constraints**: Active natural-language `Constraint` elements for which KAT has no executable code evaluator (informational, exit code 0).
+* **Mechanically Unverified Constraints**: In v0.3, active natural-language `Constraint` elements without an executable KAT evaluator are classified as mechanically unverified (informational, exit code 0). Validation evidence does not change that classification.
 * **Validation Evidence**: Recorded `kat.core/validation` elements linked to target subjects via `kat.core/validates` relationships ($V \xrightarrow{\text{validates}} S$).
 * **Evidence Coverage**: Category statistics (`total`, `evidence_backed`, `uncovered`) across active knowledge elements (`Constraint`, `Requirement`, `Implementation`) and a list of uncovered elements.
 
@@ -376,6 +376,13 @@ Evaluates mechanical consistency rules, natural-language constraint verification
 $$ \text{evidence-backed} \neq \text{mechanically verified} $$
 
 Attaching validation evidence to a `Constraint` records operational evidence coverage, but does **not** alter KAT's classification that the constraint remains mechanically unverified by KAT's engine.
+
+#### Evidence Coverage Selection Rules
+
+A subject element $S$ is considered evidence-backed by a validation element $V$ if and only if all of the following hold in accepted state $S_n$:
+1. $V$ is selected in accepted $S_n$ and has lifecycle `Active` (deprecated `Validation` elements do not count toward current evidence coverage).
+2. Relationship $R$ is selected in accepted $S_n$ with type `kat.core/validates`, source $V$, and target $S$.
+3. Subject $S$ is selected in accepted $S_n$ and has lifecycle `Active` (coverage metrics are evaluated across active knowledge elements; `Validation` elements themselves are excluded as coverage subjects).
 
 Validation reports the state of the accepted model ($S_n$). An open local draft session does not alter validation output. It does not silently modify knowledge.
 
