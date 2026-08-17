@@ -2888,8 +2888,8 @@ fn phase14_acceptance_cli_flow_end_to_end() {
     assert!(status_out.contains("Draft Change Transaction"));
     assert!(status_out.contains("status:       open"));
     assert!(status_out.contains("operations:   2"));
-    assert!(status_out.contains("1. create element"));
-    assert!(status_out.contains("2. create element"));
+    assert!(status_out.contains("1. CreateElement") || status_out.contains("1. create element"));
+    assert!(status_out.contains("2. CreateElement") || status_out.contains("2. create element"));
 
     let (status_compact, _, ok_c) = run_kat(root, &["change", "status", "--compact"]);
     assert!(ok_c);

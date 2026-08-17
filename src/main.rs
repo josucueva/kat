@@ -42,7 +42,8 @@ use kat::repository::query::{
     ArtifactAccountabilityReport, ArtifactAccountabilityStatus, ElementView, HistoryEntry,
     ImpactResult, ListFilter, QueryError, RepositoryStatus, TraceResult, TraceTreeNode,
     TraversalDirection, analyze_artifact_accountability, analyze_impact, history,
-    history_entry_touches_element, list_elements, repository_status, show_element, trace_origin,
+    history_entry_touches_element, inspect_draft_session, list_elements, repository_status,
+    show_element, trace_origin,
 };
 use kat::repository::resolve::{
     ResolveError, resolve_element_id, resolve_element_in_state, resolve_relationship_id,
@@ -55,8 +56,7 @@ use kat::repository::change::{
     stage_operation_into_session,
 };
 use kat::repository::session::{
-    DraftSessionError, abort_draft_session, begin_draft_session, has_draft_session,
-    read_draft_session,
+    abort_draft_session, begin_draft_session, has_draft_session, read_draft_session,
 };
 
 pub mod cli;
@@ -2883,9 +2883,9 @@ fn cmd_change_status(compact: bool) -> ExitCode {
         }
     };
 
-    let session = match read_draft_session(repository.root_dir()) {
-        Ok(s) => s,
-        Err(DraftSessionError::NotFound) => {
+    let view = match inspect_draft_session(&repository) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
             if compact {
                 println!("draft status: none");
             } else {
@@ -2902,108 +2902,82 @@ fn cmd_change_status(compact: bool) -> ExitCode {
     if compact {
         println!(
             "draft status: {} / base_state: {} / operations: {}",
-            session.status.as_str(),
-            short_object_id(&session.base_state_id),
-            session.operations.len()
+            view.status,
+            short_object_id(&view.base_state_id),
+            view.staged_operations.len()
         );
         return ExitCode::SUCCESS;
     }
 
     println!("Draft Change Transaction");
-    println!("  status:       {}", session.status.as_str());
-    println!(
-        "  base_state:   {}",
-        short_object_id(&session.base_state_id)
-    );
-    if let Some(c) = session.base_change_id {
-        println!("  base_change:  {}", short_object_id(&c));
+    println!("  status:       {}", view.status);
+    println!("  base_state:   {}", short_object_id(&view.base_state_id));
+    if let Some(ref c) = view.base_change_id {
+        println!("  base_change:  {}", short_object_id(c));
     }
-    println!("  created_at:   {}", session.created_at);
-    if let Some(desc) = &session.description {
+    println!("  created_at:   {}", view.created_at);
+    if let Some(ref desc) = view.description {
         println!("  description:  {desc}");
     }
-    println!("  operations:   {}", session.operations.len());
+    println!("  operations:   {}", view.staged_operations.len());
 
     println!();
-    println!("Staged Operations");
-    if session.operations.is_empty() {
+    println!("STAGED OPERATIONS ({})", view.staged_operations.len());
+    if view.staged_operations.is_empty() {
         println!("  (none)");
     } else {
-        for (idx, op) in session.operations.iter().enumerate() {
-            let num = idx + 1;
-            match op {
-                Operation::CreateElement { new_version } => {
-                    println!(
-                        "  {num}. create element (version: {})",
-                        short_object_id(new_version)
-                    );
-                }
-                Operation::UpdateElement {
-                    element_id,
-                    new_version,
-                    ..
-                } => {
-                    let short_id = &element_id.to_string()[..8];
-                    println!(
-                        "  {num}. update element {short_id} (version: {})",
-                        short_object_id(new_version)
-                    );
-                }
-                Operation::DeprecateElement {
-                    element_id,
-                    new_version,
-                    ..
-                } => {
-                    let short_id = &element_id.to_string()[..8];
-                    println!(
-                        "  {num}. deprecate element {short_id} (version: {})",
-                        short_object_id(new_version)
-                    );
-                }
-                Operation::Supersede {
-                    existing_element,
-                    replacement_element,
-                    ..
-                } => {
-                    let ex_short = &existing_element.to_string()[..8];
-                    let rep_short = &replacement_element.to_string()[..8];
-                    println!("  {num}. supersede element {ex_short} -> {rep_short}");
-                }
-                Operation::Link {
-                    new_relationship_version,
-                } => {
-                    println!(
-                        "  {num}. link (relationship version: {})",
-                        short_object_id(new_relationship_version)
-                    );
-                }
-                Operation::Unlink {
-                    relationship_id, ..
-                } => {
-                    let short_id = &relationship_id.to_string()[..8];
-                    println!("  {num}. unlink relationship {short_id}");
-                }
-                Operation::AccountArtifact {
-                    artifact_id,
-                    reconciliations,
-                } => {
-                    let short_id = &artifact_id.to_string()[..8];
-                    println!(
-                        "  {num}. account artifact {short_id} (reconciliations: {})",
-                        reconciliations.len()
-                    );
-                }
-            }
+        for op in &view.staged_operations {
+            println!("  {}. {:<24} {}", op.index, op.operation_kind, op.summary);
         }
     }
 
     println!();
-    println!("Candidate Summary");
-    println!("  elements:      {}", session.working_state.elements.len());
+    println!("CANDIDATE EFFECT");
+    println!("  elements:      {}", view.candidate_effect.total_elements);
+    println!(
+        "                 (+{} created, {} updated, {} deprecated, {} superseded)",
+        view.candidate_effect.elements_created,
+        view.candidate_effect.elements_updated,
+        view.candidate_effect.elements_deprecated,
+        view.candidate_effect.elements_superseded
+    );
     println!(
         "  relationships: {}",
-        session.working_state.relationships.len()
+        view.candidate_effect.total_relationships
     );
+    println!(
+        "                 (+{} created, {} unlinked)",
+        view.candidate_effect.relationships_created, view.candidate_effect.relationships_unlinked
+    );
+
+    println!();
+    println!("ARTIFACT ACCOUNTABILITY PREVIEW");
+    println!("  total:      {}", view.accountability_total_artifacts);
+    println!(
+        "  stale:      {} expected to become stale upon commit",
+        view.accountability_stale_artifacts
+    );
+    println!(
+        "  reconciled: {} in draft",
+        view.accountability_reconciled_in_draft
+    );
+
+    println!();
+    println!("CANDIDATE VALIDATION");
+    if view.candidate_validation.violations.is_empty() {
+        println!(
+            "  status: Valid (0 violations, {} unverified constraints)",
+            view.candidate_validation.constraint_details.len()
+        );
+    } else {
+        println!(
+            "  status: Invalid ({} mechanical violations)",
+            view.candidate_validation.violations.len()
+        );
+        for v in &view.candidate_validation.violations {
+            println!("  - [{:?}] {}", v.kind, v.message);
+        }
+    }
 
     ExitCode::SUCCESS
 }

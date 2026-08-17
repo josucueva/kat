@@ -1815,6 +1815,8 @@ pub struct StagedOperationDetail {
 /// Delta metrics for candidate working state compared to base accepted state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateEffectSummary {
+    pub total_elements: usize,
+    pub total_relationships: usize,
     pub elements_created: usize,
     pub elements_updated: usize,
     pub elements_deprecated: usize,
@@ -1937,6 +1939,8 @@ pub fn inspect_draft_session(
 
     let mut staged_operations = Vec::new();
     let mut effect = CandidateEffectSummary {
+        total_elements: session.working_state.elements.len(),
+        total_relationships: session.working_state.relationships.len(),
         elements_created: 0,
         elements_updated: 0,
         elements_deprecated: 0,
