@@ -1,0 +1,23 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ontology 1  "ontology " 
+.SH NAME
+ontology \- Discover active ontology element types, relationship types, and endpoint capabilities
+.SH SYNOPSIS
+\fBontology\fR [\fB\-\-compact\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIsubcommands\fR]
+.SH DESCRIPTION
+Discover active ontology element types, relationship types, and endpoint capabilities
+.SH OPTIONS
+.TP
+\fB\-\-compact\fR
+Display compact shortened type IDs without human\-readable names
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+ontology\-show(1)
+Inspect detailed capabilities and endpoint admissibility for a type
+.TP
+ontology\-help(1)
+Print this message or the help of the given subcommand(s)

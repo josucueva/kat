@@ -4,10 +4,16 @@
 .SH NAME
 trace \- Trace a knowledge element back to its origin
 .SH SYNOPSIS
-\fBtrace\fR [\fB\-\-compact\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_ID\fR> 
+\fBtrace\fR [\fB\-\-paths\fR] [\fB\-\-max\-depth\fR] [\fB\-\-compact\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_ID\fR> 
 .SH DESCRIPTION
 Trace a knowledge element back to its origin
 .SH OPTIONS
+.TP
+\fB\-\-paths\fR
+Display explicit exhaustive path list instead of collapsed tree hierarchy
+.TP
+\fB\-\-max\-depth\fR \fI<MAX_DEPTH>\fR
+Limit traversal depth to N relationship hops
 .TP
 \fB\-\-compact\fR
 Display compact arrow\-joined path rendering

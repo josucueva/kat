@@ -131,6 +131,8 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (trace)
 _arguments "${_arguments_options[@]}" : \
+'--max-depth=[Limit traversal depth to N relationship hops]:MAX_DEPTH:_default' \
+'--paths[Display explicit exhaustive path list instead of collapsed tree hierarchy]' \
 '--compact[Display compact arrow-joined path rendering]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -139,6 +141,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (impact)
 _arguments "${_arguments_options[@]}" : \
+'--max-depth=[Limit impact propagation depth to N relationship hops]:MAX_DEPTH:_default' \
 '--compact[Display compact flat table layout]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -147,6 +150,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (validate)
 _arguments "${_arguments_options[@]}" : \
+'--coverage[Focus on validation evidence coverage reporting across knowledge categories]' \
 '--compact[Display compact single-line counts summary]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -154,9 +158,11 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (artifacts)
 _arguments "${_arguments_options[@]}" : \
+'--stale[Filter accountability report to display only STALE artifacts]' \
 '--compact[Display compact status table layout]' \
 '-h[Print help]' \
 '--help[Print help]' \
+'::artifact_id -- Optional artifact element ID (UUID or prefix) for detailed inspection:_default' \
 && ret=0
 ;;
 (change)
@@ -224,6 +230,57 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (abort)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(ontology)
+_arguments "${_arguments_options[@]}" : \
+'--compact[Display compact shortened type IDs without human-readable names]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_kat__subcmd__ontology_commands" \
+"*::: :->ontology" \
+&& ret=0
+
+    case $state in
+    (ontology)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-ontology-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+'--compact[Display compact shortened type IDs without human-readable names]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':type_id -- Type ID (e.g. `kat.core/requirement` or `requirement`):_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_kat__subcmd__ontology__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-ontology-help-command-$line[1]:"
+        case $line[1] in
+            (show)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -347,6 +404,26 @@ _arguments "${_arguments_options[@]}" : \
     ;;
 esac
 ;;
+(ontology)
+_arguments "${_arguments_options[@]}" : \
+":: :_kat__subcmd__help__subcmd__ontology_commands" \
+"*::: :->ontology" \
+&& ret=0
+
+    case $state in
+    (ontology)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-help-ontology-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -380,6 +457,7 @@ _kat_commands() {
 'validate:Run mechanical consistency validation across the current accepted state' \
 'artifacts:Evaluate artifact accountability baselines against accepted state' \
 'change:Manage multi-operation change transactions' \
+'ontology:Discover active ontology element types, relationship types, and endpoint capabilities' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'kat commands' commands "$@"
@@ -491,6 +569,7 @@ _kat__subcmd__help_commands() {
 'validate:Run mechanical consistency validation across the current accepted state' \
 'artifacts:Evaluate artifact accountability baselines against accepted state' \
 'change:Manage multi-operation change transactions' \
+'ontology:Discover active ontology element types, relationship types, and endpoint capabilities' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'kat help commands' commands "$@"
@@ -575,6 +654,18 @@ _kat__subcmd__help__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'kat help list commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__help__subcmd__ontology_commands] )) ||
+_kat__subcmd__help__subcmd__ontology_commands() {
+    local commands; commands=(
+'show:Inspect detailed capabilities and endpoint admissibility for a type' \
+    )
+    _describe -t commands 'kat help ontology commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__ontology__subcmd__show_commands] )) ||
+_kat__subcmd__help__subcmd__ontology__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help ontology show commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__help__subcmd__show_commands] )) ||
 _kat__subcmd__help__subcmd__show_commands() {
     local commands; commands=()
@@ -634,6 +725,37 @@ _kat__subcmd__link_commands() {
 _kat__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'kat list commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__ontology_commands] )) ||
+_kat__subcmd__ontology_commands() {
+    local commands; commands=(
+'show:Inspect detailed capabilities and endpoint admissibility for a type' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'kat ontology commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__ontology__subcmd__help_commands] )) ||
+_kat__subcmd__ontology__subcmd__help_commands() {
+    local commands; commands=(
+'show:Inspect detailed capabilities and endpoint admissibility for a type' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'kat ontology help commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__ontology__subcmd__help__subcmd__help_commands] )) ||
+_kat__subcmd__ontology__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat ontology help help commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__ontology__subcmd__help__subcmd__show_commands] )) ||
+_kat__subcmd__ontology__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat ontology help show commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__ontology__subcmd__show_commands] )) ||
+_kat__subcmd__ontology__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat ontology show commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__show_commands] )) ||
 _kat__subcmd__show_commands() {

@@ -3858,3 +3858,78 @@ fn phase21_acceptance_cli_flow_end_to_end() {
     assert!(ok_art2);
     assert!(out_art2.contains("current"));
 }
+
+#[test]
+fn v031_pre_commit_post_commit_accountability_equivalence() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+
+    let (c1_out, _, _) = run_kat(root, &["create", "requirement", "--title", "Req"]);
+    let e_req = id_line(&c1_out, "element_id");
+    let (c2_out, _, _) = run_kat(root, &["create", "implementation", "--title", "Impl"]);
+    let e_imp = id_line(&c2_out, "element_id");
+    let (c3_out, _, _) = run_kat(root, &["create", "artifact", "--title", "src/auth.js"]);
+    let e_art = id_line(&c3_out, "element_id");
+
+    run_kat(root, &["link", "implements", e_imp, e_req]);
+    run_kat(root, &["link", "represents", e_art, e_imp]);
+
+    // 1. Begin draft session
+    run_kat(
+        root,
+        &["change", "begin", "--description", "Update implementation"],
+    );
+    run_kat(root, &["update", e_imp, "--title", "Impl v2"]);
+
+    // 2. Capture pre-commit candidate accountability preview via kat change status
+    let (out_status_pre, _, ok_status) = run_kat(root, &["change", "status"]);
+    assert!(ok_status);
+    assert!(out_status_pre.contains("ARTIFACT ACCOUNTABILITY PREVIEW"));
+    assert!(out_status_pre.contains("stale:      1"));
+
+    // 3. Commit draft transaction
+    let (out_commit, _, ok_commit) = run_kat(root, &["change", "commit"]);
+    assert!(ok_commit, "commit failed: {out_commit}");
+
+    // 4. Capture post-commit kat artifacts --stale
+    let (out_artifacts_post, _, ok_art_post) = run_kat(root, &["artifacts", "--stale"]);
+    assert!(
+        !ok_art_post,
+        "kat artifacts --stale should exit with failure when stale artifacts exist"
+    );
+    assert!(out_artifacts_post.contains("STALE ARTIFACTS (1)"));
+
+    // Verify equivalence invariant: preview stale count == post-commit stale count (1)
+    assert!(out_artifacts_post.contains("src/auth.js"));
+}
+
+#[test]
+fn v031_artifacts_compact_suppresses_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+
+    let (c1_out, _, _) = run_kat(root, &["create", "requirement", "--title", "Req"]);
+    let e_req = id_line(&c1_out, "element_id");
+    let (c2_out, _, _) = run_kat(root, &["create", "implementation", "--title", "Impl"]);
+    let e_imp = id_line(&c2_out, "element_id");
+    let (c3_out, _, _) = run_kat(root, &["create", "artifact", "--title", "src/auth.js"]);
+    let e_art = id_line(&c3_out, "element_id");
+
+    run_kat(root, &["link", "implements", e_imp, e_req]);
+    run_kat(root, &["link", "represents", e_art, e_imp]);
+
+    // Standard output contains explanatory note
+    let (out_std, _, ok_std) = run_kat(root, &["artifacts"]);
+    assert!(ok_std);
+    assert!(out_std.contains("Note: KAT accountability evaluates semantic target-version alignment; physical file contents are not verified."));
+    assert!(out_std.contains("Repository summary"));
+
+    // Compact output suppresses note and displays machine status table only
+    let (out_compact, _, ok_compact) = run_kat(root, &["artifacts", "--compact"]);
+    assert!(ok_compact);
+    assert!(out_compact.contains("STATUS       ARTIFACT"));
+    assert!(out_compact.contains("current      src/auth.js"));
+    assert!(!out_compact.contains("Note: KAT accountability evaluates"));
+}

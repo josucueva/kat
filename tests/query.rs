@@ -3170,3 +3170,245 @@ fn accountability_filtered_stale_only_and_target_id() {
     .unwrap();
     assert!(rep_stale.artifacts.is_empty());
 }
+
+#[test]
+fn accountability_filtered_preserves_repository_summary() {
+    use kat::domain::identity::{ChangeId, ElementId, RelationshipId};
+    use kat::domain::property::PropertyValue;
+    use kat::repository::change::{
+        CreateElementInput, LinkElementInput, UpdateElementInput, apply_create_element,
+        apply_link_element, apply_update_element, persist_prepared_change,
+        persist_prepared_link_change, persist_prepared_update_change, prepare_change,
+        prepare_change_revision, prepare_link_change_revision, prepare_update_change_revision,
+        publish_persisted_change, publish_persisted_link_change, publish_persisted_update_change,
+        validate_create_element_invariants, validate_create_element_ontology,
+        validate_link_element_invariants, validate_link_element_ontology,
+        validate_update_element_invariants, validate_update_element_ontology,
+    };
+    use uuid::Uuid;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    // Helper to create element
+    let create_elem = |type_id: &str, title: &str, num: u128| -> ElementId {
+        let repo = open_repository(root).unwrap();
+        let ctx = prepare_change(&repo).unwrap();
+        let el_id = ElementId::from_uuid(Uuid::from_u128(num));
+        let prep = validate_create_element_invariants(
+            validate_create_element_ontology(
+                apply_create_element(
+                    ctx,
+                    CreateElementInput {
+                        element_id: el_id,
+                        type_id: type_id.into(),
+                        properties: vec![("title".into(), PropertyValue::Text(title.into()))],
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let rev =
+            prepare_change_revision(prep, ChangeId::from_uuid(Uuid::from_u128(num + 1000)), None)
+                .unwrap();
+        let pers = persist_prepared_change(&repo, rev).unwrap();
+        publish_persisted_change(&repo, pers).unwrap();
+        el_id
+    };
+
+    let req = create_elem("kat.core/requirement", "Req 1", 5001);
+    let imp = create_elem("kat.core/implementation", "Impl 1", 5002);
+    let art1 = create_elem("kat.core/artifact", "src/a.js", 5003);
+    let art2 = create_elem("kat.core/artifact", "src/b.js", 5004);
+
+    let link_elems = |type_id: &str, src: ElementId, tgt: ElementId, num: u128| {
+        let repo = open_repository(root).unwrap();
+        let ctx = prepare_change(&repo).unwrap();
+        let rel_id = RelationshipId::from_uuid(Uuid::from_u128(num));
+        let prep = validate_link_element_invariants(
+            validate_link_element_ontology(
+                apply_link_element(
+                    &repo,
+                    ctx,
+                    LinkElementInput {
+                        relationship_id: rel_id,
+                        relationship_type_id: type_id.into(),
+                        source_element_id: src,
+                        target_element_id: tgt,
+                        properties: vec![],
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let rev = prepare_link_change_revision(
+            prep,
+            ChangeId::from_uuid(Uuid::from_u128(num + 1000)),
+            None,
+        )
+        .unwrap();
+        let pers = persist_prepared_link_change(&repo, rev).unwrap();
+        publish_persisted_link_change(&repo, pers).unwrap();
+    };
+
+    link_elems("kat.core/realizes", imp, req, 6001);
+    link_elems("kat.core/represents", art1, imp, 6002);
+    link_elems("kat.core/represents", art2, imp, 6003);
+
+    // Update imp -> art1 and art2 become stale
+    let repo_up = open_repository(root).unwrap();
+    let ctx_up = prepare_change(&repo_up).unwrap();
+    let imp_ver = kat::repository::query::show_element(&repo_up, imp)
+        .unwrap()
+        .version_id;
+    let prep_up = validate_update_element_invariants(
+        validate_update_element_ontology(
+            apply_update_element(
+                &repo_up,
+                ctx_up,
+                UpdateElementInput {
+                    element_id: imp,
+                    expected_version: imp_ver,
+                    properties: vec![("title".into(), PropertyValue::Text("Impl 1 v2".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_up =
+        prepare_update_change_revision(prep_up, ChangeId::from_uuid(Uuid::from_u128(7001)), None)
+            .unwrap();
+    let pers_up = persist_prepared_update_change(&repo_up, rev_up).unwrap();
+    publish_persisted_update_change(&repo_up, pers_up).unwrap();
+
+    let repo_read = open_repository(root).unwrap();
+    let rep_stale = kat::repository::analyze_artifact_accountability_filtered(
+        &repo_read,
+        kat::repository::ArtifactFilter {
+            stale_only: true,
+            target_artifact_id: None,
+        },
+    )
+    .unwrap();
+
+    // Filtered artifacts vector contains only 2 stale items
+    assert_eq!(rep_stale.artifacts.len(), 2);
+    // Repository summary totals remain repository-wide (total: 2, stale: 2)
+    assert_eq!(rep_stale.repository_summary.total, 2);
+    assert_eq!(rep_stale.repository_summary.stale, 2);
+    assert_eq!(rep_stale.repository_summary.current, 0);
+}
+
+#[test]
+fn validate_coverage_category_filtering_ontology_driven() {
+    use kat::domain::identity::{ChangeId, ElementId, RelationshipId};
+    use kat::domain::property::PropertyValue;
+    use kat::repository::change::{
+        CreateElementInput, LinkElementInput, apply_create_element, apply_link_element,
+        persist_prepared_change, persist_prepared_link_change, prepare_change,
+        prepare_change_revision, prepare_link_change_revision, publish_persisted_change,
+        publish_persisted_link_change, validate_create_element_invariants,
+        validate_create_element_ontology, validate_link_element_invariants,
+        validate_link_element_ontology,
+    };
+    use uuid::Uuid;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let create_elem = |type_id: &str, title: &str, num: u128| -> ElementId {
+        let repo = open_repository(root).unwrap();
+        let ctx = prepare_change(&repo).unwrap();
+        let el_id = ElementId::from_uuid(Uuid::from_u128(num));
+        let prep = validate_create_element_invariants(
+            validate_create_element_ontology(
+                apply_create_element(
+                    ctx,
+                    CreateElementInput {
+                        element_id: el_id,
+                        type_id: type_id.into(),
+                        properties: vec![("title".into(), PropertyValue::Text(title.into()))],
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let rev =
+            prepare_change_revision(prep, ChangeId::from_uuid(Uuid::from_u128(num + 1000)), None)
+                .unwrap();
+        let pers = persist_prepared_change(&repo, rev).unwrap();
+        publish_persisted_change(&repo, pers).unwrap();
+        el_id
+    };
+
+    let req = create_elem("kat.core/requirement", "Req", 8001);
+    let imp = create_elem("kat.core/implementation", "Impl", 8002);
+    let art = create_elem("kat.core/artifact", "src/app.js", 8003);
+    let _dec = create_elem("kat.core/design-decision", "Decision", 8004);
+
+    let link_elems = |type_id: &str, src: ElementId, tgt: ElementId, num: u128| {
+        let repo = open_repository(root).unwrap();
+        let ctx = prepare_change(&repo).unwrap();
+        let rel_id = RelationshipId::from_uuid(Uuid::from_u128(num));
+        let prep = validate_link_element_invariants(
+            validate_link_element_ontology(
+                apply_link_element(
+                    &repo,
+                    ctx,
+                    LinkElementInput {
+                        relationship_id: rel_id,
+                        relationship_type_id: type_id.into(),
+                        source_element_id: src,
+                        target_element_id: tgt,
+                        properties: vec![],
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let rev = prepare_link_change_revision(
+            prep,
+            ChangeId::from_uuid(Uuid::from_u128(num + 1000)),
+            None,
+        )
+        .unwrap();
+        let pers = persist_prepared_link_change(&repo, rev).unwrap();
+        publish_persisted_link_change(&repo, pers).unwrap();
+    };
+
+    link_elems("kat.core/realizes", imp, req, 9001);
+    link_elems("kat.core/represents", art, imp, 9002);
+
+    let repo_read = open_repository(root).unwrap();
+    let val_report = kat::repository::validation::validate_repository(&repo_read).unwrap();
+
+    // Only validatable categories (requirement, implementation) appear in coverage summaries
+    let cat_types: Vec<&str> = val_report
+        .category_summaries
+        .iter()
+        .map(|c| c.category_type.as_str())
+        .collect();
+    assert!(cat_types.contains(&"kat.core/requirement"));
+    assert!(cat_types.contains(&"kat.core/implementation"));
+    // Non-validatable categories (artifact, design-decision) are excluded
+    assert!(!cat_types.contains(&"kat.core/artifact"));
+    assert!(!cat_types.contains(&"kat.core/design-decision"));
+
+    // Uncovered elements list also excludes non-validatable types
+    for unc in &val_report.uncovered_elements {
+        assert_ne!(unc.type_id, "kat.core/artifact");
+        assert_ne!(unc.type_id, "kat.core/design-decision");
+    }
+}

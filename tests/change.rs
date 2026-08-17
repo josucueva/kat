@@ -5225,3 +5225,246 @@ fn inspect_draft_session_returns_none_when_clean_and_view_when_draft_open() {
     assert_eq!(view.candidate_effect.elements_created, 1);
     assert!(view.candidate_validation.violations.is_empty());
 }
+
+#[test]
+fn draft_candidate_accountability_preview_cases_a_b_c_d() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let create_elem = |type_id: &str, title: &str, num: u128| -> ElementId {
+        let repo = open_repository(root).unwrap();
+        let ctx = prepare_change(&repo).unwrap();
+        let el_id = ElementId::from_uuid(Uuid::from_u128(num));
+        let prep = validate_create_element_invariants(
+            validate_create_element_ontology(
+                apply_create_element(
+                    ctx,
+                    CreateElementInput {
+                        element_id: el_id,
+                        type_id: type_id.into(),
+                        properties: vec![("title".into(), PropertyValue::Text(title.into()))],
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let rev =
+            prepare_change_revision(prep, ChangeId::from_uuid(Uuid::from_u128(num + 1000)), None)
+                .unwrap();
+        let pers = persist_prepared_change(&repo, rev).unwrap();
+        publish_persisted_change(&repo, pers).unwrap();
+        el_id
+    };
+
+    let req = create_elem("kat.core/requirement", "Auth Endpoint", 9001);
+    let imp = create_elem("kat.core/implementation", "Auth Route", 9002);
+    let imp_unrelated = create_elem("kat.core/implementation", "Unrelated Store", 9003);
+    let art = create_elem("kat.core/artifact", "src/auth.js", 9004);
+
+    let link_elems = |type_id: &str, src: ElementId, tgt: ElementId, num: u128| {
+        let repo = open_repository(root).unwrap();
+        let ctx = prepare_change(&repo).unwrap();
+        let rel_id = RelationshipId::from_uuid(Uuid::from_u128(num));
+        let prep = validate_link_element_invariants(
+            validate_link_element_ontology(
+                apply_link_element(
+                    &repo,
+                    ctx,
+                    LinkElementInput {
+                        relationship_id: rel_id,
+                        relationship_type_id: type_id.into(),
+                        source_element_id: src,
+                        target_element_id: tgt,
+                        properties: vec![],
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let rev = prepare_link_change_revision(
+            prep,
+            ChangeId::from_uuid(Uuid::from_u128(num + 1000)),
+            None,
+        )
+        .unwrap();
+        let pers = persist_prepared_link_change(&repo, rev).unwrap();
+        publish_persisted_link_change(&repo, pers).unwrap();
+    };
+
+    link_elems("kat.core/realizes", imp, req, 9101);
+    link_elems("kat.core/represents", art, imp, 9102);
+
+    // Initial state: 1 CURRENT artifact
+    let repo_clean = open_repository(root).unwrap();
+    let acc_clean = kat::repository::analyze_artifact_accountability(&repo_clean).unwrap();
+    assert_eq!(acc_clean.repository_summary.current, 1);
+    assert_eq!(acc_clean.repository_summary.stale, 0);
+
+    // --- Case D: Update unrelated element -> Candidate remains CURRENT ---
+    let repo_d = open_repository(root).unwrap();
+    let mut session_d =
+        kat::repository::begin_draft_session(&repo_d, Some("Draft Session Case D".to_string()))
+            .unwrap();
+
+    let imp_unrelated_v1 = session_d
+        .working_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == imp_unrelated)
+        .unwrap()
+        .version;
+
+    kat::repository::stage_operation_into_session(
+        &repo_d,
+        &mut session_d,
+        kat::repository::StagedOperationInput::UpdateElement(kat::repository::UpdateElementInput {
+            element_id: imp_unrelated,
+            expected_version: imp_unrelated_v1,
+            properties: vec![(
+                "title".to_string(),
+                PropertyValue::Text("Unrelated Store v2".to_string()),
+            )],
+        }),
+    )
+    .unwrap();
+
+    let view_d = kat::repository::inspect_draft_session(&repo_d)
+        .unwrap()
+        .unwrap();
+    assert_eq!(view_d.accountability_total_artifacts, 1);
+    assert_eq!(view_d.accountability_stale_artifacts, 0);
+
+    kat::repository::abort_draft_session(root).unwrap();
+
+    // --- Case A: Update target element -> Candidate STALE ---
+    let repo_a = open_repository(root).unwrap();
+    let mut session_a =
+        kat::repository::begin_draft_session(&repo_a, Some("Draft Session Case A".to_string()))
+            .unwrap();
+
+    let imp_v1 = session_a
+        .working_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == imp)
+        .unwrap()
+        .version;
+
+    kat::repository::stage_operation_into_session(
+        &repo_a,
+        &mut session_a,
+        kat::repository::StagedOperationInput::UpdateElement(kat::repository::UpdateElementInput {
+            element_id: imp,
+            expected_version: imp_v1,
+            properties: vec![(
+                "title".to_string(),
+                PropertyValue::Text("Auth Route v2".to_string()),
+            )],
+        }),
+    )
+    .unwrap();
+
+    let view_a = kat::repository::inspect_draft_session(&repo_a)
+        .unwrap()
+        .unwrap();
+    assert_eq!(view_a.accountability_total_artifacts, 1);
+    assert_eq!(view_a.accountability_stale_artifacts, 1);
+
+    // --- Case B: AccountArtifact after UpdateElement -> Candidate CURRENT ---
+    kat::repository::stage_operation_into_session(
+        &repo_a,
+        &mut session_a,
+        kat::repository::StagedOperationInput::AccountArtifact(
+            kat::repository::AccountArtifactInput { artifact_id: art },
+        ),
+    )
+    .unwrap();
+
+    let view_b = kat::repository::inspect_draft_session(&repo_a)
+        .unwrap()
+        .unwrap();
+    assert_eq!(view_b.accountability_total_artifacts, 1);
+    assert_eq!(view_b.accountability_stale_artifacts, 0);
+    assert_eq!(view_b.accountability_reconciled_in_draft, 1);
+
+    kat::repository::abort_draft_session(root).unwrap();
+
+    // Publish an update to imp in accepted state (v1 -> v2) so art is STALE in base accepted state
+    let repo_c_prep = open_repository(root).unwrap();
+    let ctx_up = prepare_change(&repo_c_prep).unwrap();
+    let imp_ver = kat::repository::query::show_element(&repo_c_prep, imp)
+        .unwrap()
+        .version_id;
+    let prep_up = validate_update_element_invariants(
+        validate_update_element_ontology(
+            apply_update_element(
+                &repo_c_prep,
+                ctx_up,
+                UpdateElementInput {
+                    element_id: imp,
+                    expected_version: imp_ver,
+                    properties: vec![("title".into(), PropertyValue::Text("Auth Route v2".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_up =
+        prepare_update_change_revision(prep_up, ChangeId::from_uuid(Uuid::from_u128(9901)), None)
+            .unwrap();
+    let pers_up = persist_prepared_update_change(&repo_c_prep, rev_up).unwrap();
+    publish_persisted_update_change(&repo_c_prep, pers_up).unwrap();
+
+    // --- Case C: AccountArtifact then UpdateElement target -> Candidate STALE ---
+    let repo_c = open_repository(root).unwrap();
+    let mut session_c =
+        kat::repository::begin_draft_session(&repo_c, Some("Draft Session Case C".to_string()))
+            .unwrap();
+
+    // Account artifact first (reconciles baseline from v1 -> v2 in draft)
+    kat::repository::stage_operation_into_session(
+        &repo_c,
+        &mut session_c,
+        kat::repository::StagedOperationInput::AccountArtifact(
+            kat::repository::AccountArtifactInput { artifact_id: art },
+        ),
+    )
+    .unwrap();
+
+    // Update target element after AccountArtifact (v2 -> v3 in draft)
+    let imp_v2_c = session_c
+        .working_state
+        .elements
+        .iter()
+        .find(|e| e.element_id == imp)
+        .unwrap()
+        .version;
+
+    kat::repository::stage_operation_into_session(
+        &repo_c,
+        &mut session_c,
+        kat::repository::StagedOperationInput::UpdateElement(kat::repository::UpdateElementInput {
+            element_id: imp,
+            expected_version: imp_v2_c,
+            properties: vec![(
+                "title".to_string(),
+                PropertyValue::Text("Auth Route v3".to_string()),
+            )],
+        }),
+    )
+    .unwrap();
+
+    let view_c = kat::repository::inspect_draft_session(&repo_c)
+        .unwrap()
+        .unwrap();
+    assert_eq!(view_c.accountability_stale_artifacts, 1);
+
+    kat::repository::abort_draft_session(root).unwrap();
+}

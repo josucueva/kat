@@ -276,11 +276,22 @@ pub struct ArtifactAccountability {
     pub baselines: Vec<ArtifactBaseline>,
 }
 
+/// Repository-wide summary totals for artifact accountability.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ArtifactAccountabilitySummary {
+    pub total: usize,
+    pub current: usize,
+    pub stale: usize,
+    pub unaccounted: usize,
+}
+
 /// Comprehensive report produced by `analyze_artifact_accountability`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactAccountabilityReport {
-    /// Records for all active Artifact elements in the accepted state.
+    /// Records for active Artifact elements matching query selection.
     pub artifacts: Vec<ArtifactAccountability>,
+    /// Repository-wide totals (unaffected by filtering).
+    pub repository_summary: ArtifactAccountabilitySummary,
 }
 
 /// Error produced by read-side queries.
@@ -1338,8 +1349,28 @@ pub fn analyze_artifact_accountability(
         });
     }
 
+    let mut total_current = 0;
+    let mut total_stale = 0;
+    let mut total_unaccounted = 0;
+
+    for a in &artifact_records {
+        match a.status {
+            ArtifactAccountabilityStatus::Current => total_current += 1,
+            ArtifactAccountabilityStatus::Stale => total_stale += 1,
+            ArtifactAccountabilityStatus::Unaccounted => total_unaccounted += 1,
+        }
+    }
+
+    let repository_summary = ArtifactAccountabilitySummary {
+        total: artifact_records.len(),
+        current: total_current,
+        stale: total_stale,
+        unaccounted: total_unaccounted,
+    };
+
     Ok(ArtifactAccountabilityReport {
         artifacts: artifact_records,
+        repository_summary,
     })
 }
 
@@ -1358,6 +1389,7 @@ pub fn analyze_artifact_accountability_filtered(
     filter: ArtifactFilter,
 ) -> Result<ArtifactAccountabilityReport, QueryError> {
     let full_report = analyze_artifact_accountability(repository)?;
+    let repository_summary = full_report.repository_summary;
 
     let filtered_artifacts = full_report
         .artifacts
@@ -1377,6 +1409,7 @@ pub fn analyze_artifact_accountability_filtered(
 
     Ok(ArtifactAccountabilityReport {
         artifacts: filtered_artifacts,
+        repository_summary,
     })
 }
 
@@ -2111,20 +2144,7 @@ pub fn inspect_draft_session(
         &session.staged_relationship_versions,
     )?;
 
-    let acc_report = analyze_artifact_accountability(repository)?;
-    let mut working_total_artifacts = 0;
-    for entry in &session.working_state.elements {
-        let (_, type_id, _) = get_element_version_info(store, &session, entry.version);
-        let short_type = type_id.rsplit('/').next().unwrap_or(&type_id);
-        if short_type == "artifact" {
-            working_total_artifacts += 1;
-        }
-    }
-    let accountability_stale_artifacts = acc_report
-        .artifacts
-        .iter()
-        .filter(|r| r.status == ArtifactAccountabilityStatus::Stale)
-        .count();
+    let acc_report = analyze_candidate_artifact_accountability(repository, &session)?;
 
     Ok(Some(DraftSessionView {
         base_state_id: session.base_state_id,
@@ -2135,8 +2155,163 @@ pub fn inspect_draft_session(
         staged_operations,
         candidate_effect: effect,
         candidate_validation,
-        accountability_total_artifacts: working_total_artifacts,
-        accountability_stale_artifacts,
+        accountability_total_artifacts: acc_report.repository_summary.total,
+        accountability_stale_artifacts: acc_report.repository_summary.stale,
         accountability_reconciled_in_draft: reconciled_count,
     }))
+}
+
+use std::str::FromStr;
+
+/// Evaluates artifact accountability against a candidate draft session's `working_state`
+/// and sequential staged operations.
+pub fn analyze_candidate_artifact_accountability(
+    repository: &Repository,
+    session: &crate::repository::session::DraftSession,
+) -> Result<ArtifactAccountabilityReport, QueryError> {
+    let store = repository.object_store();
+
+    let mut candidate_elements: std::collections::HashMap<ElementId, (String, ObjectId)> =
+        std::collections::HashMap::new();
+    for entry in &session.working_state.elements {
+        let (_, type_id, _) = get_element_version_info(store, session, entry.version);
+        candidate_elements.insert(entry.element_id, (type_id, entry.version));
+    }
+
+    let mut candidate_relationships: std::collections::HashMap<
+        RelationshipId,
+        (String, ElementId, ElementId, ObjectId),
+    > = std::collections::HashMap::new();
+    for entry in &session.working_state.relationships {
+        let (rel_type, src_opt, tgt_opt) =
+            get_relationship_version_info(store, session, entry.version);
+        if let (Some(src_str), Some(tgt_str)) = (src_opt, tgt_opt)
+            && let (Ok(src_id), Ok(tgt_id)) =
+                (ElementId::from_str(&src_str), ElementId::from_str(&tgt_str))
+        {
+            candidate_relationships.insert(
+                entry.relationship_id,
+                (rel_type, src_id, tgt_id, entry.version),
+            );
+        }
+    }
+
+    let mut effective_baselines: std::collections::HashMap<RelationshipId, ObjectId> =
+        std::collections::HashMap::new();
+    for (&rel_id, (_, _, tgt_id, _)) in &candidate_relationships {
+        if let Ok(base_ver) = resolve_relationship_baseline_version(repository, rel_id, *tgt_id) {
+            effective_baselines.insert(rel_id, base_ver);
+        } else if let Some((_, tgt_ver)) = candidate_elements.get(tgt_id) {
+            effective_baselines.insert(rel_id, *tgt_ver);
+        }
+    }
+
+    for op in &session.operations {
+        if let Operation::AccountArtifact {
+            reconciliations, ..
+        } = op
+        {
+            for r in reconciliations {
+                effective_baselines.insert(r.relationship_id, r.reconciled_target_version);
+            }
+        }
+    }
+
+    let mut artifact_records = Vec::new();
+
+    for (&elem_id, (type_id, ver_id)) in &candidate_elements {
+        let short_type = type_id.rsplit('/').next().unwrap_or(type_id);
+        if short_type != "artifact" {
+            continue;
+        }
+
+        let (_, _, title) = get_element_version_info(store, session, *ver_id);
+
+        let mut baselines = Vec::new();
+        let mut has_stale = false;
+        let mut has_accountability_rel = false;
+
+        for (&rel_id, (rel_type, src_id, tgt_id, _)) in &candidate_relationships {
+            if *src_id != elem_id {
+                continue;
+            }
+
+            let short_rel = rel_type.rsplit('/').next().unwrap_or(rel_type);
+            if short_rel != "represents" && short_rel != "derived-from" {
+                continue;
+            }
+
+            has_accountability_rel = true;
+
+            let (tgt_type_id, current_tgt_ver) = match candidate_elements.get(tgt_id) {
+                Some((t, v)) => (t.clone(), *v),
+                None => {
+                    has_stale = true;
+                    ("unknown".to_string(), ObjectId::from_bytes([0; 32]))
+                }
+            };
+
+            let recorded_baseline = effective_baselines
+                .get(&rel_id)
+                .copied()
+                .unwrap_or(ObjectId::from_bytes([0; 32]));
+            let is_stale = recorded_baseline != current_tgt_ver;
+
+            if is_stale {
+                has_stale = true;
+            }
+
+            baselines.push(ArtifactBaseline {
+                relationship_id: rel_id,
+                relationship_type: rel_type.clone(),
+                upstream_element_id: *tgt_id,
+                upstream_type_id: tgt_type_id,
+                baseline_version: recorded_baseline,
+                current_version: current_tgt_ver,
+                is_stale,
+            });
+        }
+
+        let status = if !has_accountability_rel {
+            ArtifactAccountabilityStatus::Unaccounted
+        } else if has_stale {
+            ArtifactAccountabilityStatus::Stale
+        } else {
+            ArtifactAccountabilityStatus::Current
+        };
+
+        artifact_records.push(ArtifactAccountability {
+            artifact_element_id: elem_id,
+            artifact_type_id: type_id.clone(),
+            title,
+            status,
+            baselines,
+        });
+    }
+
+    artifact_records.sort_by_key(|a| a.artifact_element_id);
+
+    let mut total_current = 0;
+    let mut total_stale = 0;
+    let mut total_unaccounted = 0;
+
+    for a in &artifact_records {
+        match a.status {
+            ArtifactAccountabilityStatus::Current => total_current += 1,
+            ArtifactAccountabilityStatus::Stale => total_stale += 1,
+            ArtifactAccountabilityStatus::Unaccounted => total_unaccounted += 1,
+        }
+    }
+
+    let repository_summary = ArtifactAccountabilitySummary {
+        total: artifact_records.len(),
+        current: total_current,
+        stale: total_stale,
+        unaccounted: total_unaccounted,
+    };
+
+    Ok(ArtifactAccountabilityReport {
+        artifacts: artifact_records,
+        repository_summary,
+    })
 }

@@ -436,8 +436,24 @@ pub fn validate_repository_state(
             });
         }
 
-        // Validation elements represent evidence itself; skip coverage tracking for them
-        if short_type != "validation" {
+        let validatable_target_types: std::collections::HashSet<String> = ontology
+            .relationship_types
+            .iter()
+            .find(|r| r.type_id == "kat.core/validates" || r.type_id.ends_with("/validates"))
+            .map(|r| r.allowed_target_types.iter().cloned().collect())
+            .unwrap_or_else(|| {
+                let mut set = std::collections::HashSet::new();
+                set.insert("kat.core/requirement".to_string());
+                set.insert("kat.core/constraint".to_string());
+                set.insert("kat.core/implementation".to_string());
+                set
+            });
+
+        // Only elements whose type is an allowed target of validates relationships are eligible for evidence coverage tracking
+        let is_coverage_eligible = validatable_target_types.contains(&canonical_type)
+            || validatable_target_types.contains(short_type);
+
+        if is_coverage_eligible {
             let entry_stat = category_stats
                 .entry(canonical_type.clone())
                 .or_insert((0, 0));

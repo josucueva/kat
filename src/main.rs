@@ -2772,7 +2772,7 @@ fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool) -> Exi
             } else if target_id.is_some() {
                 print_artifact_accountability_detail(&report, artifact_id.as_deref().unwrap_or(""));
             } else {
-                print_artifact_accountability_report(&report);
+                print_artifact_accountability_report(&report, stale);
             }
             let has_stale_or_unaccounted = report.artifacts.iter().any(|a| {
                 a.status == ArtifactAccountabilityStatus::Stale
@@ -2838,36 +2838,44 @@ fn print_artifact_accountability_detail(report: &ArtifactAccountabilityReport, q
                 );
             }
         }
+        println!();
+        println!(
+            "Note: KAT accountability evaluates semantic target-version alignment; physical file contents are not verified."
+        );
     }
 }
 
-fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport) {
-    println!("Artifact accountability");
+fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport, stale_only: bool) {
+    if stale_only {
+        println!("STALE ARTIFACTS ({})", report.artifacts.len());
+    } else {
+        println!("Artifact accountability");
+    }
     println!();
 
     if report.artifacts.is_empty() {
-        println!("Artifacts (0)");
-        println!("  no active artifacts found");
+        if stale_only {
+            println!("Artifacts (0)");
+            println!("  no stale artifacts found");
+        } else {
+            println!("Artifacts (0)");
+            println!("  no active artifacts found");
+        }
         println!();
-        println!("Summary");
-        println!("  current:      0");
-        println!("  stale:        0");
-        println!("  unaccounted:  0");
+        println!("Repository summary");
+        println!("  total:        {}", report.repository_summary.total);
+        println!("  current:      {}", report.repository_summary.current);
+        println!("  stale:        {}", report.repository_summary.stale);
+        println!("  unaccounted:  {}", report.repository_summary.unaccounted);
+        println!();
+        println!(
+            "Note: KAT accountability evaluates semantic target-version alignment; physical file contents are not verified."
+        );
         return;
     }
 
-    let mut current_count = 0;
-    let mut stale_count = 0;
-    let mut unaccounted_count = 0;
-
     println!("Artifacts ({})", report.artifacts.len());
     for a in &report.artifacts {
-        match a.status {
-            ArtifactAccountabilityStatus::Current => current_count += 1,
-            ArtifactAccountabilityStatus::Stale => stale_count += 1,
-            ArtifactAccountabilityStatus::Unaccounted => unaccounted_count += 1,
-        }
-
         println!();
         print!("  Artifact {}", a.artifact_element_id);
         if let Some(ref title) = a.title {
@@ -2897,10 +2905,15 @@ fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport) {
     }
 
     println!();
-    println!("Summary");
-    println!("  current:      {current_count}");
-    println!("  stale:        {stale_count}");
-    println!("  unaccounted:  {unaccounted_count}");
+    println!("Repository summary");
+    println!("  total:        {}", report.repository_summary.total);
+    println!("  current:      {}", report.repository_summary.current);
+    println!("  stale:        {}", report.repository_summary.stale);
+    println!("  unaccounted:  {}", report.repository_summary.unaccounted);
+    println!();
+    println!(
+        "Note: KAT accountability evaluates semantic target-version alignment; physical file contents are not verified."
+    );
 }
 
 fn cmd_change(command: cli::ChangeCommands) -> ExitCode {
