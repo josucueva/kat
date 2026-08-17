@@ -135,7 +135,7 @@ fn main() -> ExitCode {
             max_depth,
             compact,
         } => run_impact(element_id, max_depth, compact),
-        Command::Validate { compact } => cmd_validate(compact),
+        Command::Validate { coverage, compact } => cmd_validate(coverage, compact),
         Command::Artifacts { compact } => cmd_artifacts(compact),
         Command::Change { command } => cmd_change(command),
         Command::Ontology { compact, command } => cmd_ontology(compact, command),
@@ -2512,7 +2512,7 @@ fn print_operation_details(operation: &Operation) {
     }
 }
 
-fn cmd_validate(compact: bool) -> ExitCode {
+fn cmd_validate(coverage: bool, compact: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -2523,10 +2523,16 @@ fn cmd_validate(compact: bool) -> ExitCode {
 
     match validate_repository(&repository) {
         Ok(report) => {
-            if compact {
+            if coverage {
+                if compact {
+                    print_coverage_report_compact(&report);
+                } else {
+                    print_coverage_report(&report);
+                }
+            } else if compact {
                 print_validation_report_compact(&report);
             } else {
-                print_validation_report(&repository, &report);
+                print_validation_report(&report);
             }
             if report.violations.is_empty() {
                 ExitCode::SUCCESS
@@ -2542,63 +2548,191 @@ fn cmd_validate(compact: bool) -> ExitCode {
 }
 
 fn print_validation_report_compact(report: &ValidationReport) {
+    let total_constraints = report.constraint_details.len();
+    let evidence_backed_constraints = report
+        .constraint_details
+        .iter()
+        .filter(|c| !c.validation_evidence.is_empty())
+        .count();
+    let coverage_pct = if total_constraints > 0 {
+        (evidence_backed_constraints as f64 / total_constraints as f64) * 100.0
+    } else {
+        100.0
+    };
     println!(
-        "{} violations, {} unverified constraints",
+        "{} violations, {} unverified constraints, constraint_coverage: {}/{} ({:.1}%)",
         report.violations.len(),
-        report.unverified_constraints.len()
+        total_constraints,
+        evidence_backed_constraints,
+        total_constraints,
+        coverage_pct
     );
 }
 
-fn print_validation_report(repository: &Repository, report: &ValidationReport) {
-    println!("Consistency validation");
+fn print_coverage_report_compact(report: &ValidationReport) {
+    let cat_parts: Vec<String> = report
+        .category_summaries
+        .iter()
+        .map(|cat| {
+            let pct = if cat.total_count > 0 {
+                (cat.evidence_backed_count as f64 / cat.total_count as f64) * 100.0
+            } else {
+                100.0
+            };
+            format!(
+                "{}: {}/{} ({:.1}%)",
+                cat.category_type, cat.evidence_backed_count, cat.total_count, pct
+            )
+        })
+        .collect();
+    println!(
+        "category_coverage: {}; uncovered: {} elements",
+        cat_parts.join(", "),
+        report.uncovered_elements.len()
+    );
+}
+
+fn print_validation_report(report: &ValidationReport) {
+    let total_constraints = report.constraint_details.len();
+    let evidence_backed_constraints = report
+        .constraint_details
+        .iter()
+        .filter(|c| !c.validation_evidence.is_empty())
+        .count();
+    let coverage_pct = if total_constraints > 0 {
+        (evidence_backed_constraints as f64 / total_constraints as f64) * 100.0
+    } else {
+        100.0
+    };
+
+    println!("VALIDATION SUMMARY");
     println!();
-    println!("Violations");
+    println!(
+        "Mechanical Violations:                 {}",
+        report.violations.len()
+    );
+    println!(
+        "Mechanically Unverified Constraints:   {}",
+        total_constraints
+    );
+    println!(
+        "Validation Evidence Coverage:          {} / {} constraints evidence-backed ({:.1}%)",
+        evidence_backed_constraints, total_constraints, coverage_pct
+    );
+    println!();
+
+    println!("MECHANICAL VIOLATIONS ({})", report.violations.len());
+    println!();
     if report.violations.is_empty() {
-        println!("  none");
+        println!("None.");
     } else {
         for v in &report.violations {
-            print!("  - [{:?}] {}", v.kind, v.message);
+            print!("- [{:?}] {}", v.kind, v.message);
             if let Some(rel_id) = v.relationship_id {
                 print!(" (relationship: {rel_id})");
             }
             println!();
         }
     }
-
     println!();
-    println!("Unverified constraints");
-    if report.unverified_constraints.is_empty() {
-        println!("  none");
+
+    println!(
+        "MECHANICALLY UNVERIFIED CONSTRAINTS ({})",
+        total_constraints
+    );
+    println!();
+    if report.constraint_details.is_empty() {
+        println!("None.");
     } else {
-        for c in &report.unverified_constraints {
-            print!("  {}", c.constraint_element_id);
+        for c in &report.constraint_details {
+            print!("{}", c.constraint_id);
             if let Some(ref title) = c.title {
                 print!(" \"{title}\"");
             }
             println!(" [reason: no executable validation rule]");
+            if c.validation_evidence.is_empty() {
+                println!("  Validation Evidence: 0 validations (Uncovered)");
+            } else {
+                print!(
+                    "  Validation Evidence: {} validation(s): ",
+                    c.validation_evidence.len()
+                );
+                let evidence_strs: Vec<String> = c
+                    .validation_evidence
+                    .iter()
+                    .map(|e| {
+                        if let Some(ref t) = e.title {
+                            format!("{} (\"{}\")", e.validation_element_id, t)
+                        } else {
+                            e.validation_element_id.to_string()
+                        }
+                    })
+                    .collect();
+                println!("{}", evidence_strs.join(", "));
+            }
             if c.constrained_element_ids.is_empty() {
                 println!("    constrained_elements: none");
             } else {
-                println!("    constrained_elements:");
-                for target_id in &c.constrained_element_ids {
-                    print!("      {target_id}");
-                    if let Ok(view) = show_element(repository, *target_id) {
-                        print!(" [{}]", view.element.type_id);
-                        print_title_property(&view.element.properties);
-                    }
-                    println!();
-                }
+                let targets: Vec<String> = c
+                    .constrained_element_ids
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect();
+                println!("    constrained_elements: {}", targets.join(", "));
             }
+        }
+        println!();
+        println!(
+            "> Note: Evidence-backed constraints remain mechanically unverified by KAT (no executable rule engine)."
+        );
+    }
+}
+
+fn print_coverage_report(report: &ValidationReport) {
+    println!("EVIDENCE COVERAGE BREAKDOWN");
+    println!();
+    if report.category_summaries.is_empty() {
+        println!("No active knowledge elements found.");
+    } else {
+        println!(
+            "{:<24} {:<8} {:<18} {:<12} {:<10}",
+            "CATEGORY", "TOTAL", "EVIDENCE-BACKED", "UNCOVERED", "COVERAGE"
+        );
+        for cat in &report.category_summaries {
+            let pct = if cat.total_count > 0 {
+                (cat.evidence_backed_count as f64 / cat.total_count as f64) * 100.0
+            } else {
+                100.0
+            };
+            println!(
+                "{:<24} {:<8} {:<18} {:<12} {:.1}%",
+                cat.category_type,
+                cat.total_count,
+                cat.evidence_backed_count,
+                cat.uncovered_count,
+                pct
+            );
         }
     }
 
     println!();
-    println!("Summary");
-    println!("  violations:             {}", report.violations.len());
     println!(
-        "  unverified constraints: {}",
-        report.unverified_constraints.len()
+        "UNCOVERED KNOWLEDGE ELEMENTS ({})",
+        report.uncovered_elements.len()
     );
+    println!();
+    if report.uncovered_elements.is_empty() {
+        println!("All active knowledge elements are backed by validation evidence.");
+    } else {
+        println!("{:<24} {:<38} {:<30}", "TYPE", "ELEMENT ID", "TITLE");
+        for elem in &report.uncovered_elements {
+            let title_str = elem.title.as_deref().unwrap_or("-");
+            println!(
+                "{:<24} {:<38} {:<30}",
+                elem.type_id, elem.element_id, title_str
+            );
+        }
+    }
 }
 
 fn cmd_artifacts(compact: bool) -> ExitCode {

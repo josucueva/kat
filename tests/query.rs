@@ -1727,7 +1727,10 @@ fn validate_repository_classification_and_evidence_coverage() {
     let detail = &report.constraint_details[0];
     assert_eq!(detail.constraint_id, e_con);
     assert_eq!(detail.constrained_element_ids, vec![e_req]);
-    assert!(!detail.is_mechanically_verified, "critical invariant: evidence-backed != mechanically verified");
+    assert!(
+        !detail.is_mechanically_verified,
+        "critical invariant: evidence-backed != mechanically verified"
+    );
     assert_eq!(detail.validation_evidence.len(), 1);
     assert_eq!(detail.validation_evidence[0].validation_element_id, e_val);
 

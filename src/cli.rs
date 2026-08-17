@@ -193,6 +193,9 @@ pub enum Command {
 
     /// Run mechanical consistency validation across the current accepted state
     Validate {
+        /// Focus on validation evidence coverage reporting across knowledge categories
+        #[arg(long)]
+        coverage: bool,
         /// Display compact single-line counts summary
         #[arg(long)]
         compact: bool,

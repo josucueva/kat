@@ -2220,8 +2220,8 @@ fn phase9_acceptance_cli_flow_end_to_end() {
     let (val_out, val_err, ok) = run_kat(root, &["validate"]);
     assert!(ok, "kat validate failed: {val_err}\n{val_out}");
 
-    assert!(val_out.contains("Consistency validation"));
-    assert!(val_out.contains("Unverified constraints"));
+    assert!(val_out.contains("VALIDATION SUMMARY"));
+    assert!(val_out.contains("MECHANICALLY UNVERIFIED CONSTRAINTS"));
     assert!(val_out.contains(e_con));
     assert!(val_out.contains("TLS 1.3 Encryption Required"));
     assert!(val_out.contains("[reason: no executable validation rule]"));
@@ -3198,7 +3198,7 @@ fn phase15_acceptance_cli_flow_end_to_end() {
     // 9. Verify kat validate returns clean
     let (val_out, _, ok_val) = run_kat(root, &["validate"]);
     assert!(ok_val);
-    assert!(val_out.contains("violations:             0"));
+    assert!(val_out.contains("Mechanical Violations:                 0"));
 }
 
 #[test]

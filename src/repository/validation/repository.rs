@@ -214,7 +214,8 @@ pub fn validate_repository_state(
     let mut violations = Vec::new();
     let mut seen_triples = HashSet::new();
     let mut valid_restricts_targets: HashMap<ElementId, Vec<ElementId>> = HashMap::new();
-    let mut valid_validates_evidence: HashMap<ElementId, Vec<ValidationEvidenceInfo>> = HashMap::new();
+    let mut valid_validates_evidence: HashMap<ElementId, Vec<ValidationEvidenceInfo>> =
+        HashMap::new();
 
     // Iterate over relationships in canonical RelationshipId order
     for entry in &state.relationships {
@@ -347,29 +348,31 @@ pub fn validate_repository_state(
         }
 
         // Track valid validates evidence elements for target subjects
-        if short_rel_type == "validates" && rel_ontology_valid && endpoints_valid {
-            if let Some(src) = source_elem {
-                let src_short_type = src.type_id.rsplit('/').next().unwrap_or(&src.type_id);
-                if src_short_type == "validation" && src.lifecycle == Lifecycle::Active {
-                    let val_title = src.properties.iter().find_map(|(k, v)| {
-                        if k == "title" {
-                            if let PropertyValue::Text(t) = v {
-                                Some(t.clone())
-                            } else {
-                                None
-                            }
+        if short_rel_type == "validates"
+            && rel_ontology_valid
+            && endpoints_valid
+            && let Some(src) = source_elem
+        {
+            let src_short_type = src.type_id.rsplit('/').next().unwrap_or(&src.type_id);
+            if src_short_type == "validation" && src.lifecycle == Lifecycle::Active {
+                let val_title = src.properties.iter().find_map(|(k, v)| {
+                    if k == "title" {
+                        if let PropertyValue::Text(t) = v {
+                            Some(t.clone())
                         } else {
                             None
                         }
+                    } else {
+                        None
+                    }
+                });
+                valid_validates_evidence
+                    .entry(rel_v.target_element_id)
+                    .or_default()
+                    .push(ValidationEvidenceInfo {
+                        validation_element_id: rel_v.source_element_id,
+                        title: val_title,
                     });
-                    valid_validates_evidence
-                        .entry(rel_v.target_element_id)
-                        .or_default()
-                        .push(ValidationEvidenceInfo {
-                            validation_element_id: rel_v.source_element_id,
-                            title: val_title,
-                        });
-                }
             }
         }
     }
@@ -435,7 +438,9 @@ pub fn validate_repository_state(
 
         // Validation elements represent evidence itself; skip coverage tracking for them
         if short_type != "validation" {
-            let entry_stat = category_stats.entry(canonical_type.clone()).or_insert((0, 0));
+            let entry_stat = category_stats
+                .entry(canonical_type.clone())
+                .or_insert((0, 0));
             entry_stat.0 += 1;
             if is_evidence_backed {
                 entry_stat.1 += 1;
@@ -451,12 +456,14 @@ pub fn validate_repository_state(
 
     let mut category_summaries: Vec<CategoryCoverageSummary> = category_stats
         .into_iter()
-        .map(|(category_type, (total_count, evidence_backed_count))| CategoryCoverageSummary {
-            category_type,
-            total_count,
-            evidence_backed_count,
-            uncovered_count: total_count - evidence_backed_count,
-        })
+        .map(
+            |(category_type, (total_count, evidence_backed_count))| CategoryCoverageSummary {
+                category_type,
+                total_count,
+                evidence_backed_count,
+                uncovered_count: total_count - evidence_backed_count,
+            },
+        )
         .collect();
     category_summaries.sort_by(|a, b| a.category_type.cmp(&b.category_type));
 
