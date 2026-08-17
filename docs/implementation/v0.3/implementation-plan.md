@@ -63,7 +63,7 @@ Detailed, per-phase plans live in dedicated files so this master stays a lean tr
 | Phase 17 — Ontology Discovery (`kat ontology`, `kat ontology show`) | [implementation-plan-phase17.md](implementation-plan-phase17.md) | **completed** |
 | Phase 18 — Scalable Query Inspection (`kat trace` / `impact` tree rendering & bounds) | [implementation-plan-phase18.md](implementation-plan-phase18.md) | **completed** |
 | Phase 19 — Validation Result Classification & Coverage | [implementation-plan-phase19.md](implementation-plan-phase19.md) | **completed** |
-| Phase 20 — Change UX & Draft Inspection | [implementation-plan-phase20.md](implementation-plan-phase20.md) | planned |
+| Phase 20 — Change UX & Draft Inspection | [implementation-plan-phase20.md](implementation-plan-phase20.md) | **completed** |
 | Phase 21 — Accountability Inspection & Real-Project Evaluation | [implementation-plan-phase21.md](implementation-plan-phase21.md) | planned |
 
 ---
