@@ -40,9 +40,9 @@ use kat::repository::object_store::ObjectStore;
 use kat::repository::open::{Repository, open_repository};
 use kat::repository::query::{
     ArtifactAccountabilityReport, ArtifactAccountabilityStatus, ElementView, HistoryEntry,
-    ImpactResult, ListFilter, QueryError, RepositoryStatus, TraceResult, TraversalDirection,
-    analyze_artifact_accountability, analyze_impact, history, history_entry_touches_element,
-    list_elements, repository_status, show_element, trace_origin,
+    ImpactResult, ListFilter, QueryError, RepositoryStatus, TraceResult, TraceTreeNode,
+    TraversalDirection, analyze_artifact_accountability, analyze_impact, history,
+    history_entry_touches_element, list_elements, repository_status, show_element, trace_origin,
 };
 use kat::repository::resolve::{
     ResolveError, resolve_element_id, resolve_element_in_state, resolve_relationship_id,
@@ -126,12 +126,15 @@ fn main() -> ExitCode {
         } => cmd_history(oneline, limit, element, compact),
         Command::Trace {
             element_id,
+            paths,
+            max_depth,
             compact,
-        } => run_trace(element_id, compact),
+        } => run_trace(element_id, paths, max_depth, compact),
         Command::Impact {
             element_id,
+            max_depth,
             compact,
-        } => run_impact(element_id, compact),
+        } => run_impact(element_id, max_depth, compact),
         Command::Validate { compact } => cmd_validate(compact),
         Command::Artifacts { compact } => cmd_artifacts(compact),
         Command::Change { command } => cmd_change(command),
@@ -1955,7 +1958,12 @@ fn get_operation_title(store: &ObjectStore, op: &Operation) -> Option<String> {
     None
 }
 
-fn run_trace(element_id_str: String, compact: bool) -> ExitCode {
+fn run_trace(
+    element_id_str: String,
+    paths: bool,
+    max_depth: Option<usize>,
+    compact: bool,
+) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -1969,17 +1977,23 @@ fn run_trace(element_id_str: String, compact: bool) -> ExitCode {
         Err(code) => return code,
     };
 
-    match trace_origin(&repository, element_id, None) {
+    match trace_origin(&repository, element_id, max_depth) {
         Ok(result) => {
             if compact {
                 print_trace_result_compact(&repository, &result);
+            } else if paths {
+                print_trace_result_paths(&repository, &result);
             } else {
-                print_trace_result(&repository, &result);
+                print_trace_result_tree(&repository, &result);
             }
             ExitCode::SUCCESS
         }
         Err(QueryError::ElementNotFound(id)) => {
             eprintln!("kat trace: element {id} not found in the accepted state");
+            ExitCode::FAILURE
+        }
+        Err(QueryError::InvalidMaxDepth(depth)) => {
+            eprintln!("kat trace: max depth must be greater than 0, got {depth}");
             ExitCode::FAILURE
         }
         Err(error) => {
@@ -2039,7 +2053,97 @@ fn print_trace_result_compact(repository: &Repository, result: &TraceResult) {
     }
 }
 
-fn print_trace_result(repository: &Repository, result: &TraceResult) {
+fn print_trace_result_tree(repository: &Repository, result: &TraceResult) {
+    println!("Trace origin for element {}", result.root_element_id);
+    if let Ok(view) = show_element(repository, result.root_element_id) {
+        println!("  type:        {}", view.element.type_id);
+        println!(
+            "  lifecycle:   {}",
+            format_lifecycle(view.element.lifecycle)
+        );
+        if let Some((_, PropertyValue::Text(title))) =
+            view.element.properties.iter().find(|(k, _)| k == "title")
+        {
+            println!("  title:       \"{title}\"");
+        }
+    }
+
+    println!();
+    if result.paths.is_empty() {
+        println!("Origin paths");
+        println!("  none");
+        return;
+    }
+
+    let tree = result.to_tree();
+    println!("Origin tree");
+    print_tree_node(repository, &tree, "", true, true);
+}
+
+fn print_tree_node(
+    repository: &Repository,
+    node: &TraceTreeNode,
+    prefix: &str,
+    _is_last: bool,
+    is_root: bool,
+) {
+    if is_root {
+        println!("  {}", format_node_label(repository, node.element_id));
+    }
+
+    for (idx, child) in node.children.iter().enumerate() {
+        let child_is_last = idx + 1 == node.children.len();
+        let dir_str = match child.direction {
+            TraversalDirection::Forward => "forward ->",
+            TraversalDirection::Backward => "backward <-",
+        };
+        let branch = if child_is_last {
+            "└── "
+        } else {
+            "├── "
+        };
+        let next_prefix = if child_is_last {
+            format!("{prefix}    ")
+        } else {
+            format!("{prefix}│   ")
+        };
+
+        println!(
+            "  {prefix}{branch}via {} ({dir_str})",
+            child.relationship_type_id
+        );
+        let node_label = format_node_label(repository, child.target.element_id);
+        println!("  {next_prefix}└── {node_label}");
+
+        print_tree_node(
+            repository,
+            &child.target,
+            &next_prefix,
+            child_is_last,
+            false,
+        );
+    }
+}
+
+fn format_node_label(repository: &Repository, element_id: ElementId) -> String {
+    if let Ok(view) = show_element(repository, element_id) {
+        let title_suffix = view
+            .element
+            .properties
+            .iter()
+            .find(|(k, _)| k == "title")
+            .and_then(|(_, v)| match v {
+                PropertyValue::Text(t) => Some(format!(" \"{t}\"")),
+                _ => None,
+            })
+            .unwrap_or_default();
+        format!("{} [{}]{title_suffix}", element_id, view.element.type_id)
+    } else {
+        format!("{element_id}")
+    }
+}
+
+fn print_trace_result_paths(repository: &Repository, result: &TraceResult) {
     println!("Trace origin for element {}", result.root_element_id);
     if let Ok(view) = show_element(repository, result.root_element_id) {
         println!("  type:        {}", view.element.type_id);
@@ -2093,7 +2197,7 @@ fn print_trace_result(repository: &Repository, result: &TraceResult) {
     }
 }
 
-fn run_impact(element_id_str: String, compact: bool) -> ExitCode {
+fn run_impact(element_id_str: String, max_depth: Option<usize>, compact: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -2107,7 +2211,7 @@ fn run_impact(element_id_str: String, compact: bool) -> ExitCode {
         Err(code) => return code,
     };
 
-    match analyze_impact(&repository, element_id, None) {
+    match analyze_impact(&repository, element_id, max_depth) {
         Ok(result) => {
             if compact {
                 print_impact_result_compact(&repository, &result);
@@ -2118,6 +2222,10 @@ fn run_impact(element_id_str: String, compact: bool) -> ExitCode {
         }
         Err(QueryError::ElementNotFound(id)) => {
             eprintln!("kat impact: element {id} not found in the accepted state");
+            ExitCode::FAILURE
+        }
+        Err(QueryError::InvalidMaxDepth(depth)) => {
+            eprintln!("kat impact: max depth must be greater than 0, got {depth}");
             ExitCode::FAILURE
         }
         Err(error) => {

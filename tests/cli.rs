@@ -39,9 +39,16 @@ fn run_kat(dir: &Path, args: &[&str]) -> (String, String, bool) {
 
 /// Extracts the value of a `key: value` line from CLI stdout.
 fn id_line<'a>(out: &'a str, key: &str) -> &'a str {
-    let prefix = format!("{key}: ");
+    let prefix = format!("{key}:");
     out.lines()
-        .find_map(|line| line.strip_prefix(&prefix))
+        .find_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with(&prefix) {
+                Some(trimmed[prefix.len()..].trim())
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| panic!("output must contain a '{key}: ...' line:\n{out}"))
 }
 
@@ -3397,6 +3404,10 @@ fn phase17_acceptance_cli_flow_end_to_end() {
         ok_dont,
         "ontology query during draft session failed: {out_draft_ont}"
     );
+    assert!(
+        ok_dont,
+        "ontology query during draft session failed: {out_draft_ont}"
+    );
 
     // Verify repository objects and accepted ref unchanged
     assert_eq!(object_ids(root), objects_before);
@@ -3404,4 +3415,111 @@ fn phase17_acceptance_cli_flow_end_to_end() {
         fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap(),
         accepted_before
     );
+}
+
+#[test]
+fn phase18_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. Initialize KAT repository
+    let (out_init, _, ok_init) = run_kat(root, &["init"]);
+    assert!(ok_init, "kat init failed: {out_init}");
+
+    // Create multi-hop graph in one draft session:
+    // Intent I1 <-motivates- Requirement R1 <-realizes- Implementation M1 <-represents- Artifact A1
+    run_kat(
+        root,
+        &[
+            "change",
+            "begin",
+            "--description",
+            "Create multi-hop trace graph",
+        ],
+    );
+
+    let (i1_out, _, ok_i1) = run_kat(root, &["create", "intent", "--title", "Intent I1"]);
+    assert!(ok_i1, "create intent failed: {i1_out}");
+    let e_intent = id_line(&i1_out, "element_id");
+
+    let (r1_out, _, ok_r1) = run_kat(
+        root,
+        &["create", "requirement", "--title", "Requirement R1"],
+    );
+    assert!(ok_r1, "create requirement failed: {r1_out}");
+    let e_req = id_line(&r1_out, "element_id");
+
+    let (m1_out, _, ok_m1) = run_kat(
+        root,
+        &["create", "implementation", "--title", "Implementation M1"],
+    );
+    assert!(ok_m1, "create implementation failed: {m1_out}");
+    let e_impl = id_line(&m1_out, "element_id");
+
+    let (a1_out, _, ok_a1) = run_kat(root, &["create", "artifact", "--title", "Artifact A1"]);
+    assert!(ok_a1, "create artifact failed: {a1_out}");
+    let e_art = id_line(&a1_out, "element_id");
+
+    let (_, err_l1, ok_l1) = run_kat(root, &["link", "motivates", e_intent, e_req]);
+    assert!(ok_l1, "link motivates failed: {err_l1}");
+
+    let (_, err_l2, ok_l2) = run_kat(root, &["link", "realizes", e_impl, e_req]);
+    assert!(ok_l2, "link realizes failed: {err_l2}");
+
+    let (_, err_l3, ok_l3) = run_kat(root, &["link", "represents", e_art, e_impl]);
+    assert!(ok_l3, "link represents failed: {err_l3}");
+
+    let (out_commit, err_commit, ok_commit) = run_kat(root, &["change", "commit"]);
+    assert!(
+        ok_commit,
+        "commit failed: out={out_commit}, err={err_commit}"
+    );
+
+    // 2. kat trace <artifact-id> (default tree output view)
+    let (out_tree, err_tree, ok_tree) = run_kat(root, &["trace", e_art]);
+    assert!(ok_tree, "kat trace failed: out={out_tree}, err={err_tree}");
+    assert!(out_tree.contains(&format!("Trace origin for element {e_art}")));
+    assert!(out_tree.contains("Origin tree"));
+    assert!(out_tree.contains("└── via kat.core/represents (forward ->)"));
+    assert!(out_tree.contains("Implementation M1"));
+
+    // 3. kat trace <artifact-id> --paths (explicit path list rendering)
+    let (out_paths, _, ok_paths) = run_kat(root, &["trace", e_art, "--paths"]);
+    assert!(ok_paths, "kat trace --paths failed: {out_paths}");
+    assert!(out_paths.contains("Path 1"));
+    assert!(out_paths.contains("Step 1"));
+    assert!(out_paths.contains("Step 2"));
+
+    // 4. kat trace <artifact-id> --max-depth 1 (depth-bounded trace)
+    let (out_md1, _, ok_md1) = run_kat(root, &["trace", e_art, "--max-depth", "1"]);
+    assert!(ok_md1, "kat trace --max-depth 1 failed: {out_md1}");
+    assert!(out_md1.contains("Implementation M1"));
+    assert!(!out_md1.contains("Requirement R1"));
+
+    // 5. kat trace <artifact-id> --max-depth 0 (invalid max-depth error)
+    let (out_md0, err_md0, ok_md0) = run_kat(root, &["trace", e_art, "--max-depth", "0"]);
+    assert!(!ok_md0, "expected failure for max-depth 0");
+    assert!(
+        err_md0.contains("max depth must be greater than 0, got 0")
+            || out_md0.contains("max depth must be greater than 0")
+    );
+
+    // 6. kat impact <req-id> --max-depth 1 (depth-bounded impact)
+    let (out_imp1, _, ok_imp1) = run_kat(root, &["impact", e_req, "--max-depth", "1"]);
+    assert!(ok_imp1, "kat impact --max-depth 1 failed: {out_imp1}");
+    assert!(out_imp1.contains("Implementation M1"));
+    assert!(!out_imp1.contains("Artifact A1"));
+
+    // 7. kat impact <req-id> --max-depth 0 (invalid max-depth error)
+    let (out_imp0, err_imp0, ok_imp0) = run_kat(root, &["impact", e_req, "--max-depth", "0"]);
+    assert!(!ok_imp0, "expected failure for max-depth 0");
+    assert!(
+        err_imp0.contains("max depth must be greater than 0, got 0")
+            || out_imp0.contains("max depth must be greater than 0")
+    );
+
+    // 8. kat trace <artifact-id> --compact
+    let (out_comp, _, ok_comp) = run_kat(root, &["trace", e_art, "--compact"]);
+    assert!(ok_comp, "kat trace --compact failed: {out_comp}");
+    assert!(out_comp.contains("Artifact A1 -> Implementation M1 -> Requirement R1 -> Intent I1"));
 }

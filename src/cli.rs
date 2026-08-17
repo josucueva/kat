@@ -164,6 +164,14 @@ pub enum Command {
         /// Target element ID (UUID or prefix) to trace
         element_id: String,
 
+        /// Display explicit exhaustive path list instead of collapsed tree hierarchy
+        #[arg(long)]
+        paths: bool,
+
+        /// Limit traversal depth to N relationship hops
+        #[arg(long)]
+        max_depth: Option<usize>,
+
         /// Display compact arrow-joined path rendering
         #[arg(long)]
         compact: bool,
@@ -173,6 +181,10 @@ pub enum Command {
     Impact {
         /// Target element ID (UUID or prefix) to analyze
         element_id: String,
+
+        /// Limit impact propagation depth to N relationship hops
+        #[arg(long)]
+        max_depth: Option<usize>,
 
         /// Display compact flat table layout
         #[arg(long)]
