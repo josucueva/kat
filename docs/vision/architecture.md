@@ -359,11 +359,10 @@ The Validation Engine coordinates semantic consistency evaluation without mutati
 
 Repository integrity and canonical envelope decoding are validated by the persistence layer upon loading objects. The semantic Validation Engine evaluates:
 * Candidate state $S_{\text{working}}$ and accepted state $S_n$ semantic consistency.
-* Active ontology type rules and relationship endpoint constraints.
+* Active ontology type rules and relationship endpoint constraints (mechanical violations).
 * Lifecycle state rules.
 * Core spec-defined structural and domain invariants.
-
-The engine explicitly reports unverified semantic `Constraint` elements rather than assuming compliance.
+* Classified validation reporting, reporting active natural-language `Constraint` elements as mechanically unverified (exit status 0) while tracking linked `kat.core/validation` evidence coverage (`kat validate --coverage`).
 
 ---
 

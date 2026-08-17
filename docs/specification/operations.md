@@ -359,17 +359,25 @@ Validation operations evaluate the semantic model against defined rules without 
 
 ### Validate
 
-Evaluates mechanically defined ontology and semantic consistency rules.
+Evaluates mechanical consistency rules, natural-language constraint verification status, and validation evidence coverage over the accepted semantic state ($S_n$).
 
 **Input:**
-* Current accepted semantic state
+* Current accepted semantic state ($S_n$)
+* Optional `--coverage` flag for category evidence coverage focus
 
 **Result:**
-* Mechanical consistency violations (e.g. invalid types, duplicate triples).
-* Affected knowledge elements.
-* Active constraints whose semantics cannot be mechanically verified (reported as unverified).
+* **Mechanical Violations**: Structural, ontology, or state invariant failures evaluated directly by KAT's engine (causes exit code 1 if non-empty).
+* **Mechanically Unverified Constraints**: Active natural-language `Constraint` elements for which KAT has no executable code evaluator (informational, exit code 0).
+* **Validation Evidence**: Recorded `kat.core/validation` elements linked to target subjects via `kat.core/validates` relationships ($V \xrightarrow{\text{validates}} S$).
+* **Evidence Coverage**: Category statistics (`total`, `evidence_backed`, `uncovered`) across active knowledge elements (`Constraint`, `Requirement`, `Implementation`) and a list of uncovered elements.
 
-Validation reports the state of the model. It does not silently modify knowledge.
+#### Core Invariant
+
+$$ \text{evidence-backed} \neq \text{mechanically verified} $$
+
+Attaching validation evidence to a `Constraint` records operational evidence coverage, but does **not** alter KAT's classification that the constraint remains mechanically unverified by KAT's engine.
+
+Validation reports the state of the accepted model ($S_n$). An open local draft session does not alter validation output. It does not silently modify knowledge.
 
 ---
 

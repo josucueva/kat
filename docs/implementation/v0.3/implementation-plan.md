@@ -62,7 +62,7 @@ Detailed, per-phase plans live in dedicated files so this master stays a lean tr
 | :--- | :--- | :--- |
 | Phase 17 — Ontology Discovery (`kat ontology`, `kat ontology show`) | [implementation-plan-phase17.md](implementation-plan-phase17.md) | **completed** |
 | Phase 18 — Scalable Query Inspection (`kat trace` / `impact` tree rendering & bounds) | [implementation-plan-phase18.md](implementation-plan-phase18.md) | **completed** |
-| Phase 19 — Validation Result Classification & Coverage | [implementation-plan-phase19.md](implementation-plan-phase19.md) | planned |
+| Phase 19 — Validation Result Classification & Coverage | [implementation-plan-phase19.md](implementation-plan-phase19.md) | **completed** |
 | Phase 20 — Change UX & Draft Inspection | [implementation-plan-phase20.md](implementation-plan-phase20.md) | planned |
 | Phase 21 — Accountability Inspection & Real-Project Evaluation | [implementation-plan-phase21.md](implementation-plan-phase21.md) | planned |
 
@@ -75,6 +75,7 @@ Detailed, per-phase plans live in dedicated files so this master stays a lean tr
 | 2026-08-16 | v0.3 planning documents created | Master tracker + Phase 17–21 plans drafted from real-world experiment findings. |
 | 2026-08-16 | Phase 17 — Ontology Discovery | Implemented `inspect_ontology`, `show_ontology_type`, CLI wiring, default & compact formatting, and acceptance tests. |
 | 2026-08-17 | Phase 18 — Scalable Query Inspection | Implemented Query Engine `--max-depth <N>` evaluation bounding, `TraceResult::to_tree()` ASCII tree rendering, `--paths` explicit path list view, and end-to-end acceptance tests. |
+| 2026-08-17 | Phase 19 — Validation Classification & Coverage | Implemented `kat validate` diagnostic classification (Mechanical Violations vs Unverified Constraints), `kat.core/validates` evidence tracking, `kat validate --coverage`, and acceptance tests. |
 
 ---
 

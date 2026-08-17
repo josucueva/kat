@@ -3523,3 +3523,126 @@ fn phase18_acceptance_cli_flow_end_to_end() {
     assert!(ok_comp, "kat trace --compact failed: {out_comp}");
     assert!(out_comp.contains("Artifact A1 -> Implementation M1 -> Requirement R1 -> Intent I1"));
 }
+
+#[test]
+fn phase19_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. Initialize KAT repository
+    let (out_init, _, ok_init) = run_kat(root, &["init"]);
+    assert!(ok_init, "kat init failed: {out_init}");
+
+    // 2. Create elements & relationships in a draft session
+    run_kat(
+        root,
+        &[
+            "change",
+            "begin",
+            "--description",
+            "Setup validation coverage fixture",
+        ],
+    );
+
+    let (c1_out, _, ok_c1) = run_kat(
+        root,
+        &["create", "constraint", "--title", "Password Min 12 Chars"],
+    );
+    assert!(ok_c1, "create constraint failed: {c1_out}");
+    let e_con = id_line(&c1_out, "element_id");
+
+    let (r1_out, _, ok_r1) = run_kat(
+        root,
+        &["create", "requirement", "--title", "Secure User Auth"],
+    );
+    assert!(ok_r1, "create requirement failed: {r1_out}");
+    let e_req = id_line(&r1_out, "element_id");
+
+    let (v1_out, _, ok_v1) = run_kat(
+        root,
+        &[
+            "create",
+            "validation",
+            "--title",
+            "Password Policy Unit Test",
+        ],
+    );
+    assert!(ok_v1, "create validation failed: {v1_out}");
+    let e_val = id_line(&v1_out, "element_id");
+
+    let (_, err_l1, ok_l1) = run_kat(root, &["link", "restricts", e_con, e_req]);
+    assert!(ok_l1, "link restricts failed: {err_l1}");
+
+    let (_, err_l2, ok_l2) = run_kat(root, &["link", "validates", e_val, e_con]);
+    assert!(ok_l2, "link validates failed: {err_l2}");
+
+    let (out_commit, err_commit, ok_commit) = run_kat(root, &["change", "commit"]);
+    assert!(
+        ok_commit,
+        "commit failed: out={out_commit}, err={err_commit}"
+    );
+
+    // 3. kat validate (default view)
+    let (out_val, err_val, ok_val) = run_kat(root, &["validate"]);
+    assert!(ok_val, "kat validate failed: out={out_val}, err={err_val}");
+    assert!(out_val.contains("VALIDATION SUMMARY"));
+    assert!(out_val.contains("Mechanical Violations:                 0"));
+    assert!(out_val.contains("Mechanically Unverified Constraints:   1"));
+    assert!(out_val.contains(
+        "Validation Evidence Coverage:          1 / 1 constraints evidence-backed (100.0%)"
+    ));
+    assert!(out_val.contains("MECHANICALLY UNVERIFIED CONSTRAINTS (1)"));
+    assert!(out_val.contains(e_con));
+    assert!(out_val.contains("Password Min 12 Chars"));
+    assert!(out_val.contains("Validation Evidence: 1 validation(s):"));
+    assert!(out_val.contains(e_val));
+    assert!(out_val.contains("Password Policy Unit Test"));
+    assert!(out_val.contains("> Note: Evidence-backed constraints remain mechanically unverified by KAT (no executable rule engine)."));
+
+    // 4. kat validate --coverage
+    let (out_cov, err_cov, ok_cov) = run_kat(root, &["validate", "--coverage"]);
+    assert!(
+        ok_cov,
+        "kat validate --coverage failed: out={out_cov}, err={err_cov}"
+    );
+    assert!(out_cov.contains("EVIDENCE COVERAGE BREAKDOWN"));
+    assert!(out_cov.contains("kat.core/constraint"));
+    assert!(out_cov.contains("kat.core/requirement"));
+    assert!(out_cov.contains("UNCOVERED KNOWLEDGE ELEMENTS (1)"));
+    assert!(out_cov.contains(e_req));
+    assert!(out_cov.contains("Secure User Auth"));
+
+    // 5. kat validate --compact
+    let (out_comp, _, ok_comp) = run_kat(root, &["validate", "--compact"]);
+    assert!(ok_comp, "kat validate --compact failed: {out_comp}");
+    assert!(
+        out_comp
+            .contains("0 violations, 1 unverified constraints, constraint_coverage: 1/1 (100.0%)")
+    );
+
+    // 6. kat validate --coverage --compact
+    let (out_cov_comp, _, ok_cov_comp) = run_kat(root, &["validate", "--coverage", "--compact"]);
+    assert!(
+        ok_cov_comp,
+        "kat validate --coverage --compact failed: {out_cov_comp}"
+    );
+    assert!(out_cov_comp.contains("category_coverage:"));
+    assert!(out_cov_comp.contains("kat.core/constraint: 1/1 (100.0%)"));
+    assert!(out_cov_comp.contains("uncovered: 1 elements"));
+
+    // 7. Draft isolation invariant: open draft session does not alter accepted validation results
+    run_kat(
+        root,
+        &["change", "begin", "--description", "Draft in progress"],
+    );
+    run_kat(
+        root,
+        &["create", "requirement", "--title", "Uncommitted Draft Req"],
+    );
+    let (out_draft_val, _, ok_draft_val) = run_kat(root, &["validate"]);
+    assert!(ok_draft_val, "kat validate during draft session failed");
+    assert_eq!(
+        out_draft_val, out_val,
+        "validate results must be point-in-time isolated to accepted state Sn"
+    );
+}
