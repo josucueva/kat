@@ -1,12 +1,12 @@
 # KAT Implementation Plan
 
-This document is the master tracker for implementing KAT in Rust, following the workflow and phasing defined in `prototype-design.md`. Per-phase detail lives in dedicated files linked from the [Phases](#phases) index. **v0.1** (Phases 0–10) is complete and released — its plans live in `v0.1/`. **v0.2** (Phases 11–16) is in planning — its plans live in `v0.2/` with the [v0.2 master tracker](v0.2/implementation-plan.md).
+This document is the master tracker for implementing KAT in Rust, following the workflow and phasing defined in `prototype-design.md`. Per-phase detail lives in dedicated files linked from the [Phases](#phases) index. **v0.1** (Phases 0–10) is complete and released — its plans live in `v0.1/`. **v0.2** (Phases 11–16) is complete and frozen — its plans live in `v0.2/`. **v0.3** (Phases 17–21) is complete and released as `v0.3.1` — its plans live in `v0.3/`.
 
 Status (v0.1): **complete and released** — all ten phases (0–10) are implemented, tested, and frozen, and the project has shipped as **`v0.1.0`** (full semantic repository) and **`v0.1.1`** (CLI UX polish).
 
-Status (v0.2): **complete and frozen** — all six phases (11–16) are implemented, verified by acceptance integration tests, committed, pushed, and frozen. All 388 workspace tests pass cleanly (`cargo test`). Specification document suite updated and frozen.
+Status (v0.2): **complete and frozen** — all six phases (11–16) are implemented, verified by acceptance integration tests, committed, pushed, and frozen.
 
-Status (v0.3): **in planning** — v0.3.0 master tracker (`v0.3/implementation-plan.md`) and per-phase plans (17–21) drafted. v0.3.0 theme: _Semantic Discoverability and Inspection_ — ontology discovery (`kat ontology`, `kat ontology show`), scalable trace/impact tree inspection (`--paths`, `--max-depth`), validation result classification & evidence coverage (`kat validate --coverage`), Change authoring UX & draft inspection (`kat change status`), and artifact accountability inspection (`kat artifacts --stale`).
+Status (v0.3): **complete and shipped as v0.3.1** — all five phases (17–21) implemented, verified, committed, pushed, and frozen (445 tests passing), plus v0.3.1 hardening release. v0.3 theme: _Semantic Discoverability and Inspection_ — ontology discovery (`kat ontology`, `kat ontology show`), scalable trace/impact tree inspection (`--paths`, `--max-depth`), validation result classification & evidence coverage (`kat validate --coverage`), Change authoring UX & draft inspection (`kat change status`), and artifact accountability inspection (`kat artifacts --stale`).
 
 Toolchain: Rust **stable**, pinned via `rust-toolchain.toml` (`channel = "stable"`); it resolves to each host's default target on both Linux and Windows. Machine-local toolchain flavour is set with `rustup override` and is not committed.
 
@@ -23,15 +23,15 @@ Toolchain: Rust **stable**, pinned via `rust-toolchain.toml` (`channel = "stable
 | Phase 15 — Artifact Re-accountability (`kat account`)  | [implementation-plan-phase15.md](v0.2/implementation-plan-phase15.md) | **complete** |
 | Phase 16 — Real-Project Evaluation                     | [implementation-plan-phase16.md](v0.2/implementation-plan-phase16.md) | **complete** |
 
-### v0.3 (Phases 17–21) — in planning
+### v0.3 (Phases 17–21) — complete and frozen
 
 | Phase | File | Status |
 | :--- | :--- | :--- |
-| Phase 17 — Ontology Discovery (`kat ontology`, `kat ontology show`) | [implementation-plan-phase17.md](v0.3/implementation-plan-phase17.md) | planned |
-| Phase 18 — Scalable Query Inspection (`kat trace` / `impact` tree rendering & bounds) | [implementation-plan-phase18.md](v0.3/implementation-plan-phase18.md) | planned |
-| Phase 19 — Validation Result Classification & Coverage (`kat validate --coverage`) | [implementation-plan-phase19.md](v0.3/implementation-plan-phase19.md) | planned |
-| Phase 20 — Change UX & Draft Inspection (`kat change status` candidate status) | [implementation-plan-phase20.md](v0.3/implementation-plan-phase20.md) | planned |
-| Phase 21 — Accountability Inspection & Real-Project Evaluation (`kat artifacts --stale`) | [implementation-plan-phase21.md](v0.3/implementation-plan-phase21.md) | planned |
+| Phase 17 — Ontology Discovery (`kat ontology`, `kat ontology show`) | [implementation-plan-phase17.md](v0.3/implementation-plan-phase17.md) | **complete** |
+| Phase 18 — Scalable Query Inspection (`kat trace` / `impact` tree rendering & bounds) | [implementation-plan-phase18.md](v0.3/implementation-plan-phase18.md) | **complete** |
+| Phase 19 — Validation Result Classification & Coverage (`kat validate --coverage`) | [implementation-plan-phase19.md](v0.3/implementation-plan-phase19.md) | **complete** |
+| Phase 20 — Change UX & Draft Inspection (`kat change status` candidate status) | [implementation-plan-phase20.md](v0.3/implementation-plan-phase20.md) | **complete** |
+| Phase 21 — Accountability Inspection & Real-Project Evaluation (`kat artifacts --stale`) | [implementation-plan-phase21.md](v0.3/implementation-plan-phase21.md) | **complete** |
 
 
 ## Progress Log
