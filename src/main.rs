@@ -39,11 +39,11 @@ use kat::repository::init::init_repository;
 use kat::repository::object_store::ObjectStore;
 use kat::repository::open::{Repository, open_repository};
 use kat::repository::query::{
-    ArtifactAccountabilityReport, ArtifactAccountabilityStatus, ElementView, HistoryEntry,
-    ImpactResult, ListFilter, QueryError, RepositoryStatus, TraceResult, TraceTreeNode,
-    TraversalDirection, analyze_artifact_accountability, analyze_impact, history,
-    history_entry_touches_element, inspect_draft_session, list_elements, repository_status,
-    show_element, trace_origin,
+    ArtifactAccountabilityReport, ArtifactAccountabilityStatus, ArtifactFilter, ElementView,
+    HistoryEntry, ImpactResult, ListFilter, QueryError, RepositoryStatus, TraceResult,
+    TraceTreeNode, TraversalDirection, analyze_artifact_accountability_filtered, analyze_impact,
+    history, history_entry_touches_element, inspect_draft_session, list_elements,
+    repository_status, show_element, trace_origin,
 };
 use kat::repository::resolve::{
     ResolveError, resolve_element_id, resolve_element_in_state, resolve_relationship_id,
@@ -136,7 +136,11 @@ fn main() -> ExitCode {
             compact,
         } => run_impact(element_id, max_depth, compact),
         Command::Validate { coverage, compact } => cmd_validate(coverage, compact),
-        Command::Artifacts { compact } => cmd_artifacts(compact),
+        Command::Artifacts {
+            stale,
+            artifact_id,
+            compact,
+        } => cmd_artifacts(stale, artifact_id, compact),
         Command::Change { command } => cmd_change(command),
         Command::Ontology { compact, command } => cmd_ontology(compact, command),
     }
@@ -2735,7 +2739,7 @@ fn print_coverage_report(report: &ValidationReport) {
     }
 }
 
-fn cmd_artifacts(compact: bool) -> ExitCode {
+fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -2744,10 +2748,29 @@ fn cmd_artifacts(compact: bool) -> ExitCode {
         }
     };
 
-    match analyze_artifact_accountability(&repository) {
+    let target_id = if let Some(ref q) = artifact_id {
+        match resolve_element_id(&repository, q) {
+            Ok(id) => Some(id),
+            Err(err) => {
+                eprintln!("kat artifacts: {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
+
+    let filter = ArtifactFilter {
+        stale_only: stale,
+        target_artifact_id: target_id,
+    };
+
+    match analyze_artifact_accountability_filtered(&repository, filter) {
         Ok(report) => {
             if compact {
                 print_artifact_accountability_report_compact(&report);
+            } else if target_id.is_some() {
+                print_artifact_accountability_detail(&report, artifact_id.as_deref().unwrap_or(""));
             } else {
                 print_artifact_accountability_report(&report);
             }
@@ -2774,6 +2797,47 @@ fn print_artifact_accountability_report_compact(report: &ArtifactAccountabilityR
         let status_str = format_accountability_status(item.status);
         let title = item.title.as_deref().unwrap_or("none");
         println!("{status_str:<11}  {title}");
+    }
+}
+
+fn print_artifact_accountability_detail(report: &ArtifactAccountabilityReport, query: &str) {
+    if report.artifacts.is_empty() {
+        println!("Artifact accountability detail for query '{query}'");
+        println!("  no active artifact element matching query found or no accountability records.");
+        return;
+    }
+
+    for a in &report.artifacts {
+        println!("ARTIFACT ACCOUNTABILITY DETAIL");
+        println!("  artifact_id: {}", a.artifact_element_id);
+        println!("  type_id:     {}", a.artifact_type_id);
+        if let Some(ref title) = a.title {
+            println!("  title:       \"{title}\"");
+        }
+        println!("  status:      {}", format_accountability_status(a.status));
+        println!();
+        println!("ACCOUNTABILITY BASELINES ({})", a.baselines.len());
+        if a.baselines.is_empty() {
+            println!("  (no represents or derived-from relationships found)");
+        } else {
+            for b in &a.baselines {
+                let stale_indicator = if b.is_stale { " [STALE]" } else { " [CURRENT]" };
+                println!("  Relationship: {}", b.relationship_type);
+                println!(
+                    "    Upstream Target: {} ({})",
+                    b.upstream_element_id, b.upstream_type_id
+                );
+                println!(
+                    "    Recorded Baseline Version: {}{}",
+                    short_object_id(&b.baseline_version),
+                    stale_indicator
+                );
+                println!(
+                    "    Current State Version:     {}",
+                    short_object_id(&b.current_version)
+                );
+            }
+        }
     }
 }
 

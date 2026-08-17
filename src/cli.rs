@@ -203,6 +203,13 @@ pub enum Command {
 
     /// Evaluate artifact accountability baselines against accepted state
     Artifacts {
+        /// Filter accountability report to display only STALE artifacts
+        #[arg(long)]
+        stale: bool,
+
+        /// Optional artifact element ID (UUID or prefix) for detailed inspection
+        artifact_id: Option<String>,
+
         /// Display compact status table layout
         #[arg(long)]
         compact: bool,
