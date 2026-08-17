@@ -11,7 +11,7 @@ Phase 18 delivers **Scalable Query Inspection** for `kat trace` and `kat impact`
 Phase 18 refactors trace and impact query processing and presentation:
 
 1. **Query Evaluation Bounding (`--max-depth <N>`)** — bounds traversal at the Query Engine evaluation level to stop expansion after $N$ relationship hops ($N \ge 1$), making query evaluation deterministic, efficient, and semantically honest.
-2. **Collapsed Tree/Graph Default** — renders query result graphs as a deduplicated tree hierarchy instead of enumerating every independent path.
+2. **Collapsed Path Tree Default** — renders Trace results as a hierarchical path projection that merges identical leading path prefixes into shared visual branches, while preserving nodes reached through distinct parent paths under each relevant branch.
 3. **Exhaustive Path Rendering (`--paths`)** — preserves discrete path list rendering when explicitly requested for `kat trace`.
 4. **Normative Traversal Policies Invariant** — underlying origin trace and impact propagation policies defined in [`docs/specification/operations.md`](../specification/operations.md) remain completely frozen.
 
@@ -74,7 +74,10 @@ payment_service.rs (kat.core/artifact)
     └── [<- restricts] Non-Blocking Checkout Policy (kat.core/constraint)
 ```
 
-If depth limit $N$ was reached during traversal:
+If outgoing traversal expansion was suppressed at depth $N$ because additional eligible relationships existed:
+```text
+... (depth limit reached: 2 hops)
+```
 ```text
 ... (depth limit reached: 2 hops)
 ```
