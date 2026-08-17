@@ -3018,7 +3018,7 @@ fn cmd_change_status(compact: bool) -> ExitCode {
     println!("ARTIFACT ACCOUNTABILITY PREVIEW");
     println!("  total:      {}", view.accountability_total_artifacts);
     println!(
-        "  stale:      {} expected to become stale upon commit",
+        "  stale:      {} (artifacts that would be classified STALE if current candidate state were accepted)",
         view.accountability_stale_artifacts
     );
     println!(

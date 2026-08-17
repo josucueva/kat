@@ -1,10 +1,10 @@
-# Phase 21 Implementation Plan: Accountability Inspection & Real-Project Evaluation — `kat artifacts --stale` and v0.3 Acceptance
+# Phase 21 Implementation Plan: Accountability Inspection & v0.3 Release Acceptance — `kat artifacts --stale` and v0.3 Acceptance
 
 > Status: **COMPLETED** — Implemented, verified (399 tests passing), documented, committed, and pushed to `main`.
 
 ## Purpose
 
-Phase 21 delivers **Accountability Inspection Improvements** and the **Real-Project Evaluation** for v0.3. The real-project evaluation (`docs/implementation/v0.3/experiment.md`) showed that artifact accountability worked reliably, but evaluating stale artifacts required manually parsing detailed target version histories.
+Phase 21 delivers **Accountability Inspection Improvements** and the **v0.3 Release Acceptance Evaluation**. The real-project evaluation (`docs/implementation/v0.3/experiment.md`) showed that artifact accountability worked reliably, but evaluating stale artifacts required manually parsing detailed target version histories.
 
 This phase completes v0.3:
 
@@ -49,7 +49,7 @@ Phase 21 is **strictly read-side** and evaluation-focused.
 
 - `src/repository/query.rs`:
   - `ArtifactFilter { stale_only: bool, artifact_id: Option<ElementId> }`.
-  - `inspect_artifact_accountability_filtered(&Repository, ArtifactFilter) -> Result<ArtifactAccountabilityReport, QueryError>`.
+  - `analyze_artifact_accountability_filtered(&Repository, ArtifactFilter) -> Result<ArtifactAccountabilityReport, QueryError>`.
 - Unit tests in `tests/query.rs`.
 
 ### Step 21.2 — CLI wiring: `kat artifacts --stale` and `kat artifacts <id>`

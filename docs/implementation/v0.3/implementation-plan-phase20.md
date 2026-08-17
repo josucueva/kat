@@ -62,7 +62,7 @@ CANDIDATE EFFECT
 
 ARTIFACT ACCOUNTABILITY PREVIEW
   Current:  5
-  Stale:    1 artifact expected to become stale upon commit
+  Stale:    1 artifact that would be classified STALE if current candidate state were accepted
   Reconciled in draft: 1
 
 CANDIDATE VALIDATION
