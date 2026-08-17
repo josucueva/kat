@@ -2075,7 +2075,14 @@ pub fn inspect_draft_session(
     )?;
 
     let acc_report = analyze_artifact_accountability(repository)?;
-    let accountability_total_artifacts = acc_report.artifacts.len();
+    let mut working_total_artifacts = 0;
+    for entry in &session.working_state.elements {
+        let (_, type_id, _) = get_element_version_info(store, &session, entry.version);
+        let short_type = type_id.rsplit('/').next().unwrap_or(&type_id);
+        if short_type == "artifact" {
+            working_total_artifacts += 1;
+        }
+    }
     let accountability_stale_artifacts = acc_report
         .artifacts
         .iter()
@@ -2091,7 +2098,7 @@ pub fn inspect_draft_session(
         staged_operations,
         candidate_effect: effect,
         candidate_validation,
-        accountability_total_artifacts,
+        accountability_total_artifacts: working_total_artifacts,
         accountability_stale_artifacts,
         accountability_reconciled_in_draft: reconciled_count,
     }))

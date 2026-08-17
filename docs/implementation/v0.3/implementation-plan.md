@@ -76,6 +76,7 @@ Detailed, per-phase plans live in dedicated files so this master stays a lean tr
 | 2026-08-16 | Phase 17 — Ontology Discovery | Implemented `inspect_ontology`, `show_ontology_type`, CLI wiring, default & compact formatting, and acceptance tests. |
 | 2026-08-17 | Phase 18 — Scalable Query Inspection | Implemented Query Engine `--max-depth <N>` evaluation bounding, `TraceResult::to_tree()` ASCII tree rendering, `--paths` explicit path list view, and end-to-end acceptance tests. |
 | 2026-08-17 | Phase 19 — Validation Classification & Coverage | Implemented `kat validate` diagnostic classification (Mechanical Violations vs Unverified Constraints), `kat.core/validates` evidence tracking, `kat validate --coverage`, and acceptance tests. |
+| 2026-08-17 | Phase 20 — Change UX & Draft Inspection | Implemented `inspect_draft_session`, `DraftSessionView`, `CandidateEffectSummary`, `kat change status` multi-section rendering, transaction feedback, and acceptance tests. |
 
 ---
 

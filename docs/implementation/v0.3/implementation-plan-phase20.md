@@ -1,6 +1,6 @@
 # Phase 20 Implementation Plan: Change UX & Draft Inspection — `kat change status` & Transaction Feedback
 
-> Part of the [v0.3 master plan](implementation-plan.md).
+> Status: **COMPLETED** — Implemented, verified (398 tests passing), documented, committed, and pushed to `main`.
 
 ## Purpose
 

@@ -3646,3 +3646,117 @@ fn phase19_acceptance_cli_flow_end_to_end() {
         "validate results must be point-in-time isolated to accepted state Sn"
     );
 }
+
+#[test]
+fn phase20_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. Initialize KAT repository
+    let (out_init, _, ok_init) = run_kat(root, &["init"]);
+    assert!(ok_init, "kat init failed: {out_init}");
+
+    // 2. kat change status on clean repository
+    let (out_clean_st, _, ok_clean_st) = run_kat(root, &["change", "status"]);
+    assert!(ok_clean_st);
+    assert!(out_clean_st.contains("no open draft change transaction found"));
+
+    let (out_clean_comp, _, ok_clean_comp) = run_kat(root, &["change", "status", "--compact"]);
+    assert!(ok_clean_comp);
+    assert!(out_clean_comp.contains("draft status: none"));
+
+    // 3. Open draft change session
+    let (out_begin, _, ok_begin) = run_kat(
+        root,
+        &[
+            "change",
+            "begin",
+            "--description",
+            "Introduce JSON persistence",
+        ],
+    );
+    assert!(ok_begin, "kat change begin failed: {out_begin}");
+
+    // 4. Stage multi-operation transaction
+    let (c1_out, _, ok_c1) = run_kat(
+        root,
+        &[
+            "create",
+            "design-decision",
+            "--title",
+            "Persist data to JSON file",
+        ],
+    );
+    assert!(ok_c1, "create design-decision failed: {c1_out}");
+    let e_dec = id_line(&c1_out, "element_id");
+
+    let (c2_out, _, ok_c2) = run_kat(
+        root,
+        &["create", "implementation", "--title", "JSON-file store"],
+    );
+    assert!(ok_c2, "create implementation failed: {c2_out}");
+    let e_imp = id_line(&c2_out, "element_id");
+
+    let (_, err_l1, ok_l1) = run_kat(root, &["link", "guides", e_dec, e_imp]);
+    assert!(ok_l1, "link guides failed: {err_l1}");
+
+    let (c3_out, _, ok_c3) = run_kat(root, &["create", "artifact", "--title", "src/store.js"]);
+    assert!(ok_c3, "create artifact failed: {c3_out}");
+    let e_art = id_line(&c3_out, "element_id");
+
+    let (_, err_l2, ok_l2) = run_kat(root, &["link", "represents", e_art, e_imp]);
+    assert!(ok_l2, "link represents failed: {err_l2}");
+
+    // 5. Inspect kat change status
+    let (out_st, err_st, ok_st) = run_kat(root, &["change", "status"]);
+    assert!(
+        ok_st,
+        "kat change status failed: out={out_st}, err={err_st}"
+    );
+    assert!(out_st.contains("Draft Change Transaction"));
+    assert!(out_st.contains("status:       open"));
+    assert!(out_st.contains("description:  Introduce JSON persistence"));
+    assert!(out_st.contains("operations:   5"));
+
+    assert!(out_st.contains("STAGED OPERATIONS (5)"));
+    assert!(out_st.contains("CreateElement"));
+    assert!(out_st.contains("Persist data to JSON file"));
+    assert!(out_st.contains("JSON-file store"));
+    assert!(out_st.contains("LinkKnowledgeElements"));
+    assert!(out_st.contains("src/store.js"));
+
+    assert!(out_st.contains("CANDIDATE EFFECT"));
+    assert!(out_st.contains("elements:      3"));
+    assert!(out_st.contains("+3 created"));
+    assert!(out_st.contains("relationships: 2"));
+    assert!(out_st.contains("+2 created"));
+
+    assert!(out_st.contains("ARTIFACT ACCOUNTABILITY PREVIEW"));
+    assert!(out_st.contains("total:      1"));
+
+    assert!(out_st.contains("CANDIDATE VALIDATION"));
+    assert!(out_st.contains("status: Valid (0 violations"));
+
+    // 6. kat change status --compact
+    let (out_st_comp, _, ok_st_comp) = run_kat(root, &["change", "status", "--compact"]);
+    assert!(ok_st_comp);
+    assert!(out_st_comp.contains("draft status: open"));
+    assert!(out_st_comp.contains("operations: 5"));
+
+    // 7. Verify draft isolation (accepted state validation remains clean)
+    let (out_val, _, ok_val) = run_kat(root, &["validate"]);
+    assert!(ok_val);
+    assert!(out_val.contains("Mechanical Violations:                 0"));
+
+    // 8. Commit open draft transaction
+    let (out_commit, err_commit, ok_commit) = run_kat(root, &["change", "commit"]);
+    assert!(
+        ok_commit,
+        "commit failed: out={out_commit}, err={err_commit}"
+    );
+
+    // 9. Verify change status returns clean after commit
+    let (out_post, _, ok_post) = run_kat(root, &["change", "status"]);
+    assert!(ok_post);
+    assert!(out_post.contains("no open draft change transaction found"));
+}
