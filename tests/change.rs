@@ -5170,3 +5170,58 @@ fn account_artifact_target_deprecated_rejected() {
         ChangeError::Precondition(PreconditionError::ElementNotActive(id)) if id == req_id
     ));
 }
+
+#[test]
+fn inspect_draft_session_returns_none_when_clean_and_view_when_draft_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+
+    // 1. Clean repository: inspect_draft_session returns Ok(None)
+    let clean_view = kat::repository::inspect_draft_session(&repo).unwrap();
+    assert!(clean_view.is_none());
+
+    // 2. Open draft session and stage operations
+    let mut session = kat::repository::begin_draft_session(
+        &repo,
+        Some("Draft session for testing inspect".to_string()),
+    )
+    .unwrap();
+
+    let e_con = ElementId::from_uuid(Uuid::from_u128(9001));
+    kat::repository::stage_operation_into_session(
+        &repo,
+        &mut session,
+        kat::repository::StagedOperationInput::CreateElement(kat::repository::CreateElementInput {
+            element_id: e_con,
+            type_id: "kat.core/constraint".to_string(),
+            properties: vec![(
+                "title".to_string(),
+                PropertyValue::Text("Min Password Length".to_string()),
+            )],
+        }),
+    )
+    .unwrap();
+
+    // 3. Inspect draft session
+    let view = kat::repository::inspect_draft_session(&repo)
+        .unwrap()
+        .expect("draft session should exist");
+    assert_eq!(view.status, "open");
+    assert_eq!(
+        view.description,
+        Some("Draft session for testing inspect".to_string())
+    );
+    assert_eq!(view.staged_operations.len(), 1);
+    assert_eq!(view.staged_operations[0].operation_kind, "CreateElement");
+    assert_eq!(view.staged_operations[0].target_id, e_con.to_string());
+    assert!(
+        view.staged_operations[0]
+            .summary
+            .contains("Min Password Length")
+    );
+    assert_eq!(view.candidate_effect.elements_created, 1);
+    assert!(view.candidate_validation.violations.is_empty());
+}

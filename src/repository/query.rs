@@ -25,11 +25,15 @@ use crate::domain::operation::Operation;
 use crate::domain::property::PropertyValue;
 use crate::encoding::decode::DecodingError;
 use crate::encoding::decode_canonical;
+use crate::encoding::hash::canonical_object_id;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use crate::repository::object_store::{ObjectStore, ObjectStoreError};
 use crate::repository::open::Repository;
 use crate::repository::ref_store::{RefStore, RefStoreError};
-use crate::repository::validation::repository::validate_repository;
+use crate::repository::session::{DraftSessionError, read_draft_session};
+use crate::repository::validation::repository::{
+    ValidationReport, validate_repository, validate_repository_state,
+};
 
 /// Direction traversed when following a relationship in an origin trace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1792,4 +1796,299 @@ pub fn show_ontology_type(
     }
 
     Err(QueryError::UnknownOntologyType(query.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// Draft Session Inspection (Phase 20)
+// ---------------------------------------------------------------------------
+
+/// Detailed overview of an operation staged into an open draft change session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagedOperationDetail {
+    pub index: usize,
+    pub operation_kind: String,
+    pub target_id: String,
+    pub title: Option<String>,
+    pub summary: String,
+}
+
+/// Delta metrics for candidate working state compared to base accepted state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidateEffectSummary {
+    pub elements_created: usize,
+    pub elements_updated: usize,
+    pub elements_deprecated: usize,
+    pub elements_superseded: usize,
+    pub relationships_created: usize,
+    pub relationships_unlinked: usize,
+}
+
+/// Inspection view of an open draft change session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftSessionView {
+    pub base_state_id: ObjectId,
+    pub base_change_id: Option<ObjectId>,
+    pub created_at: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub staged_operations: Vec<StagedOperationDetail>,
+    pub candidate_effect: CandidateEffectSummary,
+    pub candidate_validation: ValidationReport,
+    pub accountability_total_artifacts: usize,
+    pub accountability_stale_artifacts: usize,
+    pub accountability_reconciled_in_draft: usize,
+}
+
+fn get_element_version_info(
+    store: &ObjectStore,
+    session: &crate::repository::session::DraftSession,
+    version_id: ObjectId,
+) -> (Option<String>, String, Option<String>) {
+    if let Some(v) = session.staged_element_versions.iter().find(|e| {
+        canonical_object_id(&CanonicalObject {
+            payload: CanonicalPayload::KnowledgeElementVersion((*e).clone()),
+        })
+        .map(|id| id == version_id)
+        .unwrap_or(false)
+    }) {
+        let title = v.properties.iter().find_map(|(k, val)| {
+            if k == "title" {
+                if let PropertyValue::Text(t) = val {
+                    Some(t.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        return (Some(v.element_id.to_string()), v.type_id.clone(), title);
+    }
+
+    if let Ok(obj) = load_typed(store, version_id, ObjectKind::KnowledgeElementVersion)
+        && let CanonicalPayload::KnowledgeElementVersion(v) = obj.payload
+    {
+        let title = v.properties.iter().find_map(|(k, val)| {
+            if k == "title" {
+                if let PropertyValue::Text(t) = val {
+                    Some(t.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        return (Some(v.element_id.to_string()), v.type_id, title);
+    }
+
+    (None, "unknown".to_string(), None)
+}
+
+fn get_relationship_version_info(
+    store: &ObjectStore,
+    session: &crate::repository::session::DraftSession,
+    version_id: ObjectId,
+) -> (String, Option<String>, Option<String>) {
+    if let Some(v) = session.staged_relationship_versions.iter().find(|r| {
+        canonical_object_id(&CanonicalObject {
+            payload: CanonicalPayload::RelationshipVersion((*r).clone()),
+        })
+        .map(|id| id == version_id)
+        .unwrap_or(false)
+    }) {
+        return (
+            v.relationship_type.clone(),
+            Some(v.source_element_id.to_string()),
+            Some(v.target_element_id.to_string()),
+        );
+    }
+
+    if let Ok(obj) = load_typed(store, version_id, ObjectKind::RelationshipVersion)
+        && let CanonicalPayload::RelationshipVersion(v) = obj.payload
+    {
+        return (
+            v.relationship_type,
+            Some(v.source_element_id.to_string()),
+            Some(v.target_element_id.to_string()),
+        );
+    }
+
+    ("unknown".to_string(), None, None)
+}
+
+/// Inspects an active open draft change session, returning detailed session metadata,
+/// staged operation summaries, candidate effect deltas, candidate validation preview,
+/// and artifact accountability preview.
+pub fn inspect_draft_session(
+    repository: &Repository,
+) -> Result<Option<DraftSessionView>, QueryError> {
+    let session = match read_draft_session(repository.root_dir()) {
+        Ok(s) => s,
+        Err(DraftSessionError::NotFound) => return Ok(None),
+        Err(err) => {
+            return Err(QueryError::ObjectStore(ObjectStoreError::Io(
+                std::io::Error::other(err.to_string()),
+            )));
+        }
+    };
+
+    let store = repository.object_store();
+
+    let mut staged_operations = Vec::new();
+    let mut effect = CandidateEffectSummary {
+        elements_created: 0,
+        elements_updated: 0,
+        elements_deprecated: 0,
+        elements_superseded: 0,
+        relationships_created: 0,
+        relationships_unlinked: 0,
+    };
+    let mut reconciled_count = 0;
+
+    for (idx, op) in session.operations.iter().enumerate() {
+        let index = idx + 1;
+        match op {
+            Operation::CreateElement { new_version } => {
+                effect.elements_created += 1;
+                let (elem_id, type_id, title) =
+                    get_element_version_info(store, &session, *new_version);
+                let short_type = type_id.rsplit('/').next().unwrap_or(&type_id);
+                let title_str = title.as_deref().unwrap_or("-");
+                staged_operations.push(StagedOperationDetail {
+                    index,
+                    operation_kind: "CreateElement".to_string(),
+                    target_id: elem_id.unwrap_or_default(),
+                    title: title.clone(),
+                    summary: format!("[{short_type}] \"{title_str}\""),
+                });
+            }
+            Operation::UpdateElement {
+                element_id,
+                new_version,
+                ..
+            } => {
+                effect.elements_updated += 1;
+                let (_, type_id, title) = get_element_version_info(store, &session, *new_version);
+                let short_type = type_id.rsplit('/').next().unwrap_or(&type_id);
+                let title_str = title.as_deref().unwrap_or("-");
+                staged_operations.push(StagedOperationDetail {
+                    index,
+                    operation_kind: "UpdateElement".to_string(),
+                    target_id: element_id.to_string(),
+                    title: title.clone(),
+                    summary: format!("[{short_type}] \"{title_str}\""),
+                });
+            }
+            Operation::DeprecateElement {
+                element_id,
+                new_version,
+                ..
+            } => {
+                effect.elements_deprecated += 1;
+                let (_, type_id, title) = get_element_version_info(store, &session, *new_version);
+                let short_type = type_id.rsplit('/').next().unwrap_or(&type_id);
+                let title_str = title.as_deref().unwrap_or("-");
+                staged_operations.push(StagedOperationDetail {
+                    index,
+                    operation_kind: "DeprecateElement".to_string(),
+                    target_id: element_id.to_string(),
+                    title: title.clone(),
+                    summary: format!("[{short_type}] \"{title_str}\""),
+                });
+            }
+            Operation::Supersede {
+                existing_element,
+                replacement_element,
+                ..
+            } => {
+                effect.elements_superseded += 1;
+                effect.elements_created += 1;
+                staged_operations.push(StagedOperationDetail {
+                    index,
+                    operation_kind: "SupersedeElement".to_string(),
+                    target_id: existing_element.to_string(),
+                    title: None,
+                    summary: format!("supersede {existing_element} -> {replacement_element}"),
+                });
+            }
+            Operation::Link {
+                new_relationship_version,
+            } => {
+                effect.relationships_created += 1;
+                let (rel_type, src, tgt) =
+                    get_relationship_version_info(store, &session, *new_relationship_version);
+                let short_rel = rel_type.rsplit('/').next().unwrap_or(&rel_type);
+                staged_operations.push(StagedOperationDetail {
+                    index,
+                    operation_kind: "LinkKnowledgeElements".to_string(),
+                    target_id: src.clone().unwrap_or_default(),
+                    title: None,
+                    summary: format!(
+                        "[{short_rel}] {} -> {}",
+                        src.as_deref().unwrap_or("-"),
+                        tgt.as_deref().unwrap_or("-")
+                    ),
+                });
+            }
+            Operation::Unlink {
+                relationship_id, ..
+            } => {
+                effect.relationships_unlinked += 1;
+                staged_operations.push(StagedOperationDetail {
+                    index,
+                    operation_kind: "UnlinkRelationship".to_string(),
+                    target_id: relationship_id.to_string(),
+                    title: None,
+                    summary: format!("unlink relationship {relationship_id}"),
+                });
+            }
+            Operation::AccountArtifact {
+                artifact_id,
+                reconciliations,
+            } => {
+                effect.elements_updated += 1;
+                reconciled_count += reconciliations.len();
+                staged_operations.push(StagedOperationDetail {
+                    index,
+                    operation_kind: "AccountArtifact".to_string(),
+                    target_id: artifact_id.to_string(),
+                    title: None,
+                    summary: format!(
+                        "[kat.core/artifact] {artifact_id} (reconciled {} edges)",
+                        reconciliations.len()
+                    ),
+                });
+            }
+        }
+    }
+
+    let candidate_validation = validate_repository_state(
+        store,
+        &session.working_state,
+        &session.staged_element_versions,
+        &session.staged_relationship_versions,
+    )?;
+
+    let acc_report = analyze_artifact_accountability(repository)?;
+    let accountability_total_artifacts = acc_report.artifacts.len();
+    let accountability_stale_artifacts = acc_report
+        .artifacts
+        .iter()
+        .filter(|r| r.status == ArtifactAccountabilityStatus::Stale)
+        .count();
+
+    Ok(Some(DraftSessionView {
+        base_state_id: session.base_state_id,
+        base_change_id: session.base_change_id,
+        created_at: session.created_at.clone(),
+        description: session.description.clone(),
+        status: session.status.as_str().to_string(),
+        staged_operations,
+        candidate_effect: effect,
+        candidate_validation,
+        accountability_total_artifacts,
+        accountability_stale_artifacts,
+        accountability_reconciled_in_draft: reconciled_count,
+    }))
 }

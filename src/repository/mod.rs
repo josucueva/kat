@@ -56,14 +56,15 @@ pub use change::{
 pub use open::{Repository, open_repository};
 pub use query::{
     ArtifactAccountability, ArtifactAccountabilityReport, ArtifactAccountabilityStatus,
-    ArtifactBaseline, ElementTypeSummary, ElementTypeView, ElementView, HistoryEntry, ImpactPath,
-    ImpactResult, ImpactStep, ImpactedElement, ListFilter, OntologySummary, OntologyTypeView,
-    QueryError, RelationshipCapability, RelationshipNeighborhood, RelationshipTypeSummary,
-    RelationshipTypeView, RelationshipView, TracePath, TraceResult, TraceStep, TraceTreeEdge,
-    TraceTreeNode, TraversalDirection, active_ontology, analyze_artifact_accountability,
-    analyze_impact, history, history_entry_touches_element, impact_propagation_direction,
-    inspect_ontology, list_elements, origin_traversal_direction, show_element, show_ontology_type,
-    trace_origin,
+    ArtifactBaseline, CandidateEffectSummary, DraftSessionView, ElementTypeSummary,
+    ElementTypeView, ElementView, HistoryEntry, ImpactPath, ImpactResult, ImpactStep,
+    ImpactedElement, ListFilter, OntologySummary, OntologyTypeView, QueryError,
+    RelationshipCapability, RelationshipNeighborhood, RelationshipTypeSummary,
+    RelationshipTypeView, RelationshipView, StagedOperationDetail, TracePath, TraceResult,
+    TraceStep, TraceTreeEdge, TraceTreeNode, TraversalDirection, active_ontology,
+    analyze_artifact_accountability, analyze_impact, history, history_entry_touches_element,
+    impact_propagation_direction, inspect_draft_session, inspect_ontology, list_elements,
+    origin_traversal_direction, show_element, show_ontology_type, trace_origin,
 };
 pub use resolve::{ResolveError, resolve_element_id, resolve_relationship_id};
 pub use validation::invariant::InvariantError;
