@@ -34,6 +34,9 @@ Phase 18 is **strictly read-side**: no repository mutation, no canonical format 
   - When `max_depth = Some(N)` ($N \ge 1$), nodes at depth $N$ are included in the evaluated result graph, but their outgoing traversal expansion is not performed.
   - Traversal depth bounds in KAT are positive hop counts. Specifying `--max-depth 0` returns `QueryError::InvalidMaxDepth(0)`.
 
+- **Actual Truncation Condition**:
+  - Supplying `max_depth = Some(N)` does not imply truncation unless traversal expansion was actively suppressed. Truncation indicators apply only when unvisited outgoing relationships exist at depth $N$ that were omitted due to the `max_depth` boundary. If the graph naturally terminates at depth $M \le N$, the query result is complete and untruncated.
+
 - **Path-Local Cycle Prevention**:
   - Graph traversal checks `visited_rels` per path branch to prevent cyclic looping (e.g. $A \to B \to A \to B$), while permitting elements reachable via multiple distinct parent paths (e.g. $A \to B \to D$ and $A \to C \to D$) to be explored under each branch.
 

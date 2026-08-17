@@ -316,6 +316,9 @@ Both `kat trace` and `kat impact` operate exclusively as read-only semantic quer
    - `kat trace` emphasizes provenance paths and path visualization (`--paths` and tree view).
    - `kat impact` emphasizes affected-result category partitioning (`Directly Changed Elements`, `Semantically Affected Elements`, `Affected Artifacts`) with supporting propagation step details. `--paths` is intentionally omitted from `kat impact` to preserve focus on category status reporting.
 
+5. **Actual Truncation Condition**:
+   - Supplying `max_depth = Some(N)` does not imply truncation unless traversal expansion was actively suppressed. Truncation indicators apply only when unvisited outgoing relationships exist at depth $N$ that were omitted due to the `max_depth` boundary. If the graph naturally terminates at depth $M \le N$, the query result is complete and untruncated.
+
 ### History
 
 Retrieves the ordered accepted evolution of a knowledge element or repository.
