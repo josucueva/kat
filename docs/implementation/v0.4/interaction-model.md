@@ -16,7 +16,7 @@ The central thesis of this document is:
 
 > **KAT does not have too few capabilities. KAT has been exposing its low-level semantic mutation and query primitives directly as standard user workflow.**
 
-This document establishes KAT's three-layer interaction architecture, defines the **Porcelain vs. Plumbing** classification, outlines the 5 core user-intention workflows, and introduces the **Interaction Amplification** metric.
+This document establishes KAT's three-layer interaction architecture, defines the **Porcelain vs. Plumbing** classification, outlines the 5 core user-intention workflows, and introduces the **Interaction Amplification** and **Primitive Exposure** metrics.
 
 ---
 
@@ -43,7 +43,7 @@ In systems design (such as Version Control Systems like Git), a sharp architectu
                           ▼
                ┌─────────────────────┐
                │     KAT CORE        │  (Canonical objects, SHA-256, refs/accepted)
-               └─────────────────────┘
+               └──────────┬──────────┘
 ```
 
 ## The KAT Problem in v0.1–v0.3.1
@@ -87,20 +87,27 @@ A critical guardrail governs KAT's porcelain layer:
 
 KAT's porcelain layer shall **never** use probabilistic inference, LLM guessing, or silent heuristics to invent relationships or element types.
 
-Meaning remains explicitly declared by the user or agent. The porcelain layer automates the lower-level orchestration (translating high-level intent declarations into ordered canonical mutation operations, handle assignments, and candidate state transitions).
+Meaning remains explicitly declared by the user or agent. The porcelain compiler automates lower-level orchestration by deterministically compiling explicit declarative structures into dependency-valid canonical operation sequences ($S_0 \xrightarrow{\text{op}_1} S_1 \dots \to S_{\text{working}}$), assigning handles, and executing candidate state transitions.
 
 ---
 
-# 4. Interaction Amplification Metric
+# 4. Interaction Metrics: Interaction Amplification & Primitive Exposure
 
-We define **Interaction Amplification** ($IA$) as:
+We evaluate porcelain usability using two complementary metrics:
+
+## 1. Interaction Amplification ($IA$)
 
 $$IA = \frac{\text{Count of Primitive KAT Operations Executed}}{\text{Count of Distinct User Intentions}}$$
 
 - **v0.1–v0.3.1 Baseline**: $IA = \frac{213 \text{ primitive operations}}{6 \text{ user intentions}} \approx \mathbf{35.5}$ operations per intent.
-- **v0.4 Porcelain Target**: $IA \to \mathbf{1.0}$ operation per intent for standard workflows.
+- **v0.4 Target**: $IA$ is a **directional design target** aiming for a small number of meaningful interaction steps per intent, rather than a rigid quantitative gate.
 
-The porcelain layer collapses $IA$ by accepting task-oriented declarations and generating the underlying canonical operations (`CreateElement`, `Link`, `AccountArtifact`, etc.) inside the draft session automatically.
+## 2. Primitive Exposure ($PE$)
+
+$$\text{Primitive Exposure} = \frac{\text{Count of Primitive Operations Manually Invoked by Actor}}{\text{Total Primitive Operations Executed}}$$
+
+- **v0.1–v0.3.1 Baseline**: $PE = \mathbf{1.0}$ ($100\%$ of primitive operations were manually typed or scripted by the actor).
+- **v0.4 Target**: For standard porcelain workflows, $PE \to \mathbf{0.0}$ (the user interacts with porcelain workflows, while KAT's internal compiler drives the lower-level primitive operations).
 
 ---
 
@@ -110,7 +117,7 @@ KAT v0.4 formally categorizes all capabilities into three interaction tiers:
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 1. PORCELAIN (Everyday Task Workflows)                                 │
+│ 1. PORCELAIN CONCEPTS (Everyday Task Workflows)                        │
 │    status        Inspect draft & accepted repository status             │
 │    context       Retrieve bounded semantic development context          │
 │    author        Express high-level semantic changes (declarative)      │
@@ -136,35 +143,38 @@ KAT v0.4 formally categorizes all capabilities into three interaction tiers:
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
+> **Note on Command Names**: The porcelain names in this document (`status`, `context`, `author`, `check`, `commit`) identify **interaction capabilities**. Their final concrete CLI command spellings, flags, and grammar are defined in `cli.md`.
+
 ---
 
-# 6. The 5 Core User Intentions & Porcelain Workflows
+# 6. The 5 Core User Intentions & Porcelain Capabilities
 
 KAT v0.4 organizes standard developer interaction around **5 core intentions**:
 
 ```mermaid
 flowchart LR
-    Intention1([1. Orient & Understand]) --> ContextCmd[kat context]
-    Intention2([2. Inspect State]) --> StatusCmd[kat status]
-    Intention3([3. Author / Evolve]) --> AuthorCmd[kat author]
-    Intention4([4. Check Health]) --> CheckCmd[kat check]
-    Intention5([5. Publish]) --> CommitCmd[kat commit]
+    Intention1([1. Orient & Understand]) --> ContextCmd[context capability]
+    Intention2([2. Inspect State]) --> StatusCmd[status capability]
+    Intention3([3. Author / Evolve]) --> AuthorCmd[author capability]
+    Intention4([4. Check Health]) --> CheckCmd[check capability]
+    Intention5([5. Publish]) --> CommitCmd[commit capability]
 ```
 
-## Intention 1: Orient & Understand (`kat context`)
+## Intention 1: Orient & Understand (`context`)
 - **Developer Question**: *"What is the semantic context, rationale, and physical code structure surrounding this feature or requirement?"*
 - **Porcelain Action**: Executes bounded neighborhood retrieval, grouping results into `provenance`, `requirements`, `constraints`, `decisions`, `implementations`, `artifacts`, and `validations`.
 - **Replaces**: Repeated manual invocation sequences of `show`, `trace`, `impact`, `artifacts`, and file searches.
 
-## Intention 2: Inspect State (`kat status`)
+## Intention 2: Inspect State (`status`)
 - **Developer Question**: *"Where am I? Is a draft open, and what changes are staged?"*
 - **Porcelain Action**: Displays accepted head status, active draft presence, staged operations, declared workflow handles, candidate delta, candidate accountability preview, and candidate validation.
 
-## Intention 3: Author / Evolve (`kat author`)
+## Intention 3: Author / Evolve (`author`)
 - **Developer Question**: *"I want to declare the requirements, decisions, implementations, and artifact mappings for a feature."*
-- **Porcelain Action**: Accepts task-oriented declarative input (single block or file), auto-assigns workflow reference handles, orders operations, executes candidate transitions against $S_{\text{working}}$, and stages canonical mutation operations inside `.kat/work/change/session.json`.
+- **Porcelain Action**: Accepts explicit declarative semantic input, auto-assigns draft workflow handles, deterministically compiles claims into a dependency-valid canonical operation order, and stages operations inside `.kat/work/change/session.json`.
+- **Compiler Boundary**: `author` deterministically compiles claims that were explicitly provided; it **never** performs probabilistic inference or LLM guessing to invent claims or relationships.
 
-## Intention 4: Check Health (`kat check`)
+## Intention 4: Check Health (`check`)
 - **Developer Question**: *"Is the semantic repository healthy, conformant, covered, and aligned?"*
 - **Porcelain Action**: Runs a single comprehensive health check exposing 4 distinct diagnostic sections:
   1. Mechanical Consistency Violations (from `validate`).
@@ -172,7 +182,7 @@ flowchart LR
   3. Artifact Accountability (from `artifacts --stale`).
   4. Graph Quality Diagnostics (from `quality`).
 
-## Intention 5: Publish (`kat commit`)
+## Intention 5: Publish (`commit`)
 - **Developer Question**: *"Publish my verified candidate Change transaction to accepted state."*
 - **Porcelain Action**: Validates candidate $S_{\text{working}}$, resolves workflow handles to stable UUIDs, encodes canonical `ChangeRevision`, updates `refs/accepted`, and cleans up `.kat/work/change/session.json`.
 
@@ -183,13 +193,13 @@ flowchart LR
 The porcelain layer operates directly on top of the lower-level authoring infrastructure defined in [`authoring-model.md`](file:///home/joshua/Projects/kat/docs/implementation/v0.4/authoring-model.md):
 
 ```text
-User Intent Input (Declarative Subsystem Block)
+Explicit Declarative Input (User Intent)
                        │
                        ▼
           Porcelain Compiler / Translator
                        │
-                       ├─► Declares WorkflowReferences (@req, @impl, @art)
-                       ├─► Generates ordered Canonical Operations:
+                       ├─► Assigns WorkflowReferences (@req, @impl, @art)
+                       ├─► Deterministically compiles Dependency-Valid Order:
                        │     1. CreateElement(Requirement)
                        │     2. CreateElement(Implementation)
                        │     3. CreateElement(Artifact)
@@ -204,16 +214,17 @@ User Intent Input (Declarative Subsystem Block)
                        └─► Persists to .kat/work/change/session.json
 ```
 
-This ensures complete backward compatibility: primitive commands (`kat create`, `kat link`) remain available for precision scripting or low-level tool access, while porcelain commands (`kat author`, `kat check`, `kat context`) provide high-density interaction for humans and AI agents.
+This ensures complete backward compatibility: primitive commands (`kat create`, `kat link`) remain available for precision scripting or low-level tool access, while porcelain capabilities (`context`, `check`, `author`) provide high-density interaction for humans and AI agents.
 
 ---
 
 # 8. Machine Interaction in the Porcelain Model
 
-For Machine Clients and AI Agents:
+Porcelain commands shall support **structured machine-readable output**.
 
-1. **Porcelain Machine Output**: Porcelain commands (`context`, `status`, `check`, `author`, `commit`) support `--json` structured output, allowing agents to execute 1 porcelain call to retrieve complete context or perform a multi-element evolution.
-2. **Plumbing Access**: Plumbing commands continue to accept and return exact canonical UUIDs for deterministic low-level manipulation when needed.
+The concrete serialization format (e.g. JSON DTOs) and CLI flag selection mechanisms are defined in [`machine-interface.md`](file:///home/joshua/Projects/kat/docs/implementation/v0.4/machine-interface.md) and [`cli.md`](file:///home/joshua/Projects/kat/docs/implementation/v0.4/cli.md).
+
+Machine clients and AI agents can execute 1 porcelain call to retrieve complete context or perform a multi-element evolution, while plumbing commands remain accessible for low-level canonical UUID manipulation.
 
 ---
 
@@ -229,14 +240,14 @@ FOUNDATION [Frozen]
     operations.md
     reference-model.md
 
-INFRASTRUCTURE & INTERACTION [Frozen / Active]
-    authoring-model.md       (Authoring infrastructure & session.json mechanics)
-    interaction-model.md     (Porcelain vs Plumbing & 5 Core User Intentions)  <- [COMPLETED]
+INFRASTRUCTURE & INTERACTION [Frozen]
+    authoring-model.md       (Authoring infrastructure & session.json)
+    interaction-model.md     (Porcelain vs Plumbing & 5 Core Intentions)
 
 DETAILED DESIGN SPECS
     context-model.md         (Bounded neighborhood retrieval specification)  <- [NEXT]
     graph-quality-model.md   (Advisory quality diagnostic rules)
-    machine-interface.md     (JSON schemas for porcelain & plumbing DTOs)
+    machine-interface.md     (Structured output formats & machine DTOs)
     cli.md                   (Concrete CLI grammar, flags, & porcelain options)
 
 EXECUTION
@@ -250,4 +261,4 @@ The immediate next document is:
 docs/implementation/v0.4/context-model.md
 ```
 
-It will define the detailed graph traversal algorithms, root provenance tracking, category grouping, and truncation bounds for the primary retrieval porcelain command: `kat context`.
+It will define the detailed graph traversal algorithms, root provenance tracking, category grouping, and truncation bounds for the primary retrieval porcelain operation: `Context`.
