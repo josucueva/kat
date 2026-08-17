@@ -72,6 +72,7 @@ pub mod validation_repository {
 }
 pub use validation::ontology::{OntologyError, validate_element_type, validate_relationship};
 pub use validation::repository::{
-    UnverifiedConstraint, ValidationReport, ValidationViolation, ValidationViolationKind,
-    validate_repository, validate_repository_state,
+    CategoryCoverageSummary, ConstraintVerificationDetail, UncoveredElementDetail,
+    UnverifiedConstraint, ValidationEvidenceInfo, ValidationReport, ValidationViolation,
+    ValidationViolationKind, validate_repository, validate_repository_state,
 };

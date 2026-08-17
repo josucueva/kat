@@ -1694,6 +1694,77 @@ fn validate_permits_deprecated_source_on_existing_relationship() {
     assert!(report.violations.is_empty());
 }
 
+#[test]
+fn validate_repository_classification_and_evidence_coverage() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let e_con = ElementId::from_uuid(Uuid::from_u128(8001));
+    let e_req = ElementId::from_uuid(Uuid::from_u128(8002));
+    let e_val = ElementId::from_uuid(Uuid::from_u128(8003));
+    let r_restricts = RelationshipId::from_uuid(Uuid::from_u128(8101));
+    let r_validates = RelationshipId::from_uuid(Uuid::from_u128(8102));
+
+    let repo = publish_custom_state_fixture(
+        root,
+        vec![
+            (e_con, "kat.core/constraint", Lifecycle::Active),
+            (e_req, "kat.core/requirement", Lifecycle::Active),
+            (e_val, "kat.core/validation", Lifecycle::Active),
+        ],
+        vec![
+            (r_restricts, "kat.core/restricts", e_con, e_req),
+            (r_validates, "kat.core/validates", e_val, e_con),
+        ],
+    );
+
+    let report = validate_repository(&repo).unwrap();
+    assert!(report.violations.is_empty());
+
+    // Constraint details assertion
+    assert_eq!(report.constraint_details.len(), 1);
+    let detail = &report.constraint_details[0];
+    assert_eq!(detail.constraint_id, e_con);
+    assert_eq!(detail.constrained_element_ids, vec![e_req]);
+    assert!(!detail.is_mechanically_verified, "critical invariant: evidence-backed != mechanically verified");
+    assert_eq!(detail.validation_evidence.len(), 1);
+    assert_eq!(detail.validation_evidence[0].validation_element_id, e_val);
+
+    // Category coverage assertions
+    let con_summary = report
+        .category_summaries
+        .iter()
+        .find(|s| s.category_type == "kat.core/constraint")
+        .unwrap();
+    assert_eq!(con_summary.total_count, 1);
+    assert_eq!(con_summary.evidence_backed_count, 1);
+    assert_eq!(con_summary.uncovered_count, 0);
+
+    let req_summary = report
+        .category_summaries
+        .iter()
+        .find(|s| s.category_type == "kat.core/requirement")
+        .unwrap();
+    assert_eq!(req_summary.total_count, 1);
+    assert_eq!(req_summary.evidence_backed_count, 0);
+    assert_eq!(req_summary.uncovered_count, 1);
+
+    // Uncovered elements assertion
+    assert!(
+        report
+            .uncovered_elements
+            .iter()
+            .any(|u| u.element_id == e_req)
+    );
+    assert!(
+        !report
+            .uncovered_elements
+            .iter()
+            .any(|u| u.element_id == e_con)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // analyze_artifact_accountability tests (Step 10.3)
 // ---------------------------------------------------------------------------

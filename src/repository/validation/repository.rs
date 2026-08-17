@@ -52,6 +52,54 @@ pub struct UnverifiedConstraint {
     pub constrained_element_ids: Vec<ElementId>,
 }
 
+/// Linked validation evidence element targeting a subject.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationEvidenceInfo {
+    /// Identity of the `kat.core/validation` element.
+    pub validation_element_id: ElementId,
+    /// Title of the validation element, if present.
+    pub title: Option<String>,
+}
+
+/// Verification status and linked evidence details for a Constraint element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstraintVerificationDetail {
+    /// Identity of the constraint element.
+    pub constraint_id: ElementId,
+    /// Title property of the constraint, if present.
+    pub title: Option<String>,
+    /// Element identities targeted by valid outgoing `kat.core/restricts` relationships.
+    pub constrained_element_ids: Vec<ElementId>,
+    /// Whether KAT mechanically verified this constraint via executable rule (always `false` in KAT).
+    pub is_mechanically_verified: bool,
+    /// Linked validation evidence elements targeting this constraint via `validates` relationships.
+    pub validation_evidence: Vec<ValidationEvidenceInfo>,
+}
+
+/// Summary of evidence coverage for a single knowledge element category.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CategoryCoverageSummary {
+    /// Canonical type ID of the category (e.g. `kat.core/constraint`).
+    pub category_type: String,
+    /// Total count of active elements in this category.
+    pub total_count: usize,
+    /// Count of elements backed by at least one linked validation evidence element.
+    pub evidence_backed_count: usize,
+    /// Count of elements with zero linked validation evidence elements.
+    pub uncovered_count: usize,
+}
+
+/// Detail for an active knowledge element that has zero linked validation evidence elements.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UncoveredElementDetail {
+    /// Identity of the uncovered element.
+    pub element_id: ElementId,
+    /// Canonical type ID of the element.
+    pub type_id: String,
+    /// Title property of the element, if present.
+    pub title: Option<String>,
+}
+
 /// Comprehensive report produced by `validate_repository`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationReport {
@@ -59,6 +107,12 @@ pub struct ValidationReport {
     pub violations: Vec<ValidationViolation>,
     /// Active constraint knowledge elements without executable rules (informational, exit code 0).
     pub unverified_constraints: Vec<UnverifiedConstraint>,
+    /// Detailed verification status and evidence details per constraint.
+    pub constraint_details: Vec<ConstraintVerificationDetail>,
+    /// Category-level evidence coverage statistics.
+    pub category_summaries: Vec<CategoryCoverageSummary>,
+    /// Active knowledge elements without linked validation evidence.
+    pub uncovered_elements: Vec<UncoveredElementDetail>,
 }
 
 use crate::domain::element::KnowledgeElementVersion;
@@ -160,6 +214,7 @@ pub fn validate_repository_state(
     let mut violations = Vec::new();
     let mut seen_triples = HashSet::new();
     let mut valid_restricts_targets: HashMap<ElementId, Vec<ElementId>> = HashMap::new();
+    let mut valid_validates_evidence: HashMap<ElementId, Vec<ValidationEvidenceInfo>> = HashMap::new();
 
     // Iterate over relationships in canonical RelationshipId order
     for entry in &state.relationships {
@@ -290,29 +345,74 @@ pub fn validate_repository_state(
                 .or_default()
                 .push(rel_v.target_element_id);
         }
+
+        // Track valid validates evidence elements for target subjects
+        if short_rel_type == "validates" && rel_ontology_valid && endpoints_valid {
+            if let Some(src) = source_elem {
+                let src_short_type = src.type_id.rsplit('/').next().unwrap_or(&src.type_id);
+                if src_short_type == "validation" && src.lifecycle == Lifecycle::Active {
+                    let val_title = src.properties.iter().find_map(|(k, v)| {
+                        if k == "title" {
+                            if let PropertyValue::Text(t) = v {
+                                Some(t.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    });
+                    valid_validates_evidence
+                        .entry(rel_v.target_element_id)
+                        .or_default()
+                        .push(ValidationEvidenceInfo {
+                            validation_element_id: rel_v.source_element_id,
+                            title: val_title,
+                        });
+                }
+            }
+        }
     }
 
-    // Collect unverified constraints for active kat.core/constraint elements
+    // Collect unverified constraints, detailed verification info, and evidence coverage for active elements
     let mut unverified_constraints = Vec::new();
+    let mut constraint_details = Vec::new();
+    let mut category_stats: HashMap<String, (usize, usize)> = HashMap::new();
+    let mut uncovered_elements = Vec::new();
+
     for entry in &state.elements {
         let Some(elem_v) = loaded_elements.get(&entry.element_id) else {
             continue;
         };
 
-        let short_type = elem_v.type_id.rsplit('/').next().unwrap_or(&elem_v.type_id);
-        if short_type == "constraint" && elem_v.lifecycle == Lifecycle::Active {
-            let title = elem_v.properties.iter().find_map(|(k, v)| {
-                if k == "title" {
-                    if let PropertyValue::Text(t) = v {
-                        Some(t.clone())
-                    } else {
-                        None
-                    }
+        if elem_v.lifecycle != Lifecycle::Active {
+            continue;
+        }
+
+        let canonical_type = elem_v.type_id.clone();
+        let short_type = canonical_type.rsplit('/').next().unwrap_or(&canonical_type);
+
+        let title = elem_v.properties.iter().find_map(|(k, v)| {
+            if k == "title" {
+                if let PropertyValue::Text(t) = v {
+                    Some(t.clone())
                 } else {
                     None
                 }
-            });
+            } else {
+                None
+            }
+        });
 
+        let mut evidence = valid_validates_evidence
+            .get(&entry.element_id)
+            .cloned()
+            .unwrap_or_default();
+        evidence.sort_by_key(|e| e.validation_element_id);
+
+        let is_evidence_backed = !evidence.is_empty();
+
+        if short_type == "constraint" {
             let constrained_element_ids = valid_restricts_targets
                 .get(&entry.element_id)
                 .cloned()
@@ -320,15 +420,55 @@ pub fn validate_repository_state(
 
             unverified_constraints.push(UnverifiedConstraint {
                 constraint_element_id: entry.element_id,
-                title,
+                title: title.clone(),
+                constrained_element_ids: constrained_element_ids.clone(),
+            });
+
+            constraint_details.push(ConstraintVerificationDetail {
+                constraint_id: entry.element_id,
+                title: title.clone(),
                 constrained_element_ids,
+                is_mechanically_verified: false, // Critical invariant: evidence-backed != mechanically verified
+                validation_evidence: evidence,
             });
         }
+
+        // Validation elements represent evidence itself; skip coverage tracking for them
+        if short_type != "validation" {
+            let entry_stat = category_stats.entry(canonical_type.clone()).or_insert((0, 0));
+            entry_stat.0 += 1;
+            if is_evidence_backed {
+                entry_stat.1 += 1;
+            } else {
+                uncovered_elements.push(UncoveredElementDetail {
+                    element_id: entry.element_id,
+                    type_id: canonical_type,
+                    title,
+                });
+            }
+        }
     }
+
+    let mut category_summaries: Vec<CategoryCoverageSummary> = category_stats
+        .into_iter()
+        .map(|(category_type, (total_count, evidence_backed_count))| CategoryCoverageSummary {
+            category_type,
+            total_count,
+            evidence_backed_count,
+            uncovered_count: total_count - evidence_backed_count,
+        })
+        .collect();
+    category_summaries.sort_by(|a, b| a.category_type.cmp(&b.category_type));
+
+    uncovered_elements.sort_by(|a, b| (&a.type_id, a.element_id).cmp(&(&b.type_id, b.element_id)));
+    constraint_details.sort_by_key(|c| c.constraint_id);
 
     Ok(ValidationReport {
         violations,
         unverified_constraints,
+        constraint_details,
+        category_summaries,
+        uncovered_elements,
     })
 }
 
