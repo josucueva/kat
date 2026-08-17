@@ -292,6 +292,13 @@ Impact Analysis categorizes impacted elements into three distinct buckets:
 
 > **Lifecycle Policy Distinction**: Filtering reached target elements to `Lifecycle::Active` is an **Impact-specific query policy**. Because Impact Analysis identifies potential consequences for the *current accepted operational state*, historical (`Deprecated` or `Superseded`) targets are excluded from impact results. By contrast, **Trace Origin** retains all historical lifecycle states in trace paths to preserve full provenance history.
 
+#### Query Scope Bounding & Representation
+
+Both `kat trace` and `kat impact` support optional scope bounding at the Query Engine level:
+
+* **Depth Bounding (`--max-depth <N>`)**: Bounds graph traversal at $N$ relationship hops ($N \ge 1$). Expansion halts when path length reaches $N$ hops. Specifying `--max-depth 0` returns an `InvalidMaxDepth(0)` error with exit status 1.
+* **Trace Representation (`kat trace`)**: Defaults to a collapsed, deduplicated ASCII tree view (`to_tree()`) showing hierarchical origin branches. Supplying `--paths` emits explicit exhaustive path enumerations.
+
 ### History
 
 Retrieves the ordered accepted evolution of a knowledge element or repository.

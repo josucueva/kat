@@ -374,8 +374,8 @@ The Query Engine provides read-only semantic query operations over accepted repo
 * `List`: Filtered element discovery by type or lifecycle.
 * `Show`: Element property view and incoming/outgoing relationship inspection.
 * `Status`: Repository summary, latest accepted change, and state counts.
-* `Trace`: Origin provenance path traversal following normative origin policies.
-* `Impact`: Partitioned impact analysis (`Directly Changed Elements`, `Semantically Affected Elements`, `Accountable Artifacts`).
+* `Trace`: Origin provenance path traversal following normative origin policies, supporting depth-bounding (`max_depth: Option<usize>`) and collapsed tree projection (`to_tree()`).
+* `Impact`: Partitioned impact analysis (`Directly Changed Elements`, `Semantically Affected Elements`, `Accountable Artifacts`) with depth-bounded evaluation (`max_depth: Option<usize>`).
 * `History`: Accepted history traversal and element revision filtering (`history --element`).
 * `ArtifactAccountability`: `CURRENT` / `STALE` / `UNACCOUNTED` status reporting (`kat artifacts`).
 * `InspectOntology`: Active ontology discovery, element/relationship type summaries, endpoint admissibility, and capability views (`kat ontology`, `kat ontology show`).

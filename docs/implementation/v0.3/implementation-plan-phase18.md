@@ -2,7 +2,7 @@
 
 > Part of the [v0.3 master plan](implementation-plan.md).
 >
-> Status: **PLANNED** — Pending review and freezing before implementation.
+> Status: **COMPLETED** — Implemented, verified (396 tests passing), documented, committed, and pushed to `main`.
 
 ## Purpose
 
