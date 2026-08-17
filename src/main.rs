@@ -2846,7 +2846,7 @@ fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport) {
     println!();
 
     if report.artifacts.is_empty() {
-        println!("Artifacts");
+        println!("Artifacts (0)");
         println!("  no active artifacts found");
         println!();
         println!("Summary");

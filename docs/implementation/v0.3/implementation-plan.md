@@ -2,7 +2,7 @@
 
 This document is the master tracker for **KAT v0.3** (Phases 17–21). It follows the same workflow as v0.1 and v0.2: every step is **atomic**, is **validated before the next step** (`cargo test`, `cargo fmt --check`, `cargo clippy -D warnings`), and is committed after validation. Per-phase detail lives in dedicated files linked from the [Phases](#phases) index. The top-level master tracker is `docs/implementation/master-plan.md`.
 
-Status: **v0.3.0 in progress** — Phase 17 completed and verified (394 tests passing).
+Status: **v0.3.0 COMPLETED** — All Phases (17–21) implemented and verified (399 tests passing).
 
 ---
 
@@ -64,7 +64,7 @@ Detailed, per-phase plans live in dedicated files so this master stays a lean tr
 | Phase 18 — Scalable Query Inspection (`kat trace` / `impact` tree rendering & bounds) | [implementation-plan-phase18.md](implementation-plan-phase18.md) | **completed** |
 | Phase 19 — Validation Result Classification & Coverage | [implementation-plan-phase19.md](implementation-plan-phase19.md) | **completed** |
 | Phase 20 — Change UX & Draft Inspection | [implementation-plan-phase20.md](implementation-plan-phase20.md) | **completed** |
-| Phase 21 — Accountability Inspection & Real-Project Evaluation | [implementation-plan-phase21.md](implementation-plan-phase21.md) | planned |
+| Phase 21 — Accountability Inspection & Real-Project Evaluation | [implementation-plan-phase21.md](implementation-plan-phase21.md) | **completed** |
 
 ---
 
@@ -77,6 +77,7 @@ Detailed, per-phase plans live in dedicated files so this master stays a lean tr
 | 2026-08-17 | Phase 18 — Scalable Query Inspection | Implemented Query Engine `--max-depth <N>` evaluation bounding, `TraceResult::to_tree()` ASCII tree rendering, `--paths` explicit path list view, and end-to-end acceptance tests. |
 | 2026-08-17 | Phase 19 — Validation Classification & Coverage | Implemented `kat validate` diagnostic classification (Mechanical Violations vs Unverified Constraints), `kat.core/validates` evidence tracking, `kat validate --coverage`, and acceptance tests. |
 | 2026-08-17 | Phase 20 — Change UX & Draft Inspection | Implemented `inspect_draft_session`, `DraftSessionView`, `CandidateEffectSummary`, `kat change status` multi-section rendering, transaction feedback, and acceptance tests. |
+| 2026-08-17 | Phase 21 — Accountability Inspection & v0.3 Acceptance | Implemented `ArtifactFilter`, `analyze_artifact_accountability_filtered`, `kat artifacts --stale`, `kat artifacts <id>`, and acceptance tests. |
 
 ---
 

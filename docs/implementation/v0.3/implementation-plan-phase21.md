@@ -1,6 +1,6 @@
 # Phase 21 Implementation Plan: Accountability Inspection & Real-Project Evaluation — `kat artifacts --stale` and v0.3 Acceptance
 
-> Part of the [v0.3 master plan](implementation-plan.md).
+> Status: **COMPLETED** — Implemented, verified (399 tests passing), documented, committed, and pushed to `main`.
 
 ## Purpose
 

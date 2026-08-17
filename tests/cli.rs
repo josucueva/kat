@@ -3760,3 +3760,101 @@ fn phase20_acceptance_cli_flow_end_to_end() {
     assert!(ok_post);
     assert!(out_post.contains("no open draft change transaction found"));
 }
+
+#[test]
+fn phase21_acceptance_cli_flow_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // 1. Initialize KAT repository
+    let (out_init, _, ok_init) = run_kat(root, &["init"]);
+    assert!(ok_init, "kat init failed: {out_init}");
+
+    // 2. Create knowledge elements and accountability relationship
+    let (c1_out, _, ok_c1) = run_kat(
+        root,
+        &["create", "requirement", "--title", "Secure Auth Endpoint"],
+    );
+    assert!(ok_c1);
+    let e_req = id_line(&c1_out, "element_id");
+
+    let (c2_out, _, ok_c2) = run_kat(
+        root,
+        &["create", "implementation", "--title", "Auth Route Handler"],
+    );
+    assert!(ok_c2);
+    let e_imp = id_line(&c2_out, "element_id");
+
+    let (c3_out, _, ok_c3) = run_kat(root, &["create", "artifact", "--title", "src/auth.js"]);
+    assert!(ok_c3);
+    let e_art = id_line(&c3_out, "element_id");
+
+    run_kat(root, &["link", "implements", e_imp, e_req]);
+    run_kat(root, &["link", "represents", e_art, e_imp]);
+
+    // 3. Inspect kat artifacts on clean repository (status current)
+    let (out_art1, _, ok_art1) = run_kat(root, &["artifacts"]);
+    assert!(ok_art1);
+    assert!(out_art1.contains("Artifacts (1)"));
+    assert!(out_art1.contains("current"));
+    assert!(out_art1.contains("src/auth.js"));
+
+    // kat artifacts --stale returns 0 stale artifacts
+    let (out_stale0, _, ok_stale0) = run_kat(root, &["artifacts", "--stale"]);
+    assert!(ok_stale0);
+    assert!(out_stale0.contains("Artifacts (0)"));
+
+    // 4. Update implementation element e_imp (creating a new version in accepted state)
+    let (u_out, _, ok_u) = run_kat(root, &["update", e_imp, "--title", "Auth Route Handler v2"]);
+    assert!(ok_u, "kat update implementation failed: {u_out}");
+
+    // 5. Inspect kat artifacts --stale (status stale)
+    let (out_stale1, _, ok_stale1) = run_kat(root, &["artifacts", "--stale"]);
+    assert!(
+        !ok_stale1,
+        "kat artifacts --stale should exit with failure code when stale artifacts exist"
+    );
+    assert!(out_stale1.contains("Artifacts (1)"));
+    assert!(out_stale1.contains("stale"));
+    assert!(out_stale1.contains("src/auth.js"));
+
+    // 6. Inspect per-artifact detail: kat artifacts <artifact-id>
+    let (out_det, _, ok_det) = run_kat(root, &["artifacts", e_art]);
+    assert!(
+        !ok_det,
+        "kat artifacts <id> exits failure code when artifact is STALE"
+    );
+    assert!(out_det.contains("ARTIFACT ACCOUNTABILITY DETAIL"));
+    assert!(out_det.contains(e_art));
+    assert!(out_det.contains("src/auth.js"));
+    assert!(out_det.contains("status:      stale"));
+    assert!(out_det.contains("ACCOUNTABILITY BASELINES (1)"));
+    assert!(out_det.contains("kat.core/represents"));
+    assert!(out_det.contains("[STALE]"));
+
+    // 7. Compact stale list: kat artifacts --stale --compact
+    let (out_comp_stale, _, ok_comp_stale) = run_kat(root, &["artifacts", "--stale", "--compact"]);
+    assert!(!ok_comp_stale);
+    assert!(out_comp_stale.contains("stale        src/auth.js"));
+
+    // 8. Re-baseline artifact using kat account <artifact-id>
+    let (out_acc, err_acc, ok_acc) = run_kat(
+        root,
+        &[
+            "account",
+            e_art,
+            "--description",
+            "Re-baseline auth.js against v2 handler",
+        ],
+    );
+    assert!(ok_acc, "kat account failed: out={out_acc}, err={err_acc}");
+
+    // 9. Verify artifact status is current after re-baselining
+    let (out_stale2, _, ok_stale2) = run_kat(root, &["artifacts", "--stale"]);
+    assert!(ok_stale2);
+    assert!(out_stale2.contains("Artifacts (0)"));
+
+    let (out_art2, _, ok_art2) = run_kat(root, &["artifacts"]);
+    assert!(ok_art2);
+    assert!(out_art2.contains("current"));
+}
