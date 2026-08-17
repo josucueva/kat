@@ -213,8 +213,6 @@ KAT provides semantic routing to Artifact anchor files; ordinary language server
 
 ```text
 ContextResult {
-    repository_id: RepositoryId,
-    accepted_state_id: ObjectId,
     max_depth_applied: usize,
     is_truncated: bool,
     roots: Vec<ElementSummary>,
