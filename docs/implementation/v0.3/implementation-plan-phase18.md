@@ -58,7 +58,7 @@ kat impact <element> [--max-depth <N>] [--compact]
 - **`kat trace <element>`** (Default): Renders a collapsed ASCII tree hierarchy starting at the queried element.
 - **`kat trace <element> --paths`**: Renders all discrete linear paths found in the query result graph.
 - **`kat trace <element> --max-depth <N>`**: Bounds origin trace expansion to $N$ hops.
-- **`kat impact <element>`** (Default): Renders partitioned impact targets with deduplicated origin paths leading to each impacted element.
+- **`kat impact <element>`** (Default): Renders partitioned impact targets with supporting propagation context for each impacted element.
 - **`kat impact <element> --max-depth <N>`**: Bounds impact propagation to $N$ hops.
 
 ### 1.3 Formatting Specifications
@@ -75,9 +75,6 @@ payment_service.rs (kat.core/artifact)
 ```
 
 If outgoing traversal expansion was suppressed at depth $N$ because additional eligible relationships existed:
-```text
-... (depth limit reached: 2 hops)
-```
 ```text
 ... (depth limit reached: 2 hops)
 ```
