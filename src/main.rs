@@ -1969,7 +1969,7 @@ fn run_trace(element_id_str: String, compact: bool) -> ExitCode {
         Err(code) => return code,
     };
 
-    match trace_origin(&repository, element_id) {
+    match trace_origin(&repository, element_id, None) {
         Ok(result) => {
             if compact {
                 print_trace_result_compact(&repository, &result);
@@ -2107,7 +2107,7 @@ fn run_impact(element_id_str: String, compact: bool) -> ExitCode {
         Err(code) => return code,
     };
 
-    match analyze_impact(&repository, element_id) {
+    match analyze_impact(&repository, element_id, None) {
         Ok(result) => {
             if compact {
                 print_impact_result_compact(&repository, &result);

@@ -71,6 +71,68 @@ pub struct TraceResult {
     pub paths: Vec<TracePath>,
 }
 
+/// Node in a deduplicated hierarchical tree view of an origin trace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceTreeNode {
+    /// Element identity of this node.
+    pub element_id: ElementId,
+    /// Child edges connected to this node.
+    pub children: Vec<TraceTreeEdge>,
+}
+
+/// Directed relationship edge connecting a parent node to a child node in a trace tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceTreeEdge {
+    /// Canonical relationship identity.
+    pub relationship_id: RelationshipId,
+    /// Relationship type ID (e.g. `kat.core/realizes`).
+    pub relationship_type_id: String,
+    /// Traversal direction relative to canonical relationship definition.
+    pub direction: TraversalDirection,
+    /// Child node connected via this edge.
+    pub target: TraceTreeNode,
+}
+
+impl TraceResult {
+    /// Converts discrete origin trace paths into a deduplicated tree hierarchy.
+    pub fn to_tree(&self) -> TraceTreeNode {
+        let mut root = TraceTreeNode {
+            element_id: self.root_element_id,
+            children: Vec::new(),
+        };
+
+        for path in &self.paths {
+            let mut current = &mut root;
+            for step in &path.steps {
+                let pos = current.children.iter().position(|child| {
+                    child.relationship_id == step.relationship_id
+                        && child.target.element_id == step.to_element_id
+                });
+
+                let index = match pos {
+                    Some(idx) => idx,
+                    None => {
+                        current.children.push(TraceTreeEdge {
+                            relationship_id: step.relationship_id,
+                            relationship_type_id: step.relationship_type_id.clone(),
+                            direction: step.direction,
+                            target: TraceTreeNode {
+                                element_id: step.to_element_id,
+                                children: Vec::new(),
+                            },
+                        });
+                        current.children.len() - 1
+                    }
+                };
+
+                current = &mut current.children[index].target;
+            }
+        }
+
+        root
+    }
+}
+
 /// Classifies a relationship type for origin tracing.
 ///
 /// Returns `Some(direction)` indicating which direction to traverse the edge to move
@@ -273,6 +335,9 @@ pub enum QueryError {
         /// The matching canonical type IDs.
         matches: Vec<String>,
     },
+    /// The specified max_depth parameter is invalid (must be >= 1).
+    #[error("max depth must be greater than 0, got {0}")]
+    InvalidMaxDepth(usize),
 }
 
 /// Detailed view of a single relationship attached to an element.
@@ -725,7 +790,12 @@ fn visit(
 pub fn trace_origin(
     repository: &Repository,
     root_element_id: ElementId,
+    max_depth: Option<usize>,
 ) -> Result<TraceResult, QueryError> {
+    if let Some(0) = max_depth {
+        return Err(QueryError::InvalidMaxDepth(0));
+    }
+
     let accepted = repository.ref_store().read_accepted()?;
 
     let state = match load_typed(
@@ -775,6 +845,7 @@ pub fn trace_origin(
         &mut current_path,
         &mut visited_rels,
         &mut paths,
+        max_depth,
     );
 
     Ok(TraceResult {
@@ -790,66 +861,70 @@ fn explore_origin_paths(
     current_path: &mut Vec<TraceStep>,
     visited_rels: &mut HashSet<RelationshipId>,
     paths: &mut Vec<TracePath>,
+    max_depth: Option<usize>,
 ) {
     let mut expanded_any = false;
 
-    // state_relationships is canonically sorted by RelationshipId.
-    // Iterating over state_relationships preserves canonical relationship order.
-    for entry in state_relationships {
-        if visited_rels.contains(&entry.relationship_id) {
-            continue;
-        }
-
-        let Some(rel_v) = loaded_rel_versions.get(&entry.relationship_id) else {
-            continue;
-        };
-
-        let Some(direction) = origin_traversal_direction(&rel_v.relationship_type) else {
-            continue;
-        };
-
-        let next_element_id = match direction {
-            TraversalDirection::Forward => {
-                if rel_v.source_element_id == current_element_id {
-                    Some(rel_v.target_element_id)
-                } else {
-                    None
-                }
+    if max_depth.is_none_or(|limit| current_path.len() < limit) {
+        // state_relationships is canonically sorted by RelationshipId.
+        // Iterating over state_relationships preserves canonical relationship order.
+        for entry in state_relationships {
+            if visited_rels.contains(&entry.relationship_id) {
+                continue;
             }
-            TraversalDirection::Backward => {
-                if rel_v.target_element_id == current_element_id {
-                    Some(rel_v.source_element_id)
-                } else {
-                    None
-                }
-            }
-        };
 
-        if let Some(next_id) = next_element_id {
-            expanded_any = true;
-
-            let step = TraceStep {
-                from_element_id: current_element_id,
-                relationship_id: entry.relationship_id,
-                relationship_type_id: rel_v.relationship_type.clone(),
-                direction,
-                to_element_id: next_id,
+            let Some(rel_v) = loaded_rel_versions.get(&entry.relationship_id) else {
+                continue;
             };
 
-            visited_rels.insert(entry.relationship_id);
-            current_path.push(step);
+            let Some(direction) = origin_traversal_direction(&rel_v.relationship_type) else {
+                continue;
+            };
 
-            explore_origin_paths(
-                next_id,
-                state_relationships,
-                loaded_rel_versions,
-                current_path,
-                visited_rels,
-                paths,
-            );
+            let next_element_id = match direction {
+                TraversalDirection::Forward => {
+                    if rel_v.source_element_id == current_element_id {
+                        Some(rel_v.target_element_id)
+                    } else {
+                        None
+                    }
+                }
+                TraversalDirection::Backward => {
+                    if rel_v.target_element_id == current_element_id {
+                        Some(rel_v.source_element_id)
+                    } else {
+                        None
+                    }
+                }
+            };
 
-            current_path.pop();
-            visited_rels.remove(&entry.relationship_id);
+            if let Some(next_id) = next_element_id {
+                expanded_any = true;
+
+                let step = TraceStep {
+                    from_element_id: current_element_id,
+                    relationship_id: entry.relationship_id,
+                    relationship_type_id: rel_v.relationship_type.clone(),
+                    direction,
+                    to_element_id: next_id,
+                };
+
+                visited_rels.insert(entry.relationship_id);
+                current_path.push(step);
+
+                explore_origin_paths(
+                    next_id,
+                    state_relationships,
+                    loaded_rel_versions,
+                    current_path,
+                    visited_rels,
+                    paths,
+                    max_depth,
+                );
+
+                current_path.pop();
+                visited_rels.remove(&entry.relationship_id);
+            }
         }
     }
 
@@ -881,7 +956,12 @@ fn explore_origin_paths(
 pub fn analyze_impact(
     repository: &Repository,
     root_element_id: ElementId,
+    max_depth: Option<usize>,
 ) -> Result<ImpactResult, QueryError> {
+    if let Some(0) = max_depth {
+        return Err(QueryError::InvalidMaxDepth(0));
+    }
+
     let accepted = repository.ref_store().read_accepted()?;
 
     let state = match load_typed(
@@ -947,6 +1027,7 @@ pub fn analyze_impact(
         &mut current_path,
         &mut visited_rels,
         &mut raw_impacted_paths,
+        max_depth,
     );
 
     let mut semantically_affected = Vec::new();
@@ -1000,67 +1081,71 @@ fn explore_impact_paths(
     current_path: &mut Vec<ImpactStep>,
     visited_rels: &mut HashSet<RelationshipId>,
     raw_impacted_paths: &mut HashMap<ElementId, Vec<ImpactPath>>,
+    max_depth: Option<usize>,
 ) {
-    for entry in state_relationships {
-        if visited_rels.contains(&entry.relationship_id) {
-            continue;
-        }
-
-        let Some(rel_v) = loaded_rel_versions.get(&entry.relationship_id) else {
-            continue;
-        };
-
-        let Some(direction) = impact_propagation_direction(&rel_v.relationship_type) else {
-            continue;
-        };
-
-        let next_element_id = match direction {
-            TraversalDirection::Forward => {
-                if rel_v.source_element_id == current_element_id {
-                    Some(rel_v.target_element_id)
-                } else {
-                    None
-                }
+    if max_depth.is_none_or(|limit| current_path.len() < limit) {
+        for entry in state_relationships {
+            if visited_rels.contains(&entry.relationship_id) {
+                continue;
             }
-            TraversalDirection::Backward => {
-                if rel_v.target_element_id == current_element_id {
-                    Some(rel_v.source_element_id)
-                } else {
-                    None
-                }
-            }
-        };
 
-        if let Some(next_id) = next_element_id {
-            let step = ImpactStep {
-                from_element_id: current_element_id,
-                relationship_id: entry.relationship_id,
-                relationship_type_id: rel_v.relationship_type.clone(),
-                direction,
-                to_element_id: next_id,
+            let Some(rel_v) = loaded_rel_versions.get(&entry.relationship_id) else {
+                continue;
             };
 
-            visited_rels.insert(entry.relationship_id);
-            current_path.push(step);
+            let Some(direction) = impact_propagation_direction(&rel_v.relationship_type) else {
+                continue;
+            };
 
-            raw_impacted_paths
-                .entry(next_id)
-                .or_default()
-                .push(ImpactPath {
-                    steps: current_path.clone(),
-                });
+            let next_element_id = match direction {
+                TraversalDirection::Forward => {
+                    if rel_v.source_element_id == current_element_id {
+                        Some(rel_v.target_element_id)
+                    } else {
+                        None
+                    }
+                }
+                TraversalDirection::Backward => {
+                    if rel_v.target_element_id == current_element_id {
+                        Some(rel_v.source_element_id)
+                    } else {
+                        None
+                    }
+                }
+            };
 
-            explore_impact_paths(
-                next_id,
-                state_relationships,
-                loaded_rel_versions,
-                current_path,
-                visited_rels,
-                raw_impacted_paths,
-            );
+            if let Some(next_id) = next_element_id {
+                let step = ImpactStep {
+                    from_element_id: current_element_id,
+                    relationship_id: entry.relationship_id,
+                    relationship_type_id: rel_v.relationship_type.clone(),
+                    direction,
+                    to_element_id: next_id,
+                };
 
-            current_path.pop();
-            visited_rels.remove(&entry.relationship_id);
+                visited_rels.insert(entry.relationship_id);
+                current_path.push(step);
+
+                raw_impacted_paths
+                    .entry(next_id)
+                    .or_default()
+                    .push(ImpactPath {
+                        steps: current_path.clone(),
+                    });
+
+                explore_impact_paths(
+                    next_id,
+                    state_relationships,
+                    loaded_rel_versions,
+                    current_path,
+                    visited_rels,
+                    raw_impacted_paths,
+                    max_depth,
+                );
+
+                current_path.pop();
+                visited_rels.remove(&entry.relationship_id);
+            }
         }
     }
 }

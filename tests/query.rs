@@ -665,7 +665,7 @@ fn trace_origin_unknown_element_returns_not_found() {
     let repo = open_repository(root).unwrap();
 
     let missing_id = ElementId::from_uuid(Uuid::from_u128(9999));
-    let err = trace_origin(&repo, missing_id).unwrap_err();
+    let err = trace_origin(&repo, missing_id, None).unwrap_err();
     assert!(matches!(err, QueryError::ElementNotFound(id) if id == missing_id));
 }
 
@@ -755,7 +755,7 @@ fn trace_origin_single_hop_backward() {
     let reopened = open_repository(root).unwrap();
 
     // Tracing R1 finds 1 origin path (R1 <-motivates- I1)
-    let res_req = trace_origin(&reopened, e_req).unwrap();
+    let res_req = trace_origin(&reopened, e_req, None).unwrap();
     assert_eq!(res_req.root_element_id, e_req);
     assert_eq!(res_req.paths.len(), 1);
     assert_eq!(res_req.paths[0].steps.len(), 1);
@@ -771,7 +771,7 @@ fn trace_origin_single_hop_backward() {
     );
 
     // Tracing I1 finds 0 origin paths (I1 is origin root)
-    let res_intent = trace_origin(&reopened, e_intent).unwrap();
+    let res_intent = trace_origin(&reopened, e_intent, None).unwrap();
     assert_eq!(res_intent.root_element_id, e_intent);
     assert_eq!(res_intent.paths.len(), 0);
 }
@@ -991,7 +991,7 @@ fn trace_origin_multi_hop_forward_and_backward() {
     let reopened = open_repository(root).unwrap();
 
     // Tracing Artifact A1 finds multi-hop path: A1 (represents) -> M1 (realizes) -> R1 (motivates backward) -> I1
-    let res = trace_origin(&reopened, e_art).unwrap();
+    let res = trace_origin(&reopened, e_art, None).unwrap();
     assert_eq!(res.root_element_id, e_art);
     assert_eq!(res.paths.len(), 1);
 
@@ -1025,7 +1025,7 @@ fn trace_origin_does_not_mutate_repository() {
     let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
 
     let repo = open_repository(root).unwrap();
-    trace_origin(&repo, ids.element_id).unwrap();
+    trace_origin(&repo, ids.element_id, None).unwrap();
 
     assert_eq!(object_ids(root), objects_before);
     assert_eq!(
@@ -1046,7 +1046,7 @@ fn impact_unknown_element_returns_not_found() {
     let repo = open_repository(root).unwrap();
 
     let missing_id = ElementId::from_uuid(Uuid::from_u128(9999));
-    let err = analyze_impact(&repo, missing_id).unwrap_err();
+    let err = analyze_impact(&repo, missing_id, None).unwrap_err();
     assert!(matches!(err, QueryError::ElementNotFound(id) if id == missing_id));
 }
 
@@ -1284,7 +1284,7 @@ fn impact_single_hop_and_category_partitioning() {
     let reopened = open_repository(root).unwrap();
 
     // Analyze impact when Requirement R1 changes
-    let res = analyze_impact(&reopened, e_req).unwrap();
+    let res = analyze_impact(&reopened, e_req, None).unwrap();
     assert_eq!(res.directly_changed, vec![e_req]);
 
     // Semantically affected elements: Decision D1 (addresses) and Implementation M1 (realizes)
@@ -1330,7 +1330,7 @@ fn impact_does_not_mutate_repository() {
     let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
 
     let repo = open_repository(root).unwrap();
-    analyze_impact(&repo, ids.element_id).unwrap();
+    analyze_impact(&repo, ids.element_id, None).unwrap();
 
     assert_eq!(object_ids(root), objects_before);
     assert_eq!(
@@ -2705,4 +2705,367 @@ fn show_ontology_type_ambiguous_short_name_and_extension_ontology() {
     } else {
         panic!("expected RelationshipTypeView");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Scalable Query Inspection Tests (Phase 18, Step 18.1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn trace_origin_max_depth_bounding_and_tree_projection() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    // Intent I1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_intent = ElementId::from_uuid(Uuid::from_u128(9001));
+    let prep_i1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_intent,
+                    type_id: "kat.core/intent".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Intent".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_i1 =
+        prepare_change_revision(prep_i1, ChangeId::from_uuid(Uuid::from_u128(9101)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_i1).unwrap()).unwrap();
+
+    // Requirement R1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_req = ElementId::from_uuid(Uuid::from_u128(9002));
+    let prep_r1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_req,
+                    type_id: "kat.core/requirement".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Requirement".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_r1 =
+        prepare_change_revision(prep_r1, ChangeId::from_uuid(Uuid::from_u128(9102)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_r1).unwrap()).unwrap();
+
+    // Implementation M1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_impl = ElementId::from_uuid(Uuid::from_u128(9003));
+    let prep_m1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_impl,
+                    type_id: "kat.core/implementation".into(),
+                    properties: vec![(
+                        "title".into(),
+                        PropertyValue::Text("Implementation".into()),
+                    )],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_m1 =
+        prepare_change_revision(prep_m1, ChangeId::from_uuid(Uuid::from_u128(9103)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_m1).unwrap()).unwrap();
+
+    // Artifact A1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_art = ElementId::from_uuid(Uuid::from_u128(9004));
+    let prep_a1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_art,
+                    type_id: "kat.core/artifact".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Artifact".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_a1 =
+        prepare_change_revision(prep_a1, ChangeId::from_uuid(Uuid::from_u128(9104)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_a1).unwrap()).unwrap();
+
+    // Link I1 -motivates-> R1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let prep_link1 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: RelationshipId::from_uuid(Uuid::from_u128(9201)),
+                    relationship_type_id: "kat.core/motivates".into(),
+                    source_element_id: e_intent,
+                    target_element_id: e_req,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_l1 =
+        prepare_link_change_revision(prep_link1, ChangeId::from_uuid(Uuid::from_u128(9301)), None)
+            .unwrap();
+    publish_persisted_link_change(&repo, persist_prepared_link_change(&repo, rev_l1).unwrap())
+        .unwrap();
+
+    // Link M1 -realizes-> R1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let prep_link2 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: RelationshipId::from_uuid(Uuid::from_u128(9202)),
+                    relationship_type_id: "kat.core/realizes".into(),
+                    source_element_id: e_impl,
+                    target_element_id: e_req,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_l2 =
+        prepare_link_change_revision(prep_link2, ChangeId::from_uuid(Uuid::from_u128(9302)), None)
+            .unwrap();
+    publish_persisted_link_change(&repo, persist_prepared_link_change(&repo, rev_l2).unwrap())
+        .unwrap();
+
+    // Link A1 -represents-> M1
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let prep_link3 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: RelationshipId::from_uuid(Uuid::from_u128(9203)),
+                    relationship_type_id: "kat.core/represents".into(),
+                    source_element_id: e_art,
+                    target_element_id: e_impl,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_l3 =
+        prepare_link_change_revision(prep_link3, ChangeId::from_uuid(Uuid::from_u128(9303)), None)
+            .unwrap();
+    publish_persisted_link_change(&repo, persist_prepared_link_change(&repo, rev_l3).unwrap())
+        .unwrap();
+
+    let reopened = open_repository(root).unwrap();
+
+    // 1. max_depth = Some(0) fails
+    let err_zero = trace_origin(&reopened, e_art, Some(0)).unwrap_err();
+    assert!(matches!(err_zero, QueryError::InvalidMaxDepth(0)));
+
+    // 2. max_depth = Some(1) -> 1 hop (A1 -> M1)
+    let res_d1 = trace_origin(&reopened, e_art, Some(1)).unwrap();
+    assert_eq!(res_d1.paths.len(), 1);
+    assert_eq!(res_d1.paths[0].steps.len(), 1);
+    assert_eq!(res_d1.paths[0].steps[0].to_element_id, e_impl);
+
+    // 3. max_depth = Some(2) -> 2 hops (A1 -> M1 -> R1)
+    let res_d2 = trace_origin(&reopened, e_art, Some(2)).unwrap();
+    assert_eq!(res_d2.paths.len(), 1);
+    assert_eq!(res_d2.paths[0].steps.len(), 2);
+    assert_eq!(res_d2.paths[0].steps[1].to_element_id, e_req);
+
+    // 4. max_depth = None -> full 3 hops (A1 -> M1 -> R1 -> I1)
+    let res_full = trace_origin(&reopened, e_art, None).unwrap();
+    assert_eq!(res_full.paths.len(), 1);
+    assert_eq!(res_full.paths[0].steps.len(), 3);
+    assert_eq!(res_full.paths[0].steps[2].to_element_id, e_intent);
+
+    // 5. Test to_tree() conversion
+    let tree = res_full.to_tree();
+    assert_eq!(tree.element_id, e_art);
+    assert_eq!(tree.children.len(), 1);
+    assert_eq!(tree.children[0].target.element_id, e_impl);
+    assert_eq!(tree.children[0].target.children.len(), 1);
+    assert_eq!(tree.children[0].target.children[0].target.element_id, e_req);
+}
+
+#[test]
+fn analyze_impact_max_depth_bounding() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+
+    let e_req = ElementId::from_uuid(Uuid::from_u128(9501));
+    let prep_r1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_req,
+                    type_id: "kat.core/requirement".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Req".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_r1 =
+        prepare_change_revision(prep_r1, ChangeId::from_uuid(Uuid::from_u128(9601)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_r1).unwrap()).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_impl = ElementId::from_uuid(Uuid::from_u128(9502));
+    let prep_m1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_impl,
+                    type_id: "kat.core/implementation".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Impl".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_m1 =
+        prepare_change_revision(prep_m1, ChangeId::from_uuid(Uuid::from_u128(9602)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_m1).unwrap()).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let e_art = ElementId::from_uuid(Uuid::from_u128(9503));
+    let prep_a1 = validate_create_element_invariants(
+        validate_create_element_ontology(
+            apply_create_element(
+                ctx,
+                CreateElementInput {
+                    element_id: e_art,
+                    type_id: "kat.core/artifact".into(),
+                    properties: vec![("title".into(), PropertyValue::Text("Artifact".into()))],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_a1 =
+        prepare_change_revision(prep_a1, ChangeId::from_uuid(Uuid::from_u128(9603)), None).unwrap();
+    publish_persisted_change(&repo, persist_prepared_change(&repo, rev_a1).unwrap()).unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let prep_link1 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: RelationshipId::from_uuid(Uuid::from_u128(9701)),
+                    relationship_type_id: "kat.core/realizes".into(),
+                    source_element_id: e_impl,
+                    target_element_id: e_req,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_l1 =
+        prepare_link_change_revision(prep_link1, ChangeId::from_uuid(Uuid::from_u128(9801)), None)
+            .unwrap();
+    publish_persisted_link_change(&repo, persist_prepared_link_change(&repo, rev_l1).unwrap())
+        .unwrap();
+
+    let repo = open_repository(root).unwrap();
+    let ctx = prepare_change(&repo).unwrap();
+    let prep_link2 = validate_link_element_invariants(
+        validate_link_element_ontology(
+            apply_link_element(
+                &repo,
+                ctx,
+                LinkElementInput {
+                    relationship_id: RelationshipId::from_uuid(Uuid::from_u128(9702)),
+                    relationship_type_id: "kat.core/represents".into(),
+                    source_element_id: e_art,
+                    target_element_id: e_impl,
+                    properties: vec![],
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let rev_l2 =
+        prepare_link_change_revision(prep_link2, ChangeId::from_uuid(Uuid::from_u128(9802)), None)
+            .unwrap();
+    publish_persisted_link_change(&repo, persist_prepared_link_change(&repo, rev_l2).unwrap())
+        .unwrap();
+
+    let reopened = open_repository(root).unwrap();
+
+    // max_depth = Some(0) returns error
+    let err_zero = analyze_impact(&reopened, e_req, Some(0)).unwrap_err();
+    assert!(matches!(err_zero, QueryError::InvalidMaxDepth(0)));
+
+    // max_depth = Some(1) -> only 1-hop (Implementation M1), artifact A1 (2-hop) excluded
+    let res_d1 = analyze_impact(&reopened, e_req, Some(1)).unwrap();
+    assert_eq!(res_d1.semantically_affected.len(), 1);
+    assert_eq!(res_d1.semantically_affected[0].element_id, e_impl);
+    assert_eq!(res_d1.affected_artifacts.len(), 0);
+
+    // max_depth = Some(2) -> includes 2-hop artifact A1
+    let res_d2 = analyze_impact(&reopened, e_req, Some(2)).unwrap();
+    assert_eq!(res_d2.semantically_affected.len(), 1);
+    assert_eq!(res_d2.affected_artifacts.len(), 1);
+    assert_eq!(res_d2.affected_artifacts[0].element_id, e_art);
 }
