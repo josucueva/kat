@@ -1343,6 +1343,43 @@ pub fn analyze_artifact_accountability(
     })
 }
 
+/// Filtering criteria for artifact accountability evaluation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArtifactFilter {
+    /// If true, returns only artifacts whose accountability status is `Stale`.
+    pub stale_only: bool,
+    /// If provided, filters accountability analysis to the artifact matching this ElementId.
+    pub target_artifact_id: Option<ElementId>,
+}
+
+/// Evaluates artifact accountability with filtering options (`stale_only`, `target_artifact_id`).
+pub fn analyze_artifact_accountability_filtered(
+    repository: &Repository,
+    filter: ArtifactFilter,
+) -> Result<ArtifactAccountabilityReport, QueryError> {
+    let full_report = analyze_artifact_accountability(repository)?;
+
+    let filtered_artifacts = full_report
+        .artifacts
+        .into_iter()
+        .filter(|rec| {
+            if filter.stale_only && rec.status != ArtifactAccountabilityStatus::Stale {
+                return false;
+            }
+            if let Some(target_id) = filter.target_artifact_id
+                && rec.artifact_element_id != target_id
+            {
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    Ok(ArtifactAccountabilityReport {
+        artifacts: filtered_artifacts,
+    })
+}
+
 /// Breakdown of element and relationship counts in the accepted state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnowledgeCounts {

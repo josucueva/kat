@@ -3143,3 +3143,30 @@ fn analyze_impact_max_depth_bounding() {
     assert_eq!(res_d2.affected_artifacts.len(), 1);
     assert_eq!(res_d2.affected_artifacts[0].element_id, e_art);
 }
+
+#[test]
+fn accountability_filtered_stale_only_and_target_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_repository(root).unwrap();
+
+    let repo = open_repository(root).unwrap();
+
+    // 1. Clean repository: empty report
+    let rep_all = kat::repository::analyze_artifact_accountability_filtered(
+        &repo,
+        kat::repository::ArtifactFilter::default(),
+    )
+    .unwrap();
+    assert!(rep_all.artifacts.is_empty());
+
+    let rep_stale = kat::repository::analyze_artifact_accountability_filtered(
+        &repo,
+        kat::repository::ArtifactFilter {
+            stale_only: true,
+            target_artifact_id: None,
+        },
+    )
+    .unwrap();
+    assert!(rep_stale.artifacts.is_empty());
+}
