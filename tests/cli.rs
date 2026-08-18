@@ -4044,10 +4044,13 @@ fn v042_context_default_presentation_acceptance_test() {
     let (com_out, com_err, com_ok) = run_kat(root, &["commit"]);
     assert!(com_ok, "kat commit failed: {com_err}\n{com_out}");
 
-    // Get requirement element ID
-    let (list_out, _, list_ok) = run_kat(root, &["list", "requirement"]);
-    assert!(list_ok);
-    let req_id = id_line(&list_out, "element_id");
+    // Get requirement element ID from authoring workflow handle output
+    let req_id = auth_out
+        .lines()
+        .find(|l| l.contains("@req-auth"))
+        .and_then(|l| l.split("->").nth(1))
+        .unwrap()
+        .trim();
 
     // Test default context presentation contains titles, category headers, and provenance
     let (ctx_out, ctx_err, ctx_ok) = run_kat(root, &["context", req_id, "--direction", "both"]);
