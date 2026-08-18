@@ -71,34 +71,43 @@ complete -c kat -n "__fish_kat_using_subcommand abort" -l json -d 'Output struct
 complete -c kat -n "__fish_kat_using_subcommand abort" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c kat -n "__fish_kat_using_subcommand list" -l type -d 'Filter by element type (e.g. requirement, design-decision)' -r
 complete -c kat -n "__fish_kat_using_subcommand list" -l lifecycle -d 'Filter by lifecycle state (active, deprecated, superseded)' -r
+complete -c kat -n "__fish_kat_using_subcommand list" -l json -d 'Output structured machine JSON envelope'
 complete -c kat -n "__fish_kat_using_subcommand list" -s h -l help -d 'Print help'
 complete -c kat -n "__fish_kat_using_subcommand show" -l compact -d 'Display compact single-line element summary'
+complete -c kat -n "__fish_kat_using_subcommand show" -l json -d 'Output structured machine JSON envelope'
 complete -c kat -n "__fish_kat_using_subcommand show" -s h -l help -d 'Print help'
 complete -c kat -n "__fish_kat_using_subcommand history" -l limit -d 'Limit output to the N most recent revisions' -r
 complete -c kat -n "__fish_kat_using_subcommand history" -l element -d 'Filter history to revisions touching a specific element ID or prefix' -r
 complete -c kat -n "__fish_kat_using_subcommand history" -l oneline -d 'Format each history entry as a single line'
 complete -c kat -n "__fish_kat_using_subcommand history" -l compact -d 'Display compact output'
+complete -c kat -n "__fish_kat_using_subcommand history" -l json -d 'Output structured machine JSON envelope'
 complete -c kat -n "__fish_kat_using_subcommand history" -s h -l help -d 'Print help'
 complete -c kat -n "__fish_kat_using_subcommand trace" -l max-depth -d 'Limit traversal depth to N relationship hops' -r
 complete -c kat -n "__fish_kat_using_subcommand trace" -l paths -d 'Display explicit exhaustive path list instead of collapsed tree hierarchy'
 complete -c kat -n "__fish_kat_using_subcommand trace" -l compact -d 'Display compact arrow-joined path rendering'
+complete -c kat -n "__fish_kat_using_subcommand trace" -l json -d 'Output structured machine JSON envelope'
 complete -c kat -n "__fish_kat_using_subcommand trace" -s h -l help -d 'Print help'
 complete -c kat -n "__fish_kat_using_subcommand impact" -l max-depth -d 'Limit impact propagation depth to N relationship hops' -r
 complete -c kat -n "__fish_kat_using_subcommand impact" -l compact -d 'Display compact flat table layout'
+complete -c kat -n "__fish_kat_using_subcommand impact" -l json -d 'Output structured machine JSON envelope'
 complete -c kat -n "__fish_kat_using_subcommand impact" -s h -l help -d 'Print help'
 complete -c kat -n "__fish_kat_using_subcommand artifacts" -l stale -d 'Filter accountability report to display only STALE artifacts'
 complete -c kat -n "__fish_kat_using_subcommand artifacts" -l compact -d 'Display compact status table layout'
+complete -c kat -n "__fish_kat_using_subcommand artifacts" -l json -d 'Output structured machine JSON envelope'
 complete -c kat -n "__fish_kat_using_subcommand artifacts" -s h -l help -d 'Print help'
 complete -c kat -n "__fish_kat_using_subcommand ontology; and not __fish_seen_subcommand_from show help" -l compact -d 'Display compact shortened type IDs without human-readable names'
+complete -c kat -n "__fish_kat_using_subcommand ontology; and not __fish_seen_subcommand_from show help" -l json -d 'Output structured machine JSON envelope'
 complete -c kat -n "__fish_kat_using_subcommand ontology; and not __fish_seen_subcommand_from show help" -s h -l help -d 'Print help'
 complete -c kat -n "__fish_kat_using_subcommand ontology; and not __fish_seen_subcommand_from show help" -f -a "show" -d 'Inspect detailed capabilities and endpoint admissibility for a type'
 complete -c kat -n "__fish_kat_using_subcommand ontology; and not __fish_seen_subcommand_from show help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c kat -n "__fish_kat_using_subcommand ontology; and __fish_seen_subcommand_from show" -l compact -d 'Display compact shortened type IDs without human-readable names'
+complete -c kat -n "__fish_kat_using_subcommand ontology; and __fish_seen_subcommand_from show" -l json -d 'Output structured machine JSON envelope'
 complete -c kat -n "__fish_kat_using_subcommand ontology; and __fish_seen_subcommand_from show" -s h -l help -d 'Print help'
 complete -c kat -n "__fish_kat_using_subcommand ontology; and __fish_seen_subcommand_from help" -f -a "show" -d 'Inspect detailed capabilities and endpoint admissibility for a type'
 complete -c kat -n "__fish_kat_using_subcommand ontology; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c kat -n "__fish_kat_using_subcommand validate" -l coverage -d 'Focus on validation evidence coverage reporting across knowledge categories'
 complete -c kat -n "__fish_kat_using_subcommand validate" -l compact -d 'Display compact single-line counts summary'
+complete -c kat -n "__fish_kat_using_subcommand validate" -l json -d 'Output structured machine JSON envelope'
 complete -c kat -n "__fish_kat_using_subcommand validate" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c kat -n "__fish_kat_using_subcommand create" -l title -d 'Title of the knowledge element' -r
 complete -c kat -n "__fish_kat_using_subcommand create" -l description -d 'Optional detailed description' -r

@@ -8,7 +8,9 @@ use crate::domain::operation::Operation;
 /// Operation order is semantically meaningful and is preserved. `base_states`
 /// and `dependencies` are vectors; canonical ordering/duplicate rules are
 /// enforced by the canonical validator rather than normalized at construction.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct ChangeRevision {
     /// Stable identity of the logical Change, shared by its revisions.
     pub change_id: ChangeId,

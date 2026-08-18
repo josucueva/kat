@@ -35,7 +35,7 @@ fn main() -> Result<(), Error> {
 
 fn render_man_pages(cmd: &clap::Command, out_dir: &Path) -> Result<(), Error> {
     // 1. Generate kat(1) root man page
-    let root_man = r#".TH kat 1 "kat 0.4.3"
+    let root_man = r#".TH kat 1 "kat 0.4.4"
 .SH NAME
 kat \- Knowledge Abstraction Tracker
 .SH SYNOPSIS
@@ -152,7 +152,7 @@ Print version
     fs::write(out_dir.join("kat.1"), root_man)?;
 
     // 2. Generate kat-author(1) canonical authoring reference man page
-    let author_man = r#".TH kat\-author 1 "kat 0.4.3"
+    let author_man = r#".TH kat\-author 1 "kat 0.4.4"
 .SH NAME
 kat\-author \- Stage a semantic Change from declarative JSON
 .SH SYNOPSIS
@@ -239,7 +239,7 @@ Supported via \fB\-\-json\fR flag, emitting structured \fBCommonResultEnvelope\f
     fs::write(out_dir.join("kat-author.1"), author_man)?;
 
     // 3. Generate kat-change(1) explicit transaction control man page
-    let change_man = r#".TH kat\-change 1 "kat 0.4.3"
+    let change_man = r#".TH kat\-change 1 "kat 0.4.4"
 .SH NAME
 kat\-change \- Manage draft Change transactions explicitly
 .SH SYNOPSIS

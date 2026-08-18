@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "kat"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "clap",
  "clap_complete",

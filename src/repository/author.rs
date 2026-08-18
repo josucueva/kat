@@ -18,7 +18,9 @@ use crate::repository::change::{
 };
 use crate::repository::open::Repository;
 use crate::repository::resolve::{resolve_element_in_draft_session, resolve_relationship_id};
-use crate::repository::session::{begin_draft_session, has_draft_session, read_draft_session};
+use crate::repository::session::{
+    begin_draft_session, has_draft_session, read_draft_session, write_draft_session_atomic,
+};
 
 /// Declarative claim supported by the authoring compiler.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -491,8 +493,15 @@ pub fn compile_and_stage_claims(
         }
     }
 
-    let (staged_ops, _updated_session) =
+    let (staged_ops, mut updated_session) =
         stage_batch_operations_into_session(repository, staged_inputs)?;
+
+    updated_session.workflow_references = session.workflow_references;
+    write_draft_session_atomic(root, &updated_session).map_err(|e| {
+        ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
+            e.to_string(),
+        ))
+    })?;
 
     Ok(AuthorBatchResult {
         claims_processed: claims.len(),

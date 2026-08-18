@@ -43,7 +43,7 @@ use crate::repository::validation::repository::{
 };
 
 /// Direction traversed when following a relationship in an origin trace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TraversalDirection {
     /// Traversed from relationship source to relationship target.
     Forward,
@@ -52,7 +52,7 @@ pub enum TraversalDirection {
 }
 
 /// A single step in a trace origin path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TraceStep {
     /// Element identity where the step originates.
     pub from_element_id: ElementId,
@@ -67,14 +67,14 @@ pub struct TraceStep {
 }
 
 /// A single sequence of trace steps connecting a root element to an origin root.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TracePath {
     /// Ordered steps from root toward origin.
     pub steps: Vec<TraceStep>,
 }
 
 /// Result of tracing a knowledge element back to its authoritative origins.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TraceResult {
     /// The root ElementId queried.
     pub root_element_id: ElementId,
@@ -83,7 +83,7 @@ pub struct TraceResult {
 }
 
 /// Node in a deduplicated hierarchical tree view of an origin trace.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TraceTreeNode {
     /// Element identity of this node.
     pub element_id: ElementId,
@@ -92,7 +92,7 @@ pub struct TraceTreeNode {
 }
 
 /// Directed relationship edge connecting a parent node to a child node in a trace tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TraceTreeEdge {
     /// Canonical relationship identity.
     pub relationship_id: RelationshipId,
@@ -169,7 +169,7 @@ pub fn origin_traversal_direction(relationship_type_id: &str) -> Option<Traversa
 }
 
 /// A single step in an impact propagation path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ImpactStep {
     /// Element identity where the impact propagates from.
     pub from_element_id: ElementId,
@@ -184,14 +184,14 @@ pub struct ImpactStep {
 }
 
 /// A sequence of steps explaining why an element is impacted by a change.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ImpactPath {
     /// Ordered steps from change root toward impacted target.
     pub steps: Vec<ImpactStep>,
 }
 
 /// An element impacted by a change, with its type, lifecycle, and rationale paths.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ImpactedElement {
     /// Identity of the impacted element.
     pub element_id: ElementId,
@@ -204,7 +204,7 @@ pub struct ImpactedElement {
 }
 
 /// Categorized result of analyzing potential change consequences from a root element.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ImpactResult {
     /// Directly changed element ID(s).
     pub directly_changed: Vec<ElementId>,
@@ -628,7 +628,7 @@ fn load_change(store: &ObjectStore, id: ObjectId) -> Result<ChangeRevision, Quer
 }
 
 /// One ChangeRevision in the accepted history, with its content identity.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct HistoryEntry {
     /// ObjectId of the ChangeRevision.
     pub revision_id: ObjectId,
@@ -1604,7 +1604,7 @@ pub fn repository_status(repository: &Repository) -> Result<RepositoryStatus, Qu
 // ---------------------------------------------------------------------------
 
 /// Summary view of the active ontology.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OntologySummary {
     /// Stable semantic identity of the active ontology.
     pub ontology_id: OntologyId,
@@ -1617,7 +1617,7 @@ pub struct OntologySummary {
 }
 
 /// Summary of a registered element type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ElementTypeSummary {
     /// Fully qualified element type ID (e.g. `kat.core/requirement`).
     pub type_id: String,
@@ -1626,7 +1626,7 @@ pub struct ElementTypeSummary {
 }
 
 /// Summary of a registered relationship type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RelationshipTypeSummary {
     /// Fully qualified relationship type ID (e.g. `kat.core/motivates`).
     pub type_id: String,
@@ -1639,7 +1639,7 @@ pub struct RelationshipTypeSummary {
 }
 
 /// Detailed inspection view of an element or relationship type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum OntologyTypeView {
     /// Detailed element type view.
     Element(ElementTypeView),
@@ -1648,7 +1648,7 @@ pub enum OntologyTypeView {
 }
 
 /// Detailed inspection view of a registered element type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ElementTypeView {
     /// Fully qualified element type ID (e.g. `kat.core/implementation`).
     pub type_id: String,
@@ -1661,7 +1661,7 @@ pub struct ElementTypeView {
 }
 
 /// Detailed inspection view of a registered relationship type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RelationshipTypeView {
     /// Fully qualified relationship type ID (e.g. `kat.core/realizes`).
     pub type_id: String,
@@ -1674,7 +1674,7 @@ pub struct RelationshipTypeView {
 }
 
 /// A single relationship capability connecting an element type to a counterpart type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RelationshipCapability {
     /// Fully qualified relationship type ID (e.g. `kat.core/realizes`).
     pub relationship_type_id: String,

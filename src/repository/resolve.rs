@@ -122,6 +122,27 @@ pub fn resolve_element_in_state(
     }
 }
 
+/// Derives the shortest unique hex prefix (minimum length 8 hex digits) for an `ElementId` in `SemanticState`.
+pub fn shortest_unique_element_prefix(state: &SemanticState, element_id: ElementId) -> String {
+    let full_str = element_id.to_string();
+    for len in 8..=full_str.len() {
+        let prefix = &full_str[..len];
+        let mut matches = 0;
+        for entry in &state.elements {
+            if matches_prefix(&entry.element_id.to_string(), prefix) {
+                matches += 1;
+                if matches > 1 {
+                    break;
+                }
+            }
+        }
+        if matches == 1 {
+            return prefix.to_string();
+        }
+    }
+    full_str
+}
+
 /// Resolves string input to a full `RelationshipId` in a given `SemanticState`.
 pub fn resolve_relationship_in_state(
     state: &SemanticState,

@@ -270,7 +270,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__artifacts)
-            opts="-h --stale --compact --help"
+            opts="-h --stale --compact --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -962,7 +962,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__history)
-            opts="-h --oneline --limit --element --compact --help"
+            opts="-h --oneline --limit --element --compact --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -984,7 +984,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__impact)
-            opts="-h --max-depth --compact --help"
+            opts="-h --max-depth --compact --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1034,7 +1034,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__list)
-            opts="-h --type --lifecycle --help"
+            opts="-h --type --lifecycle --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1056,7 +1056,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__ontology)
-            opts="-h --compact --help show help"
+            opts="-h --compact --json --help show help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1112,7 +1112,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__ontology__subcmd__show)
-            opts="-h --compact --help"
+            opts="-h --compact --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1126,7 +1126,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__show)
-            opts="-h --compact --help"
+            opts="-h --compact --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1176,7 +1176,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__trace)
-            opts="-h --paths --max-depth --compact --help"
+            opts="-h --paths --max-depth --compact --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1234,7 +1234,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__validate)
-            opts="-h --coverage --compact --help"
+            opts="-h --coverage --compact --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

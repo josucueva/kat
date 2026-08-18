@@ -84,6 +84,7 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--type=[Filter by element type (e.g. requirement, design-decision)]:TYPE_FLAG:_default' \
 '--lifecycle=[Filter by lifecycle state (active, deprecated, superseded)]:LIFECYCLE:_default' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 '::element_type -- Optional element type positional shorthand (e.g. requirement, design-decision):_default' \
@@ -92,6 +93,7 @@ _arguments "${_arguments_options[@]}" : \
 (show)
 _arguments "${_arguments_options[@]}" : \
 '--compact[Display compact single-line element summary]' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':element_id -- Element ID (UUID or prefix) to display:_default' \
@@ -103,6 +105,7 @@ _arguments "${_arguments_options[@]}" : \
 '--element=[Filter history to revisions touching a specific element ID or prefix]:ELEMENT:_default' \
 '--oneline[Format each history entry as a single line]' \
 '--compact[Display compact output]' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -112,6 +115,7 @@ _arguments "${_arguments_options[@]}" : \
 '--max-depth=[Limit traversal depth to N relationship hops]:MAX_DEPTH:_default' \
 '--paths[Display explicit exhaustive path list instead of collapsed tree hierarchy]' \
 '--compact[Display compact arrow-joined path rendering]' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':element_id -- Target element ID (UUID or prefix) to trace:_default' \
@@ -121,6 +125,7 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--max-depth=[Limit impact propagation depth to N relationship hops]:MAX_DEPTH:_default' \
 '--compact[Display compact flat table layout]' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':element_id -- Target element ID (UUID or prefix) to analyze:_default' \
@@ -130,6 +135,7 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--stale[Filter accountability report to display only STALE artifacts]' \
 '--compact[Display compact status table layout]' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 '::artifact_id -- Optional artifact element ID (UUID or prefix) for detailed inspection:_default' \
@@ -138,6 +144,7 @@ _arguments "${_arguments_options[@]}" : \
 (ontology)
 _arguments "${_arguments_options[@]}" : \
 '--compact[Display compact shortened type IDs without human-readable names]' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ":: :_kat__subcmd__ontology_commands" \
@@ -153,6 +160,7 @@ _arguments "${_arguments_options[@]}" : \
             (show)
 _arguments "${_arguments_options[@]}" : \
 '--compact[Display compact shortened type IDs without human-readable names]' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':type_id -- Type ID (e.g. `kat.core/requirement` or `requirement`):_default' \
@@ -190,6 +198,7 @@ esac
 _arguments "${_arguments_options[@]}" : \
 '--coverage[Focus on validation evidence coverage reporting across knowledge categories]' \
 '--compact[Display compact single-line counts summary]' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0

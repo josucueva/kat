@@ -96,11 +96,10 @@ pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityRepo
             || type_id == "kat.core/goal"
             || type_id == "requirement"
         {
-            let has_realization = view
-                .relationships
-                .incoming
-                .iter()
-                .any(|rel| rel.relationship_type_id == "kat.core/realizes" || rel.relationship_type_id == "realizes");
+            let has_realization = view.relationships.incoming.iter().any(|rel| {
+                rel.relationship_type_id == "kat.core/realizes"
+                    || rel.relationship_type_id == "realizes"
+            });
             if !has_realization {
                 findings.push(GraphQualityFinding {
                     rule_id: "GQ-02".to_string(),
@@ -120,11 +119,10 @@ pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityRepo
             || type_id == "kat.core/module"
             || type_id == "implementation"
         {
-            let has_artifact_route = view
-                .relationships
-                .incoming
-                .iter()
-                .any(|rel| rel.relationship_type_id == "kat.core/represents" || rel.relationship_type_id == "represents");
+            let has_artifact_route = view.relationships.incoming.iter().any(|rel| {
+                rel.relationship_type_id == "kat.core/represents"
+                    || rel.relationship_type_id == "represents"
+            });
             if !has_artifact_route {
                 findings.push(GraphQualityFinding {
                     rule_id: "GQ-03".to_string(),
@@ -144,16 +142,12 @@ pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityRepo
             || type_id == "kat.core/model"
             || type_id == "design-decision"
         {
-            let has_consequence = view
-                .relationships
-                .outgoing
-                .iter()
-                .any(|rel| {
-                    rel.relationship_type_id == "kat.core/addresses"
-                        || rel.relationship_type_id == "addresses"
-                        || rel.relationship_type_id == "kat.core/guides"
-                        || rel.relationship_type_id == "guides"
-                });
+            let has_consequence = view.relationships.outgoing.iter().any(|rel| {
+                rel.relationship_type_id == "kat.core/addresses"
+                    || rel.relationship_type_id == "addresses"
+                    || rel.relationship_type_id == "kat.core/guides"
+                    || rel.relationship_type_id == "guides"
+            });
             if !has_consequence {
                 findings.push(GraphQualityFinding {
                     rule_id: "GQ-04".to_string(),

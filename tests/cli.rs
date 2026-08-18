@@ -3984,7 +3984,10 @@ fn docs_man_pages_regenerate_without_diff_test() {
     let author_man = std::fs::read_to_string("generated/man/kat-author.1").unwrap();
     assert!(author_man.contains("WORKFLOW REFERENCES"));
     assert!(author_man.contains("CROSS-CHANGE REFERENCES"));
-    assert!(author_man.contains("@handles are temporary references scoped to the current draft Change."));
+    assert!(
+        author_man
+            .contains("@handles are temporary references scoped to the current draft Change.")
+    );
     assert!(author_man.contains("EMPTY INPUT BEHAVIOR"));
     assert!(author_man.contains("INFORMATIONAL EXAMPLES"));
     assert!(author_man.contains("ERRORS AND DIAGNOSTICS"));
@@ -4065,7 +4068,10 @@ fn v042_context_default_presentation_acceptance_test() {
     assert!(ctx_out.contains("realizes <-"));
 
     // Test compact layout
-    let (compact_out, _, compact_ok) = run_kat(root, &["context", req_id, "--direction", "both", "--compact"]);
+    let (compact_out, _, compact_ok) = run_kat(
+        root,
+        &["context", req_id, "--direction", "both", "--compact"],
+    );
     assert!(compact_ok);
     assert!(compact_out.contains("REQ"));
     assert!(compact_out.contains("IMP"));
@@ -4086,7 +4092,10 @@ fn v042_context_physical_locator_vs_no_heuristic_test() {
     let root = dir.path();
     run_kat(root, &["init"]);
 
-    let (c1_out, _, _) = run_kat(root, &["create", "artifact", "--title", "Explicit Artifact"]);
+    let (c1_out, _, _) = run_kat(
+        root,
+        &["create", "artifact", "--title", "Explicit Artifact"],
+    );
     let art1_id = id_line(&c1_out, "element_id");
 
     let (c2_out, _, _) = run_kat(

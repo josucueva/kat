@@ -48,13 +48,8 @@ impl MachinePresenter {
     ) {
         let repo_id = repository.map(|r| r.metadata.repository_id);
         let state_id = repository.map(|r| r.accepted.state);
-        let envelope = CommonResultEnvelope::<()>::failure(
-            repo_id,
-            state_id,
-            code,
-            message,
-            details,
-        );
+        let envelope =
+            CommonResultEnvelope::<()>::failure(repo_id, state_id, code, message, details);
         if let Ok(json) = Self::render_envelope(&envelope) {
             println!("{json}");
         }

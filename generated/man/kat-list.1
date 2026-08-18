@@ -4,7 +4,7 @@
 .SH NAME
 list \- List knowledge elements in the current accepted state
 .SH SYNOPSIS
-\fBlist\fR [\fB\-\-type\fR] [\fB\-\-lifecycle\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIELEMENT_TYPE\fR] 
+\fBlist\fR [\fB\-\-type\fR] [\fB\-\-lifecycle\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIELEMENT_TYPE\fR] 
 .SH DESCRIPTION
 List knowledge elements in the current accepted state
 .SH OPTIONS
@@ -18,6 +18,9 @@ Filter by element type (e.g. requirement, design\-decision)
 .TP
 \fB\-\-lifecycle\fR \fI<LIFECYCLE>\fR
 Filter by lifecycle state (active, deprecated, superseded)
+.TP
+\fB\-\-json\fR
+Output structured machine JSON envelope
 .TP
 [\fIELEMENT_TYPE\fR]
 Optional element type positional shorthand (e.g. requirement, design\-decision)

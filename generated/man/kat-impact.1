@@ -4,7 +4,7 @@
 .SH NAME
 impact \- Analyze consequences of changing an element
 .SH SYNOPSIS
-\fBimpact\fR [\fB\-\-max\-depth\fR] [\fB\-\-compact\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_ID\fR> 
+\fBimpact\fR [\fB\-\-max\-depth\fR] [\fB\-\-compact\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_ID\fR> 
 .SH DESCRIPTION
 Analyze consequences of changing an element
 .SH OPTIONS
@@ -18,6 +18,9 @@ Limit impact propagation depth to N relationship hops
 .TP
 \fB\-\-compact\fR
 Display compact flat table layout
+.TP
+\fB\-\-json\fR
+Output structured machine JSON envelope
 .TP
 <\fIELEMENT_ID\fR>
 Target element ID (UUID or prefix) to analyze

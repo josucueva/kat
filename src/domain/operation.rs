@@ -10,7 +10,10 @@ use crate::domain::identity::{ElementId, ObjectId, RelationshipId};
 /// explicitly by the encoder (step 0.4); this enum does not hard-code them.
 /// Operation order inside a Change is semantically meaningful and is preserved
 /// by `Vec<Operation>` in `ChangeRevision`.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Operation {
     /// `1` — introduce a new knowledge element version.
     CreateElement {
@@ -70,7 +73,9 @@ pub enum Operation {
 }
 
 /// Individual relationship baseline reconciliation entry for `AccountArtifact`.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct RelationshipReconciliation {
     /// Stable relationship identity.
     pub relationship_id: RelationshipId,

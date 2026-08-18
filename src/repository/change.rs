@@ -1346,10 +1346,9 @@ pub fn apply_account_artifact(
             repository,
             rec.relationship_id,
             rec.target_element_id,
-        )
-        .unwrap_or(rec.reconciled_target_version);
+        );
 
-        if baseline_version != rec.reconciled_target_version {
+        if baseline_version.ok() != Some(rec.reconciled_target_version) {
             any_changed = true;
             break;
         }
@@ -2920,8 +2919,31 @@ pub fn publish_persisted_unlink_change(
     }
 }
 
-/// A persisted change that has been atomically published as the repository's
-/// accepted head (step 1.7).
+/// An ephemeral interaction-layer mapping from a draft workflow reference (e.g. `@req-auth`)
+/// to its resolved canonical `ElementId` and convenient current-state unique hex prefix.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkflowReferenceResolution {
+    /// Ephemeral workflow reference handle name (e.g. `"@req-auth"`).
+    pub handle: String,
+    /// Convenient reference string that is unique in the accepted state produced by this commit.
+    /// Note: `reference` is not guaranteed to remain unique in future accepted states;
+    /// the permanent canonical `element_id` must always accompany it.
+    pub reference: String,
+    /// Permanent canonical identity (UUID).
+    pub element_id: ElementId,
+}
+
+/// Outcome of committing a draft session, wrapping the published change and any ephemeral
+/// workflow reference resolutions derived at publication time.
+#[derive(Debug)]
+pub struct CommitOutcome {
+    /// The published change revision.
+    pub published_change: PublishedChange,
+    /// Ephemeral workflow reference resolutions derived during publication before draft cleanup.
+    pub workflow_reference_resolutions: Vec<WorkflowReferenceResolution>,
+}
+
+/// A published change revision.
 ///
 /// Publication only moves `refs/accepted`; the immutable objects were already
 /// materialized by persistence (step 1.6). `accepted` is the new head
@@ -3281,7 +3303,7 @@ pub fn stage_batch_operations_into_session(
 
 /// Commits an open draft change session, performing whole-candidate validation,
 /// materializing canonical objects, and publishing via atomic CAS.
-pub fn commit_draft_session(repository: &Repository) -> Result<PublishedChange, ChangeError> {
+pub fn commit_draft_session(repository: &Repository) -> Result<CommitOutcome, ChangeError> {
     let root = repository.root_dir();
     let session = read_draft_session(root)
         .map_err(|_| ChangeError::Precondition(PreconditionError::DraftNotFound))?;
@@ -3320,6 +3342,21 @@ pub fn commit_draft_session(repository: &Repository) -> Result<PublishedChange, 
             PreconditionError::EmptyDraftCommit,
         ));
     }
+
+    // Derive publication workflow reference resolutions before draft cleanup
+    let mut workflow_reference_resolutions = Vec::new();
+    for binding in &session.workflow_references {
+        let reference = crate::repository::resolve::shortest_unique_element_prefix(
+            &session.working_state,
+            binding.target_element_id,
+        );
+        workflow_reference_resolutions.push(WorkflowReferenceResolution {
+            handle: binding.handle.clone(),
+            reference,
+            element_id: binding.target_element_id,
+        });
+    }
+    workflow_reference_resolutions.sort_by(|a, b| a.handle.cmp(&b.handle));
 
     // Materialize all staged element versions
     for ev in &session.staged_element_versions {
@@ -3411,9 +3448,14 @@ pub fn commit_draft_session(repository: &Repository) -> Result<PublishedChange, 
 
             let persisted = PersistedChange { prepared };
 
-            Ok(PublishedChange {
+            let published_change = PublishedChange {
                 persisted,
                 accepted: new_accepted,
+            };
+
+            Ok(CommitOutcome {
+                published_change,
+                workflow_reference_resolutions,
             })
         }
         Err(RefStoreError::Conflict) => {

@@ -92,7 +92,8 @@ fn main() -> ExitCode {
             element_type,
             type_flag,
             lifecycle,
-        } => run_list(element_type, type_flag, lifecycle),
+            json,
+        } => run_list(element_type, type_flag, lifecycle, json),
         Command::Create {
             element_type,
             title,
@@ -132,32 +133,45 @@ fn main() -> ExitCode {
         Command::Show {
             element_id,
             compact,
-        } => run_show(element_id, compact),
+            json,
+        } => run_show(element_id, compact, json),
         Command::History {
             oneline,
             limit,
             element,
             compact,
-        } => cmd_history(oneline, limit, element, compact),
+            json,
+        } => cmd_history(oneline, limit, element, compact, json),
         Command::Trace {
             element_id,
             paths,
             max_depth,
             compact,
-        } => run_trace(element_id, paths, max_depth, compact),
+            json,
+        } => run_trace(element_id, paths, max_depth, compact, json),
         Command::Impact {
             element_id,
             max_depth,
             compact,
-        } => run_impact(element_id, max_depth, compact),
-        Command::Validate { coverage, compact } => cmd_validate(coverage, compact),
+            json,
+        } => run_impact(element_id, max_depth, compact, json),
+        Command::Validate {
+            coverage,
+            compact,
+            json,
+        } => cmd_validate(coverage, compact, json),
         Command::Artifacts {
             stale,
             artifact_id,
             compact,
-        } => cmd_artifacts(stale, artifact_id, compact),
+            json,
+        } => cmd_artifacts(stale, artifact_id, compact, json),
         Command::Change { command } => cmd_change(command),
-        Command::Ontology { compact, command } => cmd_ontology(compact, command),
+        Command::Ontology {
+            compact,
+            json,
+            command,
+        } => cmd_ontology(compact, json, command),
     }
 }
 
@@ -235,13 +249,18 @@ fn run_list(
     element_type_pos: Option<String>,
     type_flag: Option<String>,
     lifecycle_flag: Option<String>,
+    json: bool,
 ) -> ExitCode {
     let type_arg = match (element_type_pos, type_flag) {
         (Some(pos), Some(flag)) => {
             if pos != flag {
-                eprintln!(
-                    "kat list: conflicting type arguments: positional '{pos}' and --type '{flag}'"
-                );
+                let msg =
+                    format!("conflicting type arguments: positional '{pos}' and --type '{flag}'");
+                if json {
+                    MachinePresenter::present_error(None, "INVALID_ARGUMENTS", &msg);
+                } else {
+                    eprintln!("kat list: {msg}");
+                }
                 return ExitCode::FAILURE;
             }
             Some(pos)
@@ -254,7 +273,11 @@ fn run_list(
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
-            eprintln!("kat list: {error}");
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &error.to_string());
+            } else {
+                eprintln!("kat list: {error}");
+            }
             return ExitCode::FAILURE;
         }
     };
@@ -263,14 +286,26 @@ fn run_list(
         let context = match prepare_change(&repository) {
             Ok(context) => context,
             Err(error) => {
-                eprintln!("kat list: {error}");
+                if json {
+                    MachinePresenter::present_error(
+                        Some(&repository),
+                        "QueryError",
+                        &error.to_string(),
+                    );
+                } else {
+                    eprintln!("kat list: {error}");
+                }
                 return ExitCode::FAILURE;
             }
         };
         match resolve_element_type(&context.ontology, arg) {
             Ok(resolved) => Some(resolved),
             Err(message) => {
-                eprintln!("kat list: {message}");
+                if json {
+                    MachinePresenter::present_error(Some(&repository), "ResolveError", &message);
+                } else {
+                    eprintln!("kat list: {message}");
+                }
                 return ExitCode::FAILURE;
             }
         }
@@ -284,9 +319,14 @@ fn run_list(
             "deprecated" => Some(Lifecycle::Deprecated),
             "superseded" => Some(Lifecycle::Superseded),
             _ => {
-                eprintln!(
-                    "kat list: invalid lifecycle state '{flag}' (expected: active, deprecated, superseded)"
+                let msg = format!(
+                    "invalid lifecycle state '{flag}' (expected: active, deprecated, superseded)"
                 );
+                if json {
+                    MachinePresenter::present_error(Some(&repository), "INVALID_ARGUMENTS", &msg);
+                } else {
+                    eprintln!("kat list: {msg}");
+                }
                 return ExitCode::FAILURE;
             }
         }
@@ -298,11 +338,23 @@ fn run_list(
 
     match list_elements(&repository, filter) {
         Ok(elements) => {
-            print_element_list(&elements);
+            if json {
+                MachinePresenter::present_success(&repository, &elements);
+            } else {
+                print_element_list(&elements);
+            }
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("kat list: {error}");
+            if json {
+                MachinePresenter::present_error(
+                    Some(&repository),
+                    "QueryError",
+                    &error.to_string(),
+                );
+            } else {
+                eprintln!("kat list: {error}");
+            }
             ExitCode::FAILURE
         }
     }
@@ -1722,22 +1774,41 @@ fn run_account(artifact_id_str: String, description: Option<String>) -> ExitCode
     }
 }
 
-fn run_show(element_id_str: String, compact: bool) -> ExitCode {
+fn run_show(element_id_str: String, compact: bool, json: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
-            eprintln!("kat show: {error}");
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &error.to_string());
+            } else {
+                eprintln!("kat show: {error}");
+            }
             return ExitCode::FAILURE;
         }
     };
 
-    let element_id = match resolve_cli_element_id(&repository, &element_id_str, "show") {
+    let element_id = match resolve_element_id(&repository, &element_id_str) {
         Ok(id) => id,
-        Err(code) => return code,
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error_with_details(
+                    Some(&repository),
+                    "ResolveError",
+                    &err.to_string(),
+                    serde_json::json!({ "input": element_id_str }),
+                );
+            } else {
+                let _ = resolve_cli_element_id(&repository, &element_id_str, "show");
+            }
+            return ExitCode::FAILURE;
+        }
     };
+
     match show_element(&repository, element_id) {
         Ok(view) => {
-            if compact {
+            if json {
+                MachinePresenter::present_success(&repository, &view);
+            } else if compact {
                 print_show_element_view_compact(&view);
             } else {
                 print_show_element_view(&view);
@@ -1745,11 +1816,28 @@ fn run_show(element_id_str: String, compact: bool) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(QueryError::ElementNotFound(id)) => {
-            eprintln!("kat show: element {id} not found in the accepted state");
+            if json {
+                MachinePresenter::present_error_with_details(
+                    Some(&repository),
+                    "ResolveError",
+                    &format!("element {id} not found in the accepted state"),
+                    serde_json::json!({ "element_id": id }),
+                );
+            } else {
+                eprintln!("kat show: element {id} not found in the accepted state");
+            }
             ExitCode::FAILURE
         }
         Err(error) => {
-            eprintln!("kat show: {error}");
+            if json {
+                MachinePresenter::present_error(
+                    Some(&repository),
+                    "QueryError",
+                    &error.to_string(),
+                );
+            } else {
+                eprintln!("kat show: {error}");
+            }
             ExitCode::FAILURE
         }
     }
@@ -1869,26 +1957,51 @@ fn cmd_history(
     limit: Option<usize>,
     element_str: Option<String>,
     compact: bool,
+    json: bool,
 ) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
-            eprintln!("kat history: {error}");
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &error.to_string());
+            } else {
+                eprintln!("kat history: {error}");
+            }
             return ExitCode::FAILURE;
         }
     };
 
     let target_element_id = if let Some(ref el) = element_str {
-        match resolve_cli_element_id(&repository, el, "history") {
+        match resolve_element_id(&repository, el) {
             Ok(id) => Some(id),
-            Err(code) => return code,
+            Err(err) => {
+                if json {
+                    MachinePresenter::present_error_with_details(
+                        Some(&repository),
+                        "ResolveError",
+                        &err.to_string(),
+                        serde_json::json!({ "input": el }),
+                    );
+                } else {
+                    let _ = resolve_cli_element_id(&repository, el, "history");
+                }
+                return ExitCode::FAILURE;
+            }
         }
     } else {
         None
     };
 
     if limit == Some(0) {
-        eprintln!("kat history: --limit must be at least 1");
+        if json {
+            MachinePresenter::present_error(
+                Some(&repository),
+                "INVALID_ARGUMENTS",
+                "kat history: --limit must be at least 1",
+            );
+        } else {
+            eprintln!("kat history: --limit must be at least 1");
+        }
         return ExitCode::FAILURE;
     }
 
@@ -1904,28 +2017,39 @@ fn cmd_history(
                 entries.truncate(l);
             }
 
-            let is_compact = oneline || compact;
-            if !is_compact {
-                let count = entries.len();
-                let noun = if count == 1 { "revision" } else { "revisions" };
-                println!("Accepted change history ({count} {noun})");
-                println!();
-            }
-
-            for (i, entry) in entries.iter().enumerate() {
-                if is_compact {
-                    print_history_entry_oneline(&repository, entry);
-                } else {
-                    if i > 0 {
-                        println!();
+            if json {
+                MachinePresenter::present_success(&repository, &entries);
+            } else {
+                let is_compact = oneline || compact;
+                if !is_compact {
+                    let count = entries.len();
+                    let noun = if count == 1 { "revision" } else { "revisions" };
+                    println!("Accepted change history ({count} {noun})");
+                    println!();
+                }
+                for (i, entry) in entries.iter().enumerate() {
+                    if is_compact {
+                        print_history_entry_oneline(&repository, entry);
+                    } else {
+                        if i > 0 {
+                            println!();
+                        }
+                        print_history_entry(entry);
                     }
-                    print_history_entry(entry);
                 }
             }
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("kat history: {error}");
+            if json {
+                MachinePresenter::present_error(
+                    Some(&repository),
+                    "QueryError",
+                    &error.to_string(),
+                );
+            } else {
+                eprintln!("kat history: {error}");
+            }
             ExitCode::FAILURE
         }
     }
@@ -1996,23 +2120,42 @@ fn run_trace(
     paths: bool,
     max_depth: Option<usize>,
     compact: bool,
+    json: bool,
 ) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
-            eprintln!("kat trace: {error}");
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &error.to_string());
+            } else {
+                eprintln!("kat trace: {error}");
+            }
             return ExitCode::FAILURE;
         }
     };
 
-    let element_id = match resolve_cli_element_id(&repository, &element_id_str, "trace") {
+    let element_id = match resolve_element_id(&repository, &element_id_str) {
         Ok(id) => id,
-        Err(code) => return code,
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error_with_details(
+                    Some(&repository),
+                    "ResolveError",
+                    &err.to_string(),
+                    serde_json::json!({ "input": element_id_str }),
+                );
+            } else {
+                let _ = resolve_cli_element_id(&repository, &element_id_str, "trace");
+            }
+            return ExitCode::FAILURE;
+        }
     };
 
     match trace_origin(&repository, element_id, max_depth) {
         Ok(result) => {
-            if compact {
+            if json {
+                MachinePresenter::present_success(&repository, &result);
+            } else if compact {
                 print_trace_result_compact(&repository, &result);
             } else if paths {
                 print_trace_result_paths(&repository, &result);
@@ -2022,15 +2165,126 @@ fn run_trace(
             ExitCode::SUCCESS
         }
         Err(QueryError::ElementNotFound(id)) => {
-            eprintln!("kat trace: element {id} not found in the accepted state");
+            if json {
+                MachinePresenter::present_error_with_details(
+                    Some(&repository),
+                    "ResolveError",
+                    &format!("element {id} not found in the accepted state"),
+                    serde_json::json!({ "element_id": id }),
+                );
+            } else {
+                eprintln!("kat trace: element {id} not found in the accepted state");
+            }
             ExitCode::FAILURE
         }
         Err(QueryError::InvalidMaxDepth(depth)) => {
-            eprintln!("kat trace: max depth must be greater than 0, got {depth}");
+            if json {
+                MachinePresenter::present_error(
+                    Some(&repository),
+                    "INVALID_ARGUMENTS",
+                    &format!("max depth must be greater than 0, got {depth}"),
+                );
+            } else {
+                eprintln!("kat trace: max depth must be greater than 0, got {depth}");
+            }
             ExitCode::FAILURE
         }
         Err(error) => {
-            eprintln!("kat trace: {error}");
+            if json {
+                MachinePresenter::present_error(
+                    Some(&repository),
+                    "QueryError",
+                    &error.to_string(),
+                );
+            } else {
+                eprintln!("kat trace: {error}");
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_impact(
+    element_id_str: String,
+    max_depth: Option<usize>,
+    compact: bool,
+    json: bool,
+) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &error.to_string());
+            } else {
+                eprintln!("kat impact: {error}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let element_id = match resolve_element_id(&repository, &element_id_str) {
+        Ok(id) => id,
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error_with_details(
+                    Some(&repository),
+                    "ResolveError",
+                    &err.to_string(),
+                    serde_json::json!({ "input": element_id_str }),
+                );
+            } else {
+                let _ = resolve_cli_element_id(&repository, &element_id_str, "impact");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match analyze_impact(&repository, element_id, max_depth) {
+        Ok(result) => {
+            if json {
+                MachinePresenter::present_success(&repository, &result);
+            } else if compact {
+                print_impact_result_compact(&repository, &result);
+            } else {
+                print_impact_result(&repository, &result);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(QueryError::ElementNotFound(id)) => {
+            if json {
+                MachinePresenter::present_error_with_details(
+                    Some(&repository),
+                    "ResolveError",
+                    &format!("element {id} not found in the accepted state"),
+                    serde_json::json!({ "element_id": id }),
+                );
+            } else {
+                eprintln!("kat impact: element {id} not found in the accepted state");
+            }
+            ExitCode::FAILURE
+        }
+        Err(QueryError::InvalidMaxDepth(depth)) => {
+            if json {
+                MachinePresenter::present_error(
+                    Some(&repository),
+                    "INVALID_ARGUMENTS",
+                    &format!("max depth must be greater than 0, got {depth}"),
+                );
+            } else {
+                eprintln!("kat impact: max depth must be greater than 0, got {depth}");
+            }
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            if json {
+                MachinePresenter::present_error(
+                    Some(&repository),
+                    "QueryError",
+                    &error.to_string(),
+                );
+            } else {
+                eprintln!("kat impact: {error}");
+            }
             ExitCode::FAILURE
         }
     }
@@ -2226,44 +2480,6 @@ fn print_trace_result_paths(repository: &Repository, result: &TraceResult) {
                 }
             }
             println!();
-        }
-    }
-}
-
-fn run_impact(element_id_str: String, max_depth: Option<usize>, compact: bool) -> ExitCode {
-    let repository = match open_repository(Path::new(".")) {
-        Ok(repository) => repository,
-        Err(error) => {
-            eprintln!("kat impact: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let element_id = match resolve_cli_element_id(&repository, &element_id_str, "impact") {
-        Ok(id) => id,
-        Err(code) => return code,
-    };
-
-    match analyze_impact(&repository, element_id, max_depth) {
-        Ok(result) => {
-            if compact {
-                print_impact_result_compact(&repository, &result);
-            } else {
-                print_impact_result(&repository, &result);
-            }
-            ExitCode::SUCCESS
-        }
-        Err(QueryError::ElementNotFound(id)) => {
-            eprintln!("kat impact: element {id} not found in the accepted state");
-            ExitCode::FAILURE
-        }
-        Err(QueryError::InvalidMaxDepth(depth)) => {
-            eprintln!("kat impact: max depth must be greater than 0, got {depth}");
-            ExitCode::FAILURE
-        }
-        Err(error) => {
-            eprintln!("kat impact: {error}");
-            ExitCode::FAILURE
         }
     }
 }
@@ -2545,18 +2761,24 @@ fn print_operation_details(operation: &Operation) {
     }
 }
 
-fn cmd_validate(coverage: bool, compact: bool) -> ExitCode {
+fn cmd_validate(coverage: bool, compact: bool, json: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
-            eprintln!("kat validate: {error}");
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &error.to_string());
+            } else {
+                eprintln!("kat validate: {error}");
+            }
             return ExitCode::FAILURE;
         }
     };
 
     match validate_repository(&repository) {
         Ok(report) => {
-            if coverage {
+            if json {
+                MachinePresenter::present_success(&repository, &report);
+            } else if coverage {
                 if compact {
                     print_coverage_report_compact(&report);
                 } else {
@@ -2574,7 +2796,15 @@ fn cmd_validate(coverage: bool, compact: bool) -> ExitCode {
             }
         }
         Err(error) => {
-            eprintln!("kat validate: {error}");
+            if json {
+                MachinePresenter::present_error(
+                    Some(&repository),
+                    "QueryError",
+                    &error.to_string(),
+                );
+            } else {
+                eprintln!("kat validate: {error}");
+            }
             ExitCode::FAILURE
         }
     }
@@ -2768,11 +2998,15 @@ fn print_coverage_report(report: &ValidationReport) {
     }
 }
 
-fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool) -> ExitCode {
+fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool, json: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
-            eprintln!("kat artifacts: {error}");
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &error.to_string());
+            } else {
+                eprintln!("kat artifacts: {error}");
+            }
             return ExitCode::FAILURE;
         }
     };
@@ -2781,7 +3015,16 @@ fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool) -> Exi
         match resolve_element_id(&repository, q) {
             Ok(id) => Some(id),
             Err(err) => {
-                eprintln!("kat artifacts: {err}");
+                if json {
+                    MachinePresenter::present_error_with_details(
+                        Some(&repository),
+                        "ResolveError",
+                        &err.to_string(),
+                        serde_json::json!({ "input": q }),
+                    );
+                } else {
+                    eprintln!("kat artifacts: {err}");
+                }
                 return ExitCode::FAILURE;
             }
         }
@@ -2796,7 +3039,9 @@ fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool) -> Exi
 
     match analyze_artifact_accountability_filtered(&repository, filter) {
         Ok(report) => {
-            if compact {
+            if json {
+                MachinePresenter::present_success(&repository, &report);
+            } else if compact {
                 print_artifact_accountability_report_compact(&report);
             } else if target_id.is_some() {
                 print_artifact_accountability_detail(&report, artifact_id.as_deref().unwrap_or(""));
@@ -2814,7 +3059,15 @@ fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool) -> Exi
             }
         }
         Err(error) => {
-            eprintln!("kat artifacts: {error}");
+            if json {
+                MachinePresenter::present_error(
+                    Some(&repository),
+                    "QueryError",
+                    &error.to_string(),
+                );
+            } else {
+                eprintln!("kat artifacts: {error}");
+            }
             ExitCode::FAILURE
         }
     }
@@ -3266,7 +3519,11 @@ fn run_check(compact: bool, json: bool) -> ExitCode {
 }
 
 fn print_human_check_report(report: &kat::repository::validation::graph_quality::CheckReport) {
-    let clean_str = if report.repository_clean { "true" } else { "false" };
+    let clean_str = if report.repository_clean {
+        "true"
+    } else {
+        "false"
+    };
 
     println!("KAT Repository Check");
     println!("  clean: {clean_str}");
@@ -3349,7 +3606,9 @@ fn print_human_check_report(report: &kat::repository::validation::graph_quality:
         let unacc_artifacts: Vec<_> = account
             .artifacts
             .iter()
-            .filter(|a| a.status == kat::repository::query::ArtifactAccountabilityStatus::Unaccounted)
+            .filter(|a| {
+                a.status == kat::repository::query::ArtifactAccountabilityStatus::Unaccounted
+            })
             .collect();
         if !unacc_artifacts.is_empty() {
             println!();
@@ -3388,7 +3647,11 @@ fn print_human_check_report(report: &kat::repository::validation::graph_quality:
 }
 
 fn print_compact_check_report(report: &kat::repository::validation::graph_quality::CheckReport) {
-    let status = if report.repository_clean { "CLEAN" } else { "INVALID" };
+    let status = if report.repository_clean {
+        "CLEAN"
+    } else {
+        "INVALID"
+    };
     let mech_violations = report.mechanical_validation.violations.len();
 
     let constraint_details = &report.mechanical_validation.constraint_details;
@@ -3398,7 +3661,8 @@ fn print_compact_check_report(report: &kat::repository::validation::graph_qualit
         .filter(|c| !c.validation_evidence.is_empty())
         .count();
 
-    let (art_cur, art_stale, art_unacc) = if let Some(ref account) = report.artifact_accountability {
+    let (art_cur, art_stale, art_unacc) = if let Some(ref account) = report.artifact_accountability
+    {
         (
             account.repository_summary.current,
             account.repository_summary.stale,
@@ -3429,14 +3693,15 @@ fn run_commit(json: bool) -> ExitCode {
     };
 
     match commit_draft_session(&repository) {
-        Ok(published) => {
-            let prepared = &published.persisted.prepared;
+        Ok(outcome) => {
+            let prepared = &outcome.published_change.persisted.prepared;
             if json {
                 let commit_dto = serde_json::json!({
                     "change_id": prepared.change.change_id,
                     "change_revision_id": prepared.change_revision_id,
                     "state_id": prepared.state_id,
                     "operations_count": prepared.change.operations.len(),
+                    "workflow_reference_resolutions": outcome.workflow_reference_resolutions,
                 });
                 MachinePresenter::present_success(&repository, &commit_dto);
             } else {
@@ -3445,6 +3710,13 @@ fn run_commit(json: bool) -> ExitCode {
                 println!("  change_revision_id: {}", prepared.change_revision_id);
                 println!("  state_id:           {}", prepared.state_id);
                 println!("  operations:         {}", prepared.change.operations.len());
+                if !outcome.workflow_reference_resolutions.is_empty() {
+                    println!();
+                    println!("Workflow references resolved:");
+                    for res in &outcome.workflow_reference_resolutions {
+                        println!("  {:<16} -> {}", res.handle, res.reference);
+                    }
+                }
             }
             ExitCode::SUCCESS
         }
@@ -3653,11 +3925,15 @@ fn cmd_change_status(compact: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_ontology(compact: bool, command: Option<OntologyCommands>) -> ExitCode {
+fn cmd_ontology(compact: bool, json: bool, command: Option<OntologyCommands>) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repo) => repo,
         Err(err) => {
-            eprintln!("kat ontology: {err}");
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &err.to_string());
+            } else {
+                eprintln!("kat ontology: {err}");
+            }
             return ExitCode::FAILURE;
         }
     };
@@ -3665,7 +3941,9 @@ fn cmd_ontology(compact: bool, command: Option<OntologyCommands>) -> ExitCode {
     match command {
         None => match inspect_ontology(&repository) {
             Ok(summary) => {
-                if compact {
+                if json {
+                    MachinePresenter::present_success(&repository, &summary);
+                } else if compact {
                     print_ontology_summary_compact(&summary);
                 } else {
                     print_ontology_summary(&summary);
@@ -3673,14 +3951,24 @@ fn cmd_ontology(compact: bool, command: Option<OntologyCommands>) -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(err) => {
-                eprintln!("kat ontology: {err}");
+                if json {
+                    MachinePresenter::present_error(
+                        Some(&repository),
+                        "QueryError",
+                        &err.to_string(),
+                    );
+                } else {
+                    eprintln!("kat ontology: {err}");
+                }
                 ExitCode::FAILURE
             }
         },
         Some(OntologyCommands::Show { type_id }) => {
             match show_ontology_type(&repository, &type_id) {
                 Ok(view) => {
-                    if compact {
+                    if json {
+                        MachinePresenter::present_success(&repository, &view);
+                    } else if compact {
                         print_ontology_type_view_compact(&view);
                     } else {
                         print_ontology_type_view(&view);
@@ -3688,7 +3976,16 @@ fn cmd_ontology(compact: bool, command: Option<OntologyCommands>) -> ExitCode {
                     ExitCode::SUCCESS
                 }
                 Err(err) => {
-                    eprintln!("kat ontology show: {err}");
+                    if json {
+                        MachinePresenter::present_error_with_details(
+                            Some(&repository),
+                            "ResolveError",
+                            &err.to_string(),
+                            serde_json::json!({ "type_id": type_id }),
+                        );
+                    } else {
+                        eprintln!("kat ontology show: {err}");
+                    }
                     ExitCode::FAILURE
                 }
             }

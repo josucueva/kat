@@ -4,7 +4,7 @@
 .SH NAME
 artifacts \- Evaluate artifact accountability baselines
 .SH SYNOPSIS
-\fBartifacts\fR [\fB\-\-stale\fR] [\fB\-\-compact\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIARTIFACT_ID\fR] 
+\fBartifacts\fR [\fB\-\-stale\fR] [\fB\-\-compact\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIARTIFACT_ID\fR] 
 .SH DESCRIPTION
 Evaluate artifact accountability baselines
 .SH OPTIONS
@@ -18,6 +18,9 @@ Filter accountability report to display only STALE artifacts
 .TP
 \fB\-\-compact\fR
 Display compact status table layout
+.TP
+\fB\-\-json\fR
+Output structured machine JSON envelope
 .TP
 [\fIARTIFACT_ID\fR]
 Optional artifact element ID (UUID or prefix) for detailed inspection

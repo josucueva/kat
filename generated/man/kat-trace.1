@@ -4,7 +4,7 @@
 .SH NAME
 trace \- Trace an element to its semantic origin
 .SH SYNOPSIS
-\fBtrace\fR [\fB\-\-paths\fR] [\fB\-\-max\-depth\fR] [\fB\-\-compact\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_ID\fR> 
+\fBtrace\fR [\fB\-\-paths\fR] [\fB\-\-max\-depth\fR] [\fB\-\-compact\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_ID\fR> 
 .SH DESCRIPTION
 Trace an element to its semantic origin
 .SH OPTIONS
@@ -21,6 +21,9 @@ Limit traversal depth to N relationship hops
 .TP
 \fB\-\-compact\fR
 Display compact arrow\-joined path rendering
+.TP
+\fB\-\-json\fR
+Output structured machine JSON envelope
 .TP
 <\fIELEMENT_ID\fR>
 Target element ID (UUID or prefix) to trace

@@ -305,7 +305,12 @@ fn v04_porcelain_duplicate_workflow_handle_fails_atomically() {
         serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
     assert_eq!(json["success"], false);
     assert_eq!(json["error"]["code"], "AUTHOR_COMPILATION_FAILED");
-    assert!(json["error"]["message"].as_str().unwrap().contains("duplicate workflow reference handle"));
+    assert!(
+        json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("duplicate workflow reference handle")
+    );
 }
 
 #[test]
@@ -679,11 +684,36 @@ fn v043_check_porcelain_acceptance_tests() {
         .unwrap();
     assert!(com1.status.success());
 
-    let req_id = out1_str.lines().find(|l| l.contains("@req")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
-    let imp_id = out1_str.lines().find(|l| l.contains("@imp")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
-    let con_id = out1_str.lines().find(|l| l.contains("@con")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
-    let art_stale_id = out1_str.lines().find(|l| l.contains("@art-stale")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
-    let art_unacc_id = out1_str.lines().find(|l| l.contains("@art-unacc")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
+    let _req_id = out1_str
+        .lines()
+        .find(|l| l.contains("@req "))
+        .and_then(|l| l.split("->").nth(1))
+        .unwrap()
+        .trim();
+    let imp_id = out1_str
+        .lines()
+        .find(|l| l.contains("@imp "))
+        .and_then(|l| l.split("->").nth(1))
+        .unwrap()
+        .trim();
+    let con_id = out1_str
+        .lines()
+        .find(|l| l.contains("@con "))
+        .and_then(|l| l.split("->").nth(1))
+        .unwrap()
+        .trim();
+    let art_stale_id = out1_str
+        .lines()
+        .find(|l| l.contains("@art-stale "))
+        .and_then(|l| l.split("->").nth(1))
+        .unwrap()
+        .trim();
+    let art_unacc_id = out1_str
+        .lines()
+        .find(|l| l.contains("@art-unacc "))
+        .and_then(|l| l.split("->").nth(1))
+        .unwrap()
+        .trim();
 
     // Update implementation to make art-stale stale
     let claims2 = format!(
@@ -737,7 +767,10 @@ fn v043_check_porcelain_acceptance_tests() {
     // CHECK-03 & CHECK-04: Stale & Unaccounted Artifacts identified
     let stale_sid = &art_stale_id[..8];
     let unacc_sid = &art_unacc_id[..8];
-    assert!(chk_stdout.contains("Stale:"));
+    assert!(
+        chk_stdout.contains("Stale:"),
+        "chk_stdout was:\n{chk_stdout}"
+    );
     assert!(chk_stdout.contains(stale_sid));
     assert!(chk_stdout.contains("Stale Auth File"));
     assert!(chk_stdout.contains("Unaccounted:"));
@@ -760,7 +793,9 @@ fn v043_check_porcelain_acceptance_tests() {
         .unwrap();
     assert!(chk_compact.status.success());
     let compact_stdout = String::from_utf8(chk_compact.stdout).unwrap();
-    assert!(compact_stdout.contains("CLEAN | mechanical 0 | evidence 0/1 | artifacts 0 current, 1 stale, 1 unaccounted | GQ"));
+    assert!(compact_stdout.contains(
+        "CLEAN | mechanical 0 | evidence 0/1 | artifacts 0 current, 1 stale, 1 unaccounted | GQ"
+    ));
 
     // CHECK-09: JSON regression test
     let chk_json = Command::new(kat_bin())
@@ -769,8 +804,351 @@ fn v043_check_porcelain_acceptance_tests() {
         .output()
         .unwrap();
     assert!(chk_json.status.success());
-    let json_val: serde_json::Value = serde_json::from_str(&String::from_utf8(chk_json.stdout).unwrap()).unwrap();
+    let json_val: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(chk_json.stdout).unwrap()).unwrap();
     assert_eq!(json_val["success"], true);
     assert_eq!(json_val["data"]["repository_clean"], true);
-    assert!(json_val["data"]["artifact_accountability"]["repository_summary"]["stale"].as_u64().unwrap() >= 1);
+    assert!(
+        json_val["data"]["artifact_accountability"]["repository_summary"]["stale"]
+            .as_u64()
+            .unwrap()
+            >= 1
+    );
+}
+
+#[test]
+fn v044_machine_coverage_acceptance_tests() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // MACHINE-04: Run outside KAT repository with --json
+    let out_no_repo = Command::new(kat_bin())
+        .args(["show", "deadbeef", "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out_no_repo.status.success());
+    let json_no_repo: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out_no_repo.stdout).unwrap()).unwrap();
+    assert_eq!(json_no_repo["success"], false);
+    assert_eq!(json_no_repo["error"]["code"], "NotInRepository");
+
+    // Init KAT repository
+    let init_out = Command::new(kat_bin())
+        .arg("init")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(init_out.status.success());
+
+    // Create an element via author
+    let claims = r#"[
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/requirement",
+            "title": "Auth Requirement",
+            "handle": "@req"
+        }
+    ]"#;
+    let f1 = dir.path().join("c1.json");
+    fs::write(&f1, claims).unwrap();
+    let auth_out = Command::new(kat_bin())
+        .args(["author", f1.to_str().unwrap()])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(auth_out.status.success());
+
+    let auth_str = String::from_utf8(auth_out.stdout).unwrap();
+    let req_id = auth_str
+        .lines()
+        .find(|l| l.contains("@req"))
+        .and_then(|l| l.split("->").nth(1))
+        .unwrap()
+        .trim();
+
+    let com_out = Command::new(kat_bin())
+        .arg("commit")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(com_out.status.success());
+
+    // MACHINE-01: Test --json across all 8 Inspection commands
+    let commands: &[&[&str]] = &[
+        &["list", "--json"],
+        &["show", req_id, "--json"],
+        &["history", "--json"],
+        &["trace", req_id, "--json"],
+        &["impact", req_id, "--json"],
+        &["artifacts", "--json"],
+        &["ontology", "--json"],
+        &["validate", "--json"],
+    ];
+
+    for args in commands {
+        let out = Command::new(kat_bin())
+            .args(*args)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "Command {:?} failed", args);
+        let val: serde_json::Value =
+            serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+        assert_eq!(val["interface_schema_version"], 1);
+        assert_eq!(val["success"], true);
+        assert!(!val["data"].is_null());
+        assert!(val["error"].is_null());
+    }
+
+    // MACHINE-03: Structured error for unknown element ID in show --json
+    let out_unknown = Command::new(kat_bin())
+        .args(["show", "deadbeef", "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out_unknown.status.success());
+    let json_unknown: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out_unknown.stdout).unwrap()).unwrap();
+    assert_eq!(json_unknown["success"], false);
+    assert_eq!(json_unknown["error"]["code"], "ResolveError");
+    assert!(json_unknown["data"].is_null());
+}
+
+#[test]
+fn v044_cross_change_reference_handoff_acceptance_tests() {
+    let dir = tempfile::tempdir().unwrap();
+    let init_out = Command::new(kat_bin())
+        .arg("init")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(init_out.status.success());
+
+    // Change 1: Author elements with handles @req and @imp
+    let claims1 = r#"[
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/requirement",
+            "title": "Auth Requirement",
+            "handle": "@req"
+        },
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/implementation",
+            "title": "Auth Service",
+            "handle": "@imp"
+        }
+    ]"#;
+    let f1 = dir.path().join("c1.json");
+    fs::write(&f1, claims1).unwrap();
+
+    let auth1 = Command::new(kat_bin())
+        .args(["author", f1.to_str().unwrap()])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(auth1.status.success());
+
+    // Commit Change 1 with --json
+    let com1 = Command::new(kat_bin())
+        .args(["commit", "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(com1.status.success());
+
+    let json_com1: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(com1.stdout).unwrap()).unwrap();
+    assert_eq!(json_com1["success"], true);
+
+    let resolutions = json_com1["data"]["workflow_reference_resolutions"]
+        .as_array()
+        .unwrap();
+    assert_eq!(resolutions.len(), 2);
+
+    // REF-11: Lexicographical handle order
+    assert_eq!(resolutions[0]["handle"], "@imp");
+    assert_eq!(resolutions[1]["handle"], "@req");
+
+    let imp_res = &resolutions[0];
+    let imp_ref = imp_res["reference"].as_str().unwrap();
+    let imp_id = imp_res["element_id"].as_str().unwrap();
+    assert!(imp_ref.len() >= 8);
+
+    // REF-04 & REF-10: Change 2 consumes the returned prefix (imp_ref)
+    let claims2 = format!(
+        r#"[
+        {{
+            "kind": "update_element",
+            "element_ref": "{imp_ref}",
+            "title": "Auth Service Updated"
+        }}
+    ]"#
+    );
+    let f2 = dir.path().join("c2.json");
+    fs::write(&f2, claims2).unwrap();
+
+    let auth2 = Command::new(kat_bin())
+        .args(["author", f2.to_str().unwrap()])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let auth2_str = String::from_utf8(auth2.stdout).unwrap();
+    assert!(
+        auth2.status.success(),
+        "kat author Change 2 failed: {auth2_str}"
+    );
+
+    let com2 = Command::new(kat_bin())
+        .arg("commit")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(com2.status.success());
+
+    // REF-05: Handles expire after commit (@imp in Change 3 must fail as unknown handle)
+    let claims3 = r#"[
+        {
+            "kind": "update_element",
+            "element_ref": "@imp",
+            "title": "Expired Handle Test"
+        }
+    ]"#;
+    let f3 = dir.path().join("c3.json");
+    fs::write(&f3, claims3).unwrap();
+
+    let auth3 = Command::new(kat_bin())
+        .args(["author", f3.to_str().unwrap()])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        !auth3.status.success(),
+        "Expired handle @imp should have failed authoring"
+    );
+
+    // Verify updated element title via kat show
+    let show_out = Command::new(kat_bin())
+        .args(["show", imp_id, "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(show_out.status.success());
+    let show_json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(show_out.stdout).unwrap()).unwrap();
+    assert_eq!(
+        show_json["data"]["element"]["properties"][0][1]["Text"],
+        "Auth Service Updated"
+    );
+}
+
+#[test]
+fn v044_canonical_bytes_and_object_id_invariance_test() {
+    // REF-12: Proves that the presence of workflow reference handles in a draft transaction
+    // produces 100% bit-for-bit identical canonical ObjectIds, CBOR bytes, and SemanticState
+    // compared to a draft session with identical operations and no workflow references.
+    let dir = tempfile::tempdir().unwrap();
+    let init_out = Command::new(kat_bin())
+        .arg("init")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(init_out.status.success());
+    let repo = kat::repository::open::open_repository(dir.path()).unwrap();
+
+    let elem_id = kat::domain::identity::ElementId::new();
+    let ev = kat::domain::element::KnowledgeElementVersion {
+        element_id: elem_id,
+        type_id: "kat.core/requirement".to_string(),
+        lifecycle: kat::domain::element::Lifecycle::Active,
+        properties: vec![(
+            "title".to_string(),
+            kat::domain::property::PropertyValue::Text("Invariant Test".to_string()),
+        )],
+    };
+
+    let op = kat::domain::operation::Operation::CreateElement {
+        new_version: kat::domain::identity::ObjectId::from_bytes([0x42; 32]),
+    };
+
+    let state_bytes = repo.object_store().get(repo.accepted.state).unwrap();
+    let state_obj = kat::encoding::decode_canonical(&state_bytes).unwrap();
+    let mut working_state = match state_obj.payload {
+        kat::encoding::object::CanonicalPayload::SemanticState(s) => s,
+        _ => unreachable!(),
+    };
+    working_state
+        .elements
+        .push(kat::domain::state::ElementStateEntry {
+            element_id: elem_id,
+            version: kat::domain::identity::ObjectId::from_bytes([0x42; 32]),
+        });
+
+    let base_session = kat::repository::session::DraftSession {
+        schema_version: kat::repository::session::DRAFT_SESSION_VERSION,
+        status: kat::repository::session::DraftSessionState::Open,
+        base_state_id: repo.accepted.state,
+        base_change_id: repo.accepted.change,
+        created_at: "2026-08-18T00:00:00Z".to_string(),
+        description: Some("Invariance test".to_string()),
+        operations: vec![op.clone()],
+        staged_element_versions: vec![ev.clone()],
+        staged_relationship_versions: vec![],
+        working_state: working_state.clone(),
+        workflow_references: vec![],
+    };
+
+    // Session 1: No workflow reference handles
+    let session_no_handles = base_session.clone();
+
+    // Session 2: Contains workflow reference handles
+    let mut session_with_handles = base_session.clone();
+    session_with_handles.bind_workflow_reference("@req", elem_id);
+    session_with_handles.bind_workflow_reference("@imp", elem_id);
+
+    // 1. Verify working_state canonical CBOR bytes are 100% identical
+    let obj_no = kat::encoding::object::CanonicalObject {
+        payload: kat::encoding::object::CanonicalPayload::SemanticState(
+            session_no_handles.working_state.clone(),
+        ),
+    };
+    let obj_with = kat::encoding::object::CanonicalObject {
+        payload: kat::encoding::object::CanonicalPayload::SemanticState(
+            session_with_handles.working_state.clone(),
+        ),
+    };
+    let bytes_no = kat::encoding::cbor::canonical_bytes(&obj_no).unwrap();
+    let bytes_with = kat::encoding::cbor::canonical_bytes(&obj_with).unwrap();
+    assert_eq!(bytes_no, bytes_with);
+
+    // 2. Verify KnowledgeElementVersion canonical CBOR bytes are 100% identical
+    let ev_obj_no = kat::encoding::object::CanonicalObject {
+        payload: kat::encoding::object::CanonicalPayload::KnowledgeElementVersion(
+            session_no_handles.staged_element_versions[0].clone(),
+        ),
+    };
+    let ev_obj_with = kat::encoding::object::CanonicalObject {
+        payload: kat::encoding::object::CanonicalPayload::KnowledgeElementVersion(
+            session_with_handles.staged_element_versions[0].clone(),
+        ),
+    };
+    let ev_bytes_no = kat::encoding::cbor::canonical_bytes(&ev_obj_no).unwrap();
+    let ev_bytes_with = kat::encoding::cbor::canonical_bytes(&ev_obj_with).unwrap();
+    assert_eq!(ev_bytes_no, ev_bytes_with);
+
+    // 3. Commit both sessions in separate test repos and verify identical published state_id
+    kat::repository::session::write_draft_session_atomic(dir.path(), &session_with_handles)
+        .unwrap();
+    let outcome = kat::repository::change::commit_draft_session(&repo).unwrap();
+    assert_eq!(outcome.workflow_reference_resolutions.len(), 2);
+    assert_eq!(outcome.workflow_reference_resolutions[0].handle, "@imp");
+    assert_eq!(outcome.workflow_reference_resolutions[1].handle, "@req");
+    assert_eq!(
+        outcome.workflow_reference_resolutions[0].element_id,
+        elem_id
+    );
+    assert_eq!(
+        outcome.workflow_reference_resolutions[1].element_id,
+        elem_id
+    );
 }

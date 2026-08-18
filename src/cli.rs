@@ -239,6 +239,10 @@ pub enum Command {
         /// Filter by lifecycle state (active, deprecated, superseded)
         #[arg(long)]
         lifecycle: Option<String>,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
     },
 
     /// Inspect a resolved knowledge element
@@ -250,6 +254,10 @@ pub enum Command {
         /// Display compact single-line element summary
         #[arg(long)]
         compact: bool,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show accepted Change history
@@ -270,6 +278,10 @@ pub enum Command {
         /// Display compact output
         #[arg(long)]
         compact: bool,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
     },
 
     /// Trace an element to its semantic origin
@@ -289,6 +301,10 @@ pub enum Command {
         /// Display compact arrow-joined path rendering
         #[arg(long)]
         compact: bool,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
     },
 
     /// Analyze consequences of changing an element
@@ -304,6 +320,10 @@ pub enum Command {
         /// Display compact flat table layout
         #[arg(long)]
         compact: bool,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
     },
 
     /// Evaluate artifact accountability baselines
@@ -319,6 +339,10 @@ pub enum Command {
         /// Display compact status table layout
         #[arg(long)]
         compact: bool,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
     },
 
     /// Discover semantic types and valid relationships
@@ -327,6 +351,10 @@ pub enum Command {
         /// Display compact shortened type IDs without human-readable names
         #[arg(long, global = true)]
         compact: bool,
+
+        /// Output structured machine JSON envelope
+        #[arg(long, global = true)]
+        json: bool,
 
         #[command(subcommand)]
         command: Option<OntologyCommands>,
@@ -345,6 +373,10 @@ pub enum Command {
         /// Display compact single-line counts summary
         #[arg(long)]
         compact: bool,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
     },
 
     // -----------------------------------------------------------------------
