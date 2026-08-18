@@ -455,3 +455,144 @@ fn v04_porcelain_ontology_guidance_test() {
     assert!(err_msg.contains("requires source in"));
     assert!(err_msg.contains("kat.core/implementation"));
 }
+
+#[test]
+fn v04_graph_quality_gq03_gq04_frozen_semantics_test() {
+    let dir = setup_repo();
+
+    let claims_file = dir.path().join("gq_claims.json");
+    fs::write(
+        &claims_file,
+        r#"[
+  {
+    "kind": "create_element",
+    "type_id": "kat.core/requirement",
+    "title": "Auth Spec Requirement",
+    "handle": "@req"
+  },
+  {
+    "kind": "create_element",
+    "type_id": "kat.core/implementation",
+    "title": "Auth Engine Implementation",
+    "handle": "@imp"
+  },
+  {
+    "kind": "create_element",
+    "type_id": "kat.core/design-decision",
+    "title": "Token Strategy Decision",
+    "handle": "@dec"
+  },
+  {
+    "kind": "link_element",
+    "relationship_type_id": "kat.core/realizes",
+    "source_ref": "@imp",
+    "target_ref": "@req"
+  }
+]"#,
+    )
+    .unwrap();
+
+    let output1 = Command::new(kat_bin())
+        .args(["author", claims_file.to_str().unwrap()])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output1.status.success());
+
+    let output2 = Command::new(kat_bin())
+        .arg("commit")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output2.status.success());
+
+    // Run kat check
+    let output_chk = Command::new(kat_bin())
+        .arg("check")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output_chk.status.success());
+    let chk_out = String::from_utf8(output_chk.stdout).unwrap();
+
+    // Verify GQ-03 message: Implementation has no modeled Artifact representation route
+    assert!(chk_out.contains("GQ-03"));
+    assert!(chk_out.contains("has no modeled Artifact representation route"));
+
+    // Verify GQ-04 message: Design Decision has no consequence route through kat.core/addresses or kat.core/guides
+    assert!(chk_out.contains("GQ-04"));
+    assert!(chk_out.contains("has no consequence route through kat.core/addresses or kat.core/guides"));
+
+    let out1_str = String::from_utf8(output1.stdout).unwrap();
+    let imp_id = out1_str
+        .lines()
+        .find(|l| l.contains("@imp"))
+        .and_then(|l| l.split("->").nth(1))
+        .unwrap()
+        .trim();
+    let req_id = out1_str
+        .lines()
+        .find(|l| l.contains("@req"))
+        .and_then(|l| l.split("->").nth(1))
+        .unwrap()
+        .trim();
+    let dec_id = out1_str
+        .lines()
+        .find(|l| l.contains("@dec"))
+        .and_then(|l| l.split("->").nth(1))
+        .unwrap()
+        .trim();
+
+    // Now resolve GQ-03 and GQ-04 by adding Artifact represents Implementation & Design Decision addresses Requirement
+    // Cross-Change references use stable UUIDs (handles expired on commit)
+    let fix_claims_content = format!(
+        r#"[
+  {{
+    "kind": "create_element",
+    "type_id": "kat.core/artifact",
+    "title": "Auth Service File",
+    "handle": "@art"
+  }},
+  {{
+    "kind": "link_element",
+    "relationship_type_id": "kat.core/represents",
+    "source_ref": "@art",
+    "target_ref": "{imp_id}"
+  }},
+  {{
+    "kind": "link_element",
+    "relationship_type_id": "kat.core/addresses",
+    "source_ref": "{dec_id}",
+    "target_ref": "{req_id}"
+  }}
+]"#
+    );
+
+    let fix_claims = dir.path().join("gq_fix_claims.json");
+    fs::write(&fix_claims, fix_claims_content).unwrap();
+
+    let output3 = Command::new(kat_bin())
+        .args(["author", fix_claims.to_str().unwrap()])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output3.status.success());
+
+    let output4 = Command::new(kat_bin())
+        .arg("commit")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output4.status.success());
+
+    // Verify GQ-03 and GQ-04 are resolved
+    let output_chk2 = Command::new(kat_bin())
+        .arg("check")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output_chk2.status.success());
+    let chk2_out = String::from_utf8(output_chk2.stdout).unwrap();
+    assert!(!chk2_out.contains("GQ-03"));
+    assert!(!chk2_out.contains("GQ-04"));
+}

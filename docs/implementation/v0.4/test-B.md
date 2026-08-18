@@ -38,3 +38,47 @@ artifact neighborhoods.
 4. One semantic Artifact description overstated the responsibility of
    `workout_session_service.dart`, demonstrating that mechanically valid
    semantic graphs can still contain misleading descriptive knowledge.
+
+### Final Result
+
+PASS after v0.4.2 corrective iteration.
+
+The original B2 run demonstrated that KAT's Context engine successfully
+retrieved the relevant semantic neighborhood but its default human
+presentation exposed insufficient detail, forcing a machine-mode query
+and repeated semantic inspection.
+
+v0.4.2 corrected the presentation without changing Context retrieval
+semantics.
+
+In B2.2, an unfamiliar actor used a single default `kat context` query
+to identify the relevant requirements, constraints, design decisions,
+implementations, validations, and physical Artifact anchors without
+requiring `--json` or `--categorize`.
+
+### Key quantitative results
+
+Code-only B1:
+- filesystem/navigation: 15
+- searches: 12
+- physical files inspected: 8
+- documentation inspected: 5
+
+KAT B2.2:
+- filesystem/navigation: 7
+- searches: 9
+- physical files inspected: 6
+- documentation inspected: 1
+- KAT invocations: 10
+- context calls: 1
+- machine-mode Context calls: 0
+- strictly necessary semantic follow-ups for context identification: 0
+
+### Validated hypothesis
+
+KAT can act as a semantic routing layer that directs developers toward
+the correct implementation neighborhood while reducing broad physical
+repository discovery.
+
+The improved default Context presentation is sufficient to transition
+from semantic retrieval directly into ordinary code navigation.

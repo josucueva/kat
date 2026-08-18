@@ -16,12 +16,12 @@ fn short_id(id: &ElementId) -> String {
 }
 
 /// Extracts title string from KnowledgeElementVersion properties.
-fn element_title<'a>(ev: &'a crate::domain::element::KnowledgeElementVersion) -> &'a str {
+fn element_title(ev: &crate::domain::element::KnowledgeElementVersion) -> &str {
     for (k, v) in &ev.properties {
-        if k.as_str() == "title" {
-            if let PropertyValue::Text(t) = v {
-                return t.as_str();
-            }
+        if k.as_str() == "title"
+            && let PropertyValue::Text(t) = v
+        {
+            return t.as_str();
         }
     }
     "<untitled>"
@@ -84,10 +84,10 @@ impl ContextCategory {
 fn find_physical_locator<'a>(ev: &'a ElementView, res: &'a ContextResult) -> Option<&'a str> {
     for (prop_key, prop_val) in &ev.element.properties {
         let k = prop_key.as_str().to_lowercase();
-        if k == "path" || k == "file" || k == "uri" || k == "location" {
-            if let PropertyValue::Text(val) = prop_val {
-                return Some(val.as_str());
-            }
+        if (k == "path" || k == "file" || k == "uri" || k == "location")
+            && let PropertyValue::Text(val) = prop_val
+        {
+            return Some(val.as_str());
         }
     }
 

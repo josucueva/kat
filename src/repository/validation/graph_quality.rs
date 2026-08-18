@@ -2,10 +2,7 @@
 
 use crate::domain::identity::ElementId;
 use crate::repository::open::Repository;
-use crate::repository::query::{
-    ArtifactAccountabilityStatus, QueryError, analyze_artifact_accountability, list_elements,
-    show_element,
-};
+use crate::repository::query::{QueryError, list_elements, show_element};
 use crate::repository::validation::repository::{ValidationReport, validate_repository};
 
 /// Severity level for graph quality diagnostic findings.
@@ -78,12 +75,14 @@ pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityRepo
         if type_id == "kat.core/requirement"
             || type_id == "kat.core/user-story"
             || type_id == "kat.core/use-case"
+            || type_id == "kat.core/goal"
+            || type_id == "requirement"
         {
             let has_realization = view
                 .relationships
                 .incoming
                 .iter()
-                .any(|rel| rel.relationship_type_id == "kat.core/realizes");
+                .any(|rel| rel.relationship_type_id == "kat.core/realizes" || rel.relationship_type_id == "realizes");
             if !has_realization {
                 findings.push(GraphQualityFinding {
                     rule_id: "GQ-02".to_string(),
@@ -98,47 +97,60 @@ pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityRepo
             }
         }
 
-        // GQ-03: Implementation Lacks Verification
+        // GQ-03: Implementation Without Artifact Representation Route
         if type_id == "kat.core/implementation"
             || type_id == "kat.core/code"
             || type_id == "kat.core/service"
+            || type_id == "kat.core/module"
+            || type_id == "implementation"
         {
-            let has_verification = view
+            let has_artifact_route = view
                 .relationships
                 .incoming
                 .iter()
-                .any(|rel| rel.relationship_type_id == "kat.core/validates");
-            if !has_verification {
+                .any(|rel| rel.relationship_type_id == "kat.core/represents" || rel.relationship_type_id == "represents");
+            if !has_artifact_route {
                 findings.push(GraphQualityFinding {
                     rule_id: "GQ-03".to_string(),
                     severity: QualitySeverity::Advisory,
                     target_element_id: Some(elem_summary.element_id),
                     message: format!(
-                        "Implementation {} has no active incoming verification link via kat.core/validates",
+                        "Implementation {} has no modeled Artifact representation route",
                         elem_summary.element_id
                     ),
-                    details: vec!["Link a test element to this implementation using 'kat link --type kat.core/validates'".to_string()],
+                    details: vec!["Link an artifact element to this implementation using 'kat link --type kat.core/represents'".to_string()],
                 });
             }
         }
-    }
 
-    // GQ-04: Unaccounted Artifact File Link
-    if let Ok(account_report) = analyze_artifact_accountability(repository) {
-        for artifact in &account_report.artifacts {
-            if artifact.status == ArtifactAccountabilityStatus::Unaccounted
-                || artifact.status == ArtifactAccountabilityStatus::Stale
-            {
+        // GQ-04: Design Decision Without Consequence Route
+        if type_id == "kat.core/design-decision"
+            || type_id == "kat.core/architecture"
+            || type_id == "kat.core/decision"
+            || type_id == "kat.core/model"
+            || type_id == "design-decision"
+        {
+            let has_consequence = view
+                .relationships
+                .outgoing
+                .iter()
+                .any(|rel| {
+                    rel.relationship_type_id == "kat.core/addresses"
+                        || rel.relationship_type_id == "addresses"
+                        || rel.relationship_type_id == "kat.core/guides"
+                        || rel.relationship_type_id == "guides"
+                });
+            if !has_consequence {
                 findings.push(GraphQualityFinding {
                     rule_id: "GQ-04".to_string(),
                     severity: QualitySeverity::Advisory,
-                    target_element_id: Some(artifact.artifact_element_id),
+                    target_element_id: Some(elem_summary.element_id),
                     message: format!(
-                        "Artifact {} has accountability status: {:?}",
-                        artifact.artifact_element_id, artifact.status
+                        "Design Decision {} has no consequence route through kat.core/addresses or kat.core/guides",
+                        elem_summary.element_id
                     ),
                     details: vec![
-                        "Update artifact accountability coverage using 'kat account'".to_string(),
+                        "Link this design decision to a requirement using kat.core/addresses or to an implementation using kat.core/guides".to_string(),
                     ],
                 });
             }
