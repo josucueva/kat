@@ -31,13 +31,15 @@ Remove an existing relationship from draft state.
 .B account_artifact
 Re-baseline artifact accountability.
 .SH WORKFLOW REFERENCES
-A \fBcreate_element\fR claim may declare a temporary handle such as \fB"@req-auth"\fR.
+@handles are temporary references scoped to the current draft Change.
+They may be used by later claims in that Change after the defining
+claim has succeeded.
 
-Later claims within the same draft Change may use that handle in place of a UUID reference.
-
-\fBWorkflow references are draft-local.\fR They exist only for the duration of the active draft Change and expire when the Change is published (\fBcommit\fR) or discarded (\fBabort\fR). Forward references within a single claim batch are not allowed.
+Workflow references expire when the Change is committed or aborted.
 .SH CROSS-CHANGE REFERENCES
-Elements established in previously accepted Changes must be referenced using their stable UUIDs or unambiguous UUID prefixes. Workflow handles do not persist across Change boundaries.
+To reference knowledge from an accepted Change, use its stable UUID
+or an unambiguous UUID prefix. Workflow references are not persistent
+aliases.
 .SH ATOMICITY
 Valid input is compiled and staged atomically. If any claim in a non-empty document is invalid, the entire input is rejected with exit code 1 and 0 operations are staged, leaving any pre-existing draft transaction byte-for-byte unchanged. Empty or whitespace-only input is a successful no-op (exit 0).
 .SH EXAMPLES

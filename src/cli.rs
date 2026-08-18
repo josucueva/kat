@@ -27,7 +27,7 @@ Everyday workflow:
 
 Inspection:
   list       List knowledge elements in the accepted state
-  show       Inspect a detailed view of a resolved knowledge element
+  show       Inspect a resolved knowledge element
   history    Show accepted Change history
   trace      Trace an element to its semantic origin
   impact     Analyze consequences of changing an element
@@ -236,7 +236,7 @@ pub enum Command {
         lifecycle: Option<String>,
     },
 
-    /// Inspect a detailed view of a resolved knowledge element
+    /// Inspect a resolved knowledge element
     #[command(next_help_heading = "Inspection")]
     Show {
         /// Element ID (UUID or prefix) to display
@@ -443,6 +443,9 @@ pub enum Command {
     },
 
     /// Manage draft Change transactions explicitly
+    ///
+    /// For normal authoring, kat-author(1) automatically opens a draft Change
+    /// when needed. Use kat change when explicit transaction control is required.
     #[command(next_help_heading = "Advanced Authoring")]
     Change {
         #[command(subcommand)]

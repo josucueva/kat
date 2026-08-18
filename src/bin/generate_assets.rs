@@ -68,7 +68,7 @@ Discard the current draft Change
 List knowledge elements in the accepted state
 .TP
 .BR kat\-show (1)
-Inspect a detailed view of a resolved knowledge element
+Inspect a resolved knowledge element
 .TP
 .BR kat\-history (1)
 Show accepted Change history
@@ -80,7 +80,7 @@ Trace an element to its semantic origin
 Analyze consequences of changing an element
 .TP
 .BR kat\-artifacts (1)
-Evaluate artifact accountability baselines
+Inspect artifact accountability
 .TP
 .BR kat\-ontology (1)
 Discover semantic types and valid relationships
@@ -127,10 +127,10 @@ Inspect state:
 Stage a semantic Change:
     kat author change.json
 
-Check health:
+Review repository health:
     kat check
 
-Publish Change:
+Publish:
     kat commit
 
 Retrieve development context:
@@ -185,13 +185,15 @@ Remove an existing relationship from draft state.
 .B account_artifact
 Re-baseline artifact accountability.
 .SH WORKFLOW REFERENCES
-A \fBcreate_element\fR claim may declare a temporary handle such as \fB"@req-auth"\fR.
+@handles are temporary references scoped to the current draft Change.
+They may be used by later claims in that Change after the defining
+claim has succeeded.
 
-Later claims within the same draft Change may use that handle in place of a UUID reference.
-
-\fBWorkflow references are draft-local.\fR They exist only for the duration of the active draft Change and expire when the Change is published (\fBcommit\fR) or discarded (\fBabort\fR). Forward references within a single claim batch are not allowed.
+Workflow references expire when the Change is committed or aborted.
 .SH CROSS-CHANGE REFERENCES
-Elements established in previously accepted Changes must be referenced using their stable UUIDs or unambiguous UUID prefixes. Workflow handles do not persist across Change boundaries.
+To reference knowledge from an accepted Change, use its stable UUID
+or an unambiguous UUID prefix. Workflow references are not persistent
+aliases.
 .SH ATOMICITY
 Valid input is compiled and staged atomically. If any claim in a non-empty document is invalid, the entire input is rejected with exit code 1 and 0 operations are staged, leaving any pre-existing draft transaction byte-for-byte unchanged. Empty or whitespace-only input is a successful no-op (exit 0).
 .SH EXAMPLES
@@ -241,10 +243,42 @@ Supported via \fB\-\-json\fR flag, emitting structured \fBCommonResultEnvelope\f
 "#;
     fs::write(out_dir.join("kat-author.1"), author_man)?;
 
-    // 3. Generate remaining subcommand man pages
+    // 3. Generate kat-change(1) explicit transaction control man page
+    let change_man = r#".TH kat\-change 1 "kat 0.4.1"
+.SH NAME
+kat\-change \- Manage draft Change transactions explicitly
+.SH SYNOPSIS
+.B kat change
+<\fIsubcommand\fR>
+.SH DESCRIPTION
+Manage multi-operation change transactions explicitly.
+
+For normal authoring, \fBkat-author\fR(1) automatically opens a draft Change when needed. Use \fBkat-change\fR(1) when explicit transaction control is required.
+.SH SUBCOMMANDS
+.TP
+.B begin
+Open a new multi-operation change transaction.
+.TP
+.B status
+Inspect status and staged operations of the open change transaction.
+.TP
+.B commit
+Commit all staged operations into a single ChangeRevision and publish.
+.TP
+.B abort
+Abort open change transaction and discard all staged operations.
+.SH SEE ALSO
+.BR kat (1),
+.BR kat\-author (1),
+.BR kat\-commit (1),
+.BR kat\-abort (1)
+"#;
+    fs::write(out_dir.join("kat-change.1"), change_man)?;
+
+    // 4. Generate remaining subcommand man pages
     for sub in cmd.get_subcommands() {
         let sub_name = sub.get_name();
-        if sub_name == "help" || sub_name == "author" {
+        if sub_name == "help" || sub_name == "author" || sub_name == "change" {
             continue;
         }
         let sub_man = Man::new(sub.clone());

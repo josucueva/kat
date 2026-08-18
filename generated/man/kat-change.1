@@ -1,29 +1,28 @@
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.TH change 1  "change " 
+.TH kat\-change 1 "kat 0.4.1"
 .SH NAME
-change \- Manage draft Change transactions explicitly
+kat\-change \- Manage draft Change transactions explicitly
 .SH SYNOPSIS
-\fBchange\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.B kat change
+<\fIsubcommand\fR>
 .SH DESCRIPTION
-Manage draft Change transactions explicitly
-.SH OPTIONS
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
+Manage multi-operation change transactions explicitly.
+
+For normal authoring, \fBkat-author\fR(1) automatically opens a draft Change when needed. Use \fBkat-change\fR(1) when explicit transaction control is required.
 .SH SUBCOMMANDS
 .TP
-change\-begin(1)
-Open a new multi\-operation change transaction
+.B begin
+Open a new multi-operation change transaction.
 .TP
-change\-status(1)
-Inspect status and staged operations of the open change transaction
+.B status
+Inspect status and staged operations of the open change transaction.
 .TP
-change\-commit(1)
-Commit all staged operations into a single ChangeRevision and publish
+.B commit
+Commit all staged operations into a single ChangeRevision and publish.
 .TP
-change\-abort(1)
-Abort the open change transaction and discard all staged operations
-.TP
-change\-help(1)
-Print this message or the help of the given subcommand(s)
+.B abort
+Abort open change transaction and discard all staged operations.
+.SH SEE ALSO
+.BR kat (1),
+.BR kat\-author (1),
+.BR kat\-commit (1),
+.BR kat\-abort (1)

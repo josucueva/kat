@@ -3977,8 +3977,15 @@ fn docs_man_pages_regenerate_without_diff_test() {
     let root_man = std::fs::read_to_string("generated/man/kat.1").unwrap();
     assert!(root_man.contains("EVERYDAY WORKFLOW"));
     assert!(root_man.contains("BASIC WORKFLOW"));
+    assert!(root_man.contains("Review repository health:"));
+    assert!(root_man.contains("Inspect a resolved knowledge element"));
+    assert!(root_man.contains("Inspect artifact accountability"));
 
     let author_man = std::fs::read_to_string("generated/man/kat-author.1").unwrap();
     assert!(author_man.contains("WORKFLOW REFERENCES"));
     assert!(author_man.contains("CROSS-CHANGE REFERENCES"));
+    assert!(author_man.contains("@handles are temporary references scoped to the current draft Change."));
+
+    let change_man = std::fs::read_to_string("generated/man/kat-change.1").unwrap();
+    assert!(change_man.contains("automatically opens a draft Change when needed."));
 }

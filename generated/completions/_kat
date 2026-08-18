@@ -256,8 +256,8 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (change)
 _arguments "${_arguments_options[@]}" : \
-'-h[Print help]' \
-'--help[Print help]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
 ":: :_kat__subcmd__change_commands" \
 "*::: :->change" \
 && ret=0
@@ -515,7 +515,7 @@ _kat_commands() {
 'commit:Publish the current draft Change' \
 'abort:Discard the current draft Change' \
 'list:List knowledge elements in the current accepted state' \
-'show:Inspect a detailed view of a resolved knowledge element' \
+'show:Inspect a resolved knowledge element' \
 'history:Show accepted Change history' \
 'trace:Trace an element to its semantic origin' \
 'impact:Analyze consequences of changing an element' \
@@ -657,7 +657,7 @@ _kat__subcmd__help_commands() {
 'commit:Publish the current draft Change' \
 'abort:Discard the current draft Change' \
 'list:List knowledge elements in the current accepted state' \
-'show:Inspect a detailed view of a resolved knowledge element' \
+'show:Inspect a resolved knowledge element' \
 'history:Show accepted Change history' \
 'trace:Trace an element to its semantic origin' \
 'impact:Analyze consequences of changing an element' \
