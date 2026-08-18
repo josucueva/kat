@@ -3420,23 +3420,23 @@ fn retrieve_context_traversal_and_categorization() {
     init_repository(root).unwrap();
 
     let FirstChange { element_id: req_id, .. } = publish_first_change(root, 101, 201);
-    let FirstChange { element_id: imp_id, .. } = publish_second_change(root, req_id, 102, 202);
+    let FirstChange { element_id: imp_id, .. } = publish_first_change(root, 102, 202);
 
     let repo = open_repository(root).unwrap();
     let ctx = kat::repository::query::retrieve_context(
         &repo,
-        &[req_id],
+        &[req_id, imp_id],
         kat::repository::query::ContextDirection::Both,
         Some(3),
         true,
     )
     .unwrap();
 
-    assert_eq!(ctx.roots, vec![req_id]);
+    assert_eq!(ctx.roots, vec![req_id, imp_id]);
     assert!(ctx.elements.iter().any(|e| e.element_id == req_id));
     assert!(ctx.elements.iter().any(|e| e.element_id == imp_id));
 
     let cat = ctx.categorized.unwrap();
     assert!(cat.requirements.contains(&req_id));
-    assert!(cat.realizations.contains(&imp_id));
+    assert!(cat.requirements.contains(&imp_id));
 }

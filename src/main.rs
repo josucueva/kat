@@ -60,7 +60,7 @@ use kat::repository::session::{
 };
 
 use clap::Parser;
-use kat::cli::{self, ChangeCommands, Cli, Command, OntologyCommands};
+use kat::cli::{self, Cli, Command, OntologyCommands};
 
 use kat::repository::query::{
     OntologySummary, OntologyTypeView, inspect_ontology, show_ontology_type,

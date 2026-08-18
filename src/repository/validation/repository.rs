@@ -14,7 +14,7 @@ use crate::repository::query::QueryError;
 use crate::repository::ref_store::RefStore;
 
 /// Category/kind of a mechanically decidable validation violation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ValidationViolationKind {
     /// Relationship type is not defined in the active ontology.
     UnknownRelationshipType,
@@ -29,7 +29,7 @@ pub enum ValidationViolationKind {
 }
 
 /// A mechanically decidable semantic violation reported by `kat validate`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ValidationViolation {
     /// Category/kind of violation.
     pub kind: ValidationViolationKind,
@@ -42,7 +42,7 @@ pub struct ValidationViolation {
 }
 
 /// Active natural-language Constraint element reported as unverified in KAT v0.1.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UnverifiedConstraint {
     /// Identity of the constraint element.
     pub constraint_element_id: ElementId,
@@ -53,7 +53,7 @@ pub struct UnverifiedConstraint {
 }
 
 /// Linked validation evidence element targeting a subject.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ValidationEvidenceInfo {
     /// Identity of the `kat.core/validation` element.
     pub validation_element_id: ElementId,
@@ -62,7 +62,7 @@ pub struct ValidationEvidenceInfo {
 }
 
 /// Verification status and linked evidence details for a Constraint element.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ConstraintVerificationDetail {
     /// Identity of the constraint element.
     pub constraint_id: ElementId,
@@ -77,7 +77,7 @@ pub struct ConstraintVerificationDetail {
 }
 
 /// Summary of evidence coverage for a single knowledge element category.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CategoryCoverageSummary {
     /// Canonical type ID of the category (e.g. `kat.core/constraint`).
     pub category_type: String,
@@ -90,7 +90,7 @@ pub struct CategoryCoverageSummary {
 }
 
 /// Detail for an active knowledge element that has zero linked validation evidence elements.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UncoveredElementDetail {
     /// Identity of the uncovered element.
     pub element_id: ElementId,
@@ -101,7 +101,7 @@ pub struct UncoveredElementDetail {
 }
 
 /// Comprehensive report produced by `validate_repository`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ValidationReport {
     /// Mechanically decidable semantic violations (causes exit code 1 if non-empty).
     pub violations: Vec<ValidationViolation>,

@@ -15,8 +15,10 @@
 //! candidate-state correctness require). Precondition checks (operation
 //! application conditions) live with the Change Engine in `change.rs`.
 
+pub mod graph_quality;
 pub mod invariant;
 pub mod ontology;
 pub mod repository;
 
+pub use graph_quality::*;
 pub use repository::*;
