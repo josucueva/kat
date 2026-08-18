@@ -189,6 +189,14 @@ pub enum ChangeError {
     /// The application input contained a duplicate canonical property key.
     #[error("duplicate property key: {0}")]
     DuplicatePropertyKey(String),
+    /// Multi-operation batch staging failed at index k.
+    #[error("batch staging failed at index {index}: {cause}")]
+    BatchStagingFailed {
+        /// Failing operation index (0-indexed).
+        index: usize,
+        /// Description of the error.
+        cause: String,
+    },
     /// The accepted repository head changed since this change was prepared
     /// (compare-and-swap conflict). The change's immutable objects remain
     /// stored but unreferenced; prepare against the new head and retry.
@@ -3073,8 +3081,8 @@ pub enum StagedOperationInput {
     AccountArtifact(AccountArtifactInput),
 }
 
-/// Stages one mutation operation onto the working candidate of an open draft change session.
-pub fn stage_operation_into_session(
+/// Stages one mutation operation in memory onto the working candidate of an open draft change session without persisting to disk.
+pub fn stage_operation_in_memory(
     repository: &Repository,
     session: &mut DraftSession,
     input: StagedOperationInput,
@@ -3206,6 +3214,16 @@ pub fn stage_operation_into_session(
 
     session.operations.push(op.clone());
     session.working_state = candidate_state;
+    Ok(op)
+}
+
+/// Stages one mutation operation onto the working candidate of an open draft change session and persists to disk.
+pub fn stage_operation_into_session(
+    repository: &Repository,
+    session: &mut DraftSession,
+    input: StagedOperationInput,
+) -> Result<Operation, ChangeError> {
+    let op = stage_operation_in_memory(repository, session, input)?;
     write_draft_session_atomic(repository.root_dir(), session).map_err(|e| {
         ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
             e.to_string(),
@@ -3213,6 +3231,52 @@ pub fn stage_operation_into_session(
     })?;
 
     Ok(op)
+}
+
+/// Atomically stages an ordered batch of mutation operations into an open draft change session.
+///
+/// ENFORCES ATOMIC BATCH ROLLBACK INVARIANT:
+/// If operation k (0 <= k < M) in `inputs` fails validation or precondition check:
+/// 1. Memory working state and staged objects roll back to pre-batch session.
+/// 2. `.kat/work/change/session.json` on disk is NEVER modified or written.
+/// 3. Returns `Err(ChangeError::BatchStagingFailed)` detailing index k and failing cause.
+pub fn stage_batch_operations_into_session(
+    repository: &Repository,
+    inputs: Vec<StagedOperationInput>,
+) -> Result<(Vec<Operation>, DraftSession), ChangeError> {
+    let root = repository.root_dir();
+    let original_session = read_draft_session(root)
+        .map_err(|_| ChangeError::Precondition(PreconditionError::DraftNotFound))?;
+
+    if original_session.status == DraftSessionState::Stale {
+        return Err(ChangeError::Conflict);
+    }
+
+    let mut working_session = original_session.clone();
+    let mut staged_ops = Vec::new();
+
+    for (index, input) in inputs.into_iter().enumerate() {
+        let op = match stage_operation_in_memory(repository, &mut working_session, input) {
+            Ok(op) => op,
+            Err(err) => {
+                // Atomic rollback: original_session remains unchanged, session.json on disk is untouched.
+                return Err(ChangeError::BatchStagingFailed {
+                    index,
+                    cause: err.to_string(),
+                });
+            }
+        };
+        staged_ops.push(op);
+    }
+
+    // Persist only after ALL operations in the batch have succeeded.
+    write_draft_session_atomic(root, &working_session).map_err(|e| {
+        ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
+            e.to_string(),
+        ))
+    })?;
+
+    Ok((staged_ops, working_session))
 }
 
 /// Commits an open draft change session, performing whole-candidate validation,
@@ -3737,5 +3801,28 @@ mod tests {
             revision.change.description.as_deref(),
             Some("create requirement")
         );
+    }
+
+    #[test]
+    fn atomic_batch_staging_rollback_preserves_session_json_byte_for_byte() {
+        let temp = tempfile::tempdir().unwrap();
+        crate::repository::init::init_repository(temp.path()).unwrap();
+        let repository = crate::repository::open::open_repository(temp.path()).unwrap();
+        let _session = crate::repository::session::begin_draft_session(&repository, Some("batch test".to_string())).unwrap();
+
+        let session_path = crate::repository::session::draft_session_path(temp.path());
+        let pre_batch_bytes = std::fs::read(&session_path).unwrap();
+
+        let valid_op = StagedOperationInput::CreateElement(input(10, "kat.core/requirement", vec![]));
+        let invalid_op = StagedOperationInput::CreateElement(input(11, "invalid.type/unknown", vec![]));
+
+        // Batch with operation 0 valid, operation 1 invalid -> batch fails
+        let err = stage_batch_operations_into_session(&repository, vec![valid_op, invalid_op]).unwrap_err();
+
+        assert!(matches!(err, ChangeError::BatchStagingFailed { index: 1, .. }));
+
+        // Milestone 3 Invariant Verification: session.json on disk remains byte-for-byte identical to pre-batch
+        let post_batch_bytes = std::fs::read(&session_path).unwrap();
+        assert_eq!(pre_batch_bytes, post_batch_bytes);
     }
 }
