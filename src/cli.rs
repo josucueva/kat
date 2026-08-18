@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+pub mod machine_presenter;
+
 /// KAT (Knowledge Abstraction Tracker)
 ///
 /// A specification-first semantic software repository for representing,

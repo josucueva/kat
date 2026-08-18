@@ -67,6 +67,27 @@ macro_rules! define_uuid_semantic_id {
                 Ok(Self(Uuid::from_str(s)?))
             }
         }
+
+        impl serde::Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                serializer.serialize_str(&self.0.to_string())
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let s = String::deserialize(deserializer)?;
+                Uuid::from_str(&s)
+                    .map(Self::from_uuid)
+                    .map_err(serde::de::Error::custom)
+            }
+        }
     };
 }
 
@@ -132,6 +153,25 @@ impl fmt::Display for ObjectId {
         hex::encode_to_slice(self.0, &mut buf)
             .expect("32 bytes always encode to exactly 64 hex characters");
         f.write_str(std::str::from_utf8(&buf).expect("hex output is ASCII"))
+    }
+}
+
+impl serde::Serialize for ObjectId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ObjectId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Self::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 

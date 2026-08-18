@@ -4,6 +4,7 @@
 pub mod change;
 pub mod element;
 pub mod identity;
+pub mod machine;
 pub mod ontology;
 pub mod operation;
 pub mod property;

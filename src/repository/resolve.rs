@@ -224,3 +224,90 @@ pub fn resolve_relationship_id(
     };
     resolve_relationship_in_state(&state, input)
 }
+
+use crate::repository::session::DraftSession;
+
+/// Resolves a reference string (UUID, unique hex prefix, or draft workflow handle e.g. `@name`)
+/// against an open draft session and candidate working state.
+pub fn resolve_element_in_draft_session(
+    session: &DraftSession,
+    input: &str,
+) -> Result<ElementId, ResolveError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(ResolveError::InvalidIdentifier {
+            input: trimmed.to_string(),
+        });
+    }
+
+    // 1. Check draft workflow references
+    let handle_with_at = if trimmed.starts_with('@') {
+        trimmed.to_string()
+    } else {
+        format!("@{trimmed}")
+    };
+    for binding in &session.workflow_references {
+        if binding.handle.eq_ignore_ascii_case(trimmed)
+            || binding.handle.eq_ignore_ascii_case(&handle_with_at)
+        {
+            return Ok(binding.target_element_id);
+        }
+    }
+
+    // 2. Fall back to resolving against working state
+    resolve_element_in_state(&session.working_state, trimmed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::identity::ObjectId;
+    use crate::domain::state::SemanticState;
+    use crate::repository::session::{DraftSession, DraftSessionState};
+
+    #[test]
+    fn resolve_element_in_draft_session_handles_workflow_references_and_hex_prefixes() {
+        let mut session = DraftSession {
+            schema_version: 2,
+            status: DraftSessionState::Open,
+            base_state_id: ObjectId::from_bytes([1; 32]),
+            base_change_id: None,
+            created_at: "2026-08-15T00:00:00Z".to_string(),
+            description: None,
+            operations: Vec::new(),
+            staged_element_versions: Vec::new(),
+            staged_relationship_versions: Vec::new(),
+            working_state: SemanticState {
+                ontology_version: ObjectId::from_bytes([2; 32]),
+                elements: Vec::new(),
+                relationships: Vec::new(),
+            },
+            workflow_references: Vec::new(),
+        };
+
+        let elem_id = ElementId::new();
+        session.working_state.elements.push(crate::domain::state::ElementStateEntry {
+            element_id: elem_id,
+            version: ObjectId::from_bytes([3; 32]),
+        });
+        session.bind_workflow_reference("@req-auth", elem_id);
+
+        // Resolve with @ prefix
+        assert_eq!(
+            resolve_element_in_draft_session(&session, "@req-auth").unwrap(),
+            elem_id
+        );
+
+        // Resolve without @ prefix
+        assert_eq!(
+            resolve_element_in_draft_session(&session, "req-auth").unwrap(),
+            elem_id
+        );
+
+        // Resolve with full UUID string
+        assert_eq!(
+            resolve_element_in_draft_session(&session, &elem_id.to_string()).unwrap(),
+            elem_id
+        );
+    }
+}

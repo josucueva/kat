@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::change::ChangeRevision;
 use crate::domain::element::KnowledgeElementVersion;
-use crate::domain::identity::{ChangeId, ObjectId};
+use crate::domain::identity::{ChangeId, ElementId, ObjectId};
 use crate::domain::operation::Operation;
 use crate::domain::relationship::RelationshipVersion;
 use crate::domain::state::SemanticState;
@@ -25,8 +25,17 @@ use crate::encoding::object::{CanonicalObject, CanonicalPayload};
 use crate::repository::open::Repository;
 use crate::repository::ref_store::RefStore;
 
-/// Supported draft session file format version (v1).
-pub const DRAFT_SESSION_VERSION: u32 = 1;
+/// Supported draft session file format version (v2).
+pub const DRAFT_SESSION_VERSION: u32 = 2;
+
+/// Binding between a local workflow handle (e.g. `@req-auth` or `req-auth`) and a canonical `ElementId`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkflowReferenceBinding {
+    /// Handle name (e.g. `"@req-auth"`).
+    pub handle: String,
+    /// Target canonical element identity.
+    pub target_element_id: ElementId,
+}
 
 /// Status of an open draft change session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +108,36 @@ pub struct DraftSession {
     pub staged_relationship_versions: Vec<RelationshipVersion>,
     /// Candidate working state after applying all staged operations.
     pub working_state: SemanticState,
+    /// Draft-local workflow reference handle bindings.
+    pub workflow_references: Vec<WorkflowReferenceBinding>,
+}
+
+impl DraftSession {
+    /// Binds or updates a workflow reference handle mapping to a canonical ElementId.
+    pub fn bind_workflow_reference(
+        &mut self,
+        handle: impl Into<String>,
+        target_element_id: ElementId,
+    ) {
+        let h = handle.into();
+        let normalized = if h.starts_with('@') {
+            h
+        } else {
+            format!("@{h}")
+        };
+        if let Some(existing) = self
+            .workflow_references
+            .iter_mut()
+            .find(|b| b.handle.eq_ignore_ascii_case(&normalized))
+        {
+            existing.target_element_id = target_element_id;
+        } else {
+            self.workflow_references.push(WorkflowReferenceBinding {
+                handle: normalized,
+                target_element_id,
+            });
+        }
+    }
 }
 
 /// Returns the path to `.kat/work/change/`.
@@ -160,6 +199,7 @@ pub fn begin_draft_session(
         staged_element_versions: Vec::new(),
         staged_relationship_versions: Vec::new(),
         working_state,
+        workflow_references: Vec::new(),
     };
 
     write_draft_session_atomic(root, &session)?;
@@ -172,29 +212,25 @@ pub fn read_draft_session(repo_root: &Path) -> Result<DraftSession, DraftSession
     if !path.exists() {
         return Err(DraftSessionError::NotFound);
     }
-
-    let content = fs::read_to_string(&path)?;
-    parse_draft_session_json(&content)
+    let json = fs::read_to_string(path)?;
+    parse_draft_session_json(&json)
 }
 
-/// Writes the draft session atomically to `.kat/work/change/session.json`.
+/// Writes a draft session atomically to `.kat/work/change/session.json`.
 pub fn write_draft_session_atomic(
     repo_root: &Path,
     session: &DraftSession,
 ) -> Result<(), DraftSessionError> {
     let dir = draft_session_dir(repo_root);
     fs::create_dir_all(&dir)?;
-
-    let target_path = draft_session_path(repo_root);
-    let tmp_path = dir.join("session.json.tmp");
-
+    let tmp = dir.join("session.json.tmp");
+    let target = draft_session_path(repo_root);
     let json = format_draft_session_json(session)?;
-    {
-        let mut file = File::create(&tmp_path)?;
-        file.write_all(json.as_bytes())?;
-        file.sync_all()?;
-    }
-    fs::rename(tmp_path, target_path)?;
+
+    let mut file = File::create(&tmp)?;
+    file.write_all(json.as_bytes())?;
+    file.sync_all()?;
+    fs::rename(tmp, target)?;
     Ok(())
 }
 
@@ -264,6 +300,9 @@ fn format_draft_session_json(session: &DraftSession) -> Result<String, DraftSess
         .map_err(|e| DraftSessionError::Invalid(format!("failed to encode working state: {e}")))?;
     let state_hex = hex::encode(state_bytes);
 
+    let refs_json = serde_json::to_string(&session.workflow_references)
+        .map_err(|e| DraftSessionError::Invalid(format!("failed to encode workflow_references: {e}")))?;
+
     let desc_str = match &session.description {
         Some(d) => format!("\"{}\"", escape_json_string(d)),
         None => "null".to_string(),
@@ -285,7 +324,8 @@ fn format_draft_session_json(session: &DraftSession) -> Result<String, DraftSess
          \"operations\": [\n    {}\n  ],\n  \
          \"staged_element_versions\": [\n    {}\n  ],\n  \
          \"staged_relationship_versions\": [\n    {}\n  ],\n  \
-         \"working_state\": \"{}\"\n\
+         \"working_state\": \"{}\",\n  \
+         \"workflow_references\": {}\n\
          }}\n",
         session.schema_version,
         session.status.as_str(),
@@ -296,13 +336,14 @@ fn format_draft_session_json(session: &DraftSession) -> Result<String, DraftSess
         ops_hex.join(",\n    "),
         elem_versions_hex.join(",\n    "),
         rel_versions_hex.join(",\n    "),
-        state_hex
+        state_hex,
+        refs_json
     ))
 }
 
 fn parse_draft_session_json(json: &str) -> Result<DraftSession, DraftSessionError> {
     let schema_version = extract_json_int(json, "schema_version")?;
-    if schema_version != u64::from(DRAFT_SESSION_VERSION) {
+    if schema_version != 1 && schema_version != 2 {
         return Err(DraftSessionError::Invalid(format!(
             "unsupported schema_version: {schema_version}"
         )));
@@ -350,14 +391,13 @@ fn parse_draft_session_json(json: &str) -> Result<DraftSession, DraftSessionErro
         }
     }
 
-    let elem_versions_hex = extract_json_string_array(json, "staged_element_versions")?;
+    let elem_hex = extract_json_string_array(json, "staged_element_versions")?;
     let mut staged_element_versions = Vec::new();
-    for ev_h in elem_versions_hex {
-        let bytes = hex::decode(&ev_h).map_err(|_| {
-            DraftSessionError::Invalid("malformed staged element version hex".to_string())
-        })?;
+    for ev_h in elem_hex {
+        let bytes = hex::decode(&ev_h)
+            .map_err(|_| DraftSessionError::Invalid("malformed element version hex".to_string()))?;
         let canonical = decode_canonical(&bytes).map_err(|e| {
-            DraftSessionError::Invalid(format!("failed to decode staged element version: {e}"))
+            DraftSessionError::Invalid(format!("failed to decode element version: {e}"))
         })?;
         match canonical.payload {
             CanonicalPayload::KnowledgeElementVersion(ev) => staged_element_versions.push(ev),
@@ -369,14 +409,14 @@ fn parse_draft_session_json(json: &str) -> Result<DraftSession, DraftSessionErro
         }
     }
 
-    let rel_versions_hex = extract_json_string_array(json, "staged_relationship_versions")?;
+    let rel_hex = extract_json_string_array(json, "staged_relationship_versions")?;
     let mut staged_relationship_versions = Vec::new();
-    for rv_h in rel_versions_hex {
+    for rv_h in rel_hex {
         let bytes = hex::decode(&rv_h).map_err(|_| {
-            DraftSessionError::Invalid("malformed staged relationship version hex".to_string())
+            DraftSessionError::Invalid("malformed relationship version hex".to_string())
         })?;
         let canonical = decode_canonical(&bytes).map_err(|e| {
-            DraftSessionError::Invalid(format!("failed to decode staged relationship version: {e}"))
+            DraftSessionError::Invalid(format!("failed to decode relationship version: {e}"))
         })?;
         match canonical.payload {
             CanonicalPayload::RelationshipVersion(rv) => staged_relationship_versions.push(rv),
@@ -391,16 +431,18 @@ fn parse_draft_session_json(json: &str) -> Result<DraftSession, DraftSessionErro
     let state_hex = extract_json_string(json, "working_state")?;
     let state_bytes = hex::decode(&state_hex)
         .map_err(|_| DraftSessionError::Invalid("malformed working_state hex".to_string()))?;
-    let state_canonical = decode_canonical(&state_bytes)
-        .map_err(|e| DraftSessionError::Invalid(format!("failed to decode working_state: {e}")))?;
-    let working_state = match state_canonical.payload {
-        CanonicalPayload::SemanticState(st) => st,
+    let canonical_state = decode_canonical(&state_bytes)
+        .map_err(|e| DraftSessionError::Invalid(format!("failed to decode working state: {e}")))?;
+    let working_state = match canonical_state.payload {
+        CanonicalPayload::SemanticState(s) => s,
         _ => {
             return Err(DraftSessionError::Invalid(
                 "payload is not a SemanticState".to_string(),
             ));
         }
     };
+
+    let workflow_references = extract_json_workflow_references(json)?;
 
     Ok(DraftSession {
         schema_version: schema_version as u32,
@@ -413,7 +455,24 @@ fn parse_draft_session_json(json: &str) -> Result<DraftSession, DraftSessionErro
         staged_element_versions,
         staged_relationship_versions,
         working_state,
+        workflow_references,
     })
+}
+
+fn extract_json_workflow_references(
+    json: &str,
+) -> Result<Vec<WorkflowReferenceBinding>, DraftSessionError> {
+    if let Some(pos) = json.find("\"workflow_references\":") {
+        let rest = json[pos + "\"workflow_references\":".len()..].trim_start();
+        if rest.starts_with('[') {
+            if let Some(end) = rest.find(']') {
+                let slice = &rest[..=end];
+                return serde_json::from_str::<Vec<WorkflowReferenceBinding>>(slice)
+                    .map_err(|e| DraftSessionError::Invalid(format!("failed to parse workflow_references: {e}")));
+            }
+        }
+    }
+    Ok(Vec::new())
 }
 
 fn escape_json_string(s: &str) -> String {
@@ -520,8 +579,8 @@ mod tests {
             relationships: Vec::new(),
         };
 
-        let session = DraftSession {
-            schema_version: 1,
+        let mut session = DraftSession {
+            schema_version: DRAFT_SESSION_VERSION,
             status: DraftSessionState::Open,
             base_state_id: ObjectId::from_bytes([2; 32]),
             base_change_id: Some(ObjectId::from_bytes([3; 32])),
@@ -531,7 +590,14 @@ mod tests {
             staged_element_versions: Vec::new(),
             staged_relationship_versions: Vec::new(),
             working_state: state,
+            workflow_references: Vec::new(),
         };
+
+        let elem_id = ElementId::new();
+        session.bind_workflow_reference("req-auth", elem_id);
+        assert_eq!(session.workflow_references.len(), 1);
+        assert_eq!(session.workflow_references[0].handle, "@req-auth");
+        assert_eq!(session.workflow_references[0].target_element_id, elem_id);
 
         let json = format_draft_session_json(&session).unwrap();
         let parsed = parse_draft_session_json(&json).unwrap();

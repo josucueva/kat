@@ -59,10 +59,8 @@ use kat::repository::session::{
     abort_draft_session, begin_draft_session, has_draft_session, read_draft_session,
 };
 
-pub mod cli;
-
 use clap::Parser;
-use cli::{Cli, Command, OntologyCommands};
+use kat::cli::{self, ChangeCommands, Cli, Command, OntologyCommands};
 
 use kat::repository::query::{
     OntologySummary, OntologyTypeView, inspect_ontology, show_ontology_type,

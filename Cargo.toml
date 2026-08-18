@@ -10,15 +10,12 @@ hex = "0.4"
 thiserror = "2"
 sha2 = "0.10"
 toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 clap_mangen = "0.2"
 
 [dev-dependencies]
-# Only the vector-conformance harness (tests/) parses fixture JSON. The
-# library itself stays free of serde. preserve_order keeps fixture-declared
-# canonical key order intact (a BTreeMap would silently re-sort and hide
-# structural errors).
-serde_json = { version = "1", features = ["preserve_order"] }
 # ObjectStore tests use real temp directories with automatic cleanup.
 tempfile = "3"
