@@ -3522,52 +3522,7 @@ fn cmd_change_status(compact: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_change_commit() -> ExitCode {
-    let repository = match open_repository(Path::new(".")) {
-        Ok(repo) => repo,
-        Err(err) => {
-            eprintln!("kat change commit: {err}");
-            return ExitCode::FAILURE;
-        }
-    };
 
-    match commit_draft_session(&repository) {
-        Ok(published) => {
-            let prepared = &published.persisted.prepared;
-            println!("committed change transaction");
-            println!("  change_id:          {}", prepared.change.change_id);
-            println!("  change_revision_id: {}", prepared.change_revision_id);
-            println!("  state_id:           {}", prepared.state_id);
-            println!("  operations:         {}", prepared.change.operations.len());
-            ExitCode::SUCCESS
-        }
-        Err(err) => {
-            eprintln!("kat change commit: {err}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-fn cmd_change_abort() -> ExitCode {
-    let repository = match open_repository(Path::new(".")) {
-        Ok(repo) => repo,
-        Err(err) => {
-            eprintln!("kat change abort: {err}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    match abort_draft_session(repository.root_dir()) {
-        Ok(()) => {
-            println!("aborted draft change transaction");
-            ExitCode::SUCCESS
-        }
-        Err(err) => {
-            eprintln!("kat change abort: {err}");
-            ExitCode::FAILURE
-        }
-    }
-}
 
 fn cmd_ontology(compact: bool, command: Option<OntologyCommands>) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {

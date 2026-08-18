@@ -56,7 +56,7 @@ fn v04_porcelain_author_context_check_commit_flow() {
     .unwrap();
 
     let output = Command::new(kat_bin())
-        .args(&["author", claims_file.to_str().unwrap(), "--json"])
+        .args(["author", claims_file.to_str().unwrap(), "--json"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -76,7 +76,7 @@ fn v04_porcelain_author_context_check_commit_flow() {
 
     // 2. Check draft transaction status
     let output = Command::new(kat_bin())
-        .args(&["status", "--json"])
+        .args(["status", "--json"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -88,7 +88,7 @@ fn v04_porcelain_author_context_check_commit_flow() {
 
     // 3. Run porcelain check (clean repository with advisory findings exit code 0)
     let output = Command::new(kat_bin())
-        .args(&["check", "--json"])
+        .args(["check", "--json"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -101,7 +101,7 @@ fn v04_porcelain_author_context_check_commit_flow() {
 
     // 4. Porcelain commit
     let output = Command::new(kat_bin())
-        .args(&["commit", "--json"])
+        .args(["commit", "--json"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -114,7 +114,7 @@ fn v04_porcelain_author_context_check_commit_flow() {
 
     // 5. Retrieve porcelain context over committed accepted state
     let output = Command::new(kat_bin())
-        .args(&[
+        .args([
             "context",
             &req_id,
             "--direction",
@@ -140,7 +140,7 @@ fn v04_porcelain_abort_clears_staged_claims() {
     fs::write(&claims_file, "create kat.core/requirement \"Temp Req\"\n").unwrap();
 
     let status = Command::new(kat_bin())
-        .args(&["author", claims_file.to_str().unwrap()])
+        .args(["author", claims_file.to_str().unwrap()])
         .current_dir(dir.path())
         .status()
         .unwrap();
@@ -148,7 +148,7 @@ fn v04_porcelain_abort_clears_staged_claims() {
 
     // Abort
     let output = Command::new(kat_bin())
-        .args(&["abort", "--json"])
+        .args(["abort", "--json"])
         .current_dir(dir.path())
         .output()
         .unwrap();

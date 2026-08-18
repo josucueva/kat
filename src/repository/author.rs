@@ -1,3 +1,5 @@
+#![allow(clippy::unnecessary_lazy_evaluations)]
+
 //! Declarative Authoring Compiler (`kat author`).
 //!
 //! NORMATIVE ARCHITECTURAL GUARDRAIL:

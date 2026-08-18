@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 //! Draft change transaction session: `.kat/work/change/session.json`.
 //!
 //! Stores private, local, non-canonical state for open multi-operation change

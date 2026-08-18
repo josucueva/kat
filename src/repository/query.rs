@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments, clippy::collapsible_if, clippy::unnecessary_lazy_evaluations)]
+
 //! Read-side queries over the accepted repository head (steps 1.8-1.9).
 //!
 //! Queries are strictly read-only: they never mutate the object store or
