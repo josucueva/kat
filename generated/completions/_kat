@@ -37,6 +37,48 @@ _arguments "${_arguments_options[@]}" : \
 (status)
 _arguments "${_arguments_options[@]}" : \
 '--compact[Display compact single-line dashboard]' \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(context)
+_arguments "${_arguments_options[@]}" : \
+'--direction=[Traversal direction (upstream, downstream, both)]:DIRECTION:_default' \
+'--depth=[Maximum depth of relationship hops]:DEPTH:_default' \
+'--categorize[Group context elements by ontology category]' \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::roots -- Root element references (UUIDs, 8-hex prefixes, or @handles):_default' \
+&& ret=0
+;;
+(author)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::claims_file -- Path to file containing declarative claims (reads stdin if omitted or '\''-'\''):_default' \
+&& ret=0
+;;
+(check)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
+'--compact[Display compact single-line summary]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(commit)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(abort)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -182,6 +224,7 @@ _arguments "${_arguments_options[@]}" : \
             (begin)
 _arguments "${_arguments_options[@]}" : \
 '--description=[Optional change description]:DESCRIPTION:_default' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -189,18 +232,21 @@ _arguments "${_arguments_options[@]}" : \
 (status)
 _arguments "${_arguments_options[@]}" : \
 '--compact[Display compact summary]' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (commit)
 _arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (abort)
 _arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -313,6 +359,26 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(context)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(author)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(check)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(commit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(abort)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -442,6 +508,11 @@ _kat_commands() {
     local commands; commands=(
 'init:Initialize a new KAT repository in the current directory' \
 'status:Display a concise summary of current accepted repository status and health' \
+'context:Porcelain\: Retrieve point-to-point context surrounding root elements' \
+'author:Porcelain\: Declaratively compile and stage a batch of authoring claims' \
+'check:Porcelain\: Perform comprehensive mechanical consistency check and advisory graph quality analysis' \
+'commit:Porcelain\: Commit all staged operations in open transaction and publish' \
+'abort:Porcelain\: Abort open transaction and discard all staged operations' \
 'list:List knowledge elements in the current accepted state' \
 'create:Create a new knowledge element' \
 'update:Update title or description of an existing active knowledge element' \
@@ -462,6 +533,11 @@ _kat_commands() {
     )
     _describe -t commands 'kat commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__abort_commands] )) ||
+_kat__subcmd__abort_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat abort commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__account_commands] )) ||
 _kat__subcmd__account_commands() {
     local commands; commands=()
@@ -471,6 +547,11 @@ _kat__subcmd__account_commands() {
 _kat__subcmd__artifacts_commands() {
     local commands; commands=()
     _describe -t commands 'kat artifacts commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__author_commands] )) ||
+_kat__subcmd__author_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat author commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__change_commands] )) ||
 _kat__subcmd__change_commands() {
@@ -539,6 +620,21 @@ _kat__subcmd__change__subcmd__status_commands() {
     local commands; commands=()
     _describe -t commands 'kat change status commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__check_commands] )) ||
+_kat__subcmd__check_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat check commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__commit_commands] )) ||
+_kat__subcmd__commit_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat commit commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__context_commands] )) ||
+_kat__subcmd__context_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat context commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__create_commands] )) ||
 _kat__subcmd__create_commands() {
     local commands; commands=()
@@ -554,6 +650,11 @@ _kat__subcmd__help_commands() {
     local commands; commands=(
 'init:Initialize a new KAT repository in the current directory' \
 'status:Display a concise summary of current accepted repository status and health' \
+'context:Porcelain\: Retrieve point-to-point context surrounding root elements' \
+'author:Porcelain\: Declaratively compile and stage a batch of authoring claims' \
+'check:Porcelain\: Perform comprehensive mechanical consistency check and advisory graph quality analysis' \
+'commit:Porcelain\: Commit all staged operations in open transaction and publish' \
+'abort:Porcelain\: Abort open transaction and discard all staged operations' \
 'list:List knowledge elements in the current accepted state' \
 'create:Create a new knowledge element' \
 'update:Update title or description of an existing active knowledge element' \
@@ -574,6 +675,11 @@ _kat__subcmd__help_commands() {
     )
     _describe -t commands 'kat help commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__help__subcmd__abort_commands] )) ||
+_kat__subcmd__help__subcmd__abort_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help abort commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__help__subcmd__account_commands] )) ||
 _kat__subcmd__help__subcmd__account_commands() {
     local commands; commands=()
@@ -583,6 +689,11 @@ _kat__subcmd__help__subcmd__account_commands() {
 _kat__subcmd__help__subcmd__artifacts_commands() {
     local commands; commands=()
     _describe -t commands 'kat help artifacts commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__author_commands] )) ||
+_kat__subcmd__help__subcmd__author_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help author commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__help__subcmd__change_commands] )) ||
 _kat__subcmd__help__subcmd__change_commands() {
@@ -613,6 +724,21 @@ _kat__subcmd__help__subcmd__change__subcmd__commit_commands() {
 _kat__subcmd__help__subcmd__change__subcmd__status_commands() {
     local commands; commands=()
     _describe -t commands 'kat help change status commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__check_commands] )) ||
+_kat__subcmd__help__subcmd__check_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help check commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__commit_commands] )) ||
+_kat__subcmd__help__subcmd__commit_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help commit commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__context_commands] )) ||
+_kat__subcmd__help__subcmd__context_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help context commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__help__subcmd__create_commands] )) ||
 _kat__subcmd__help__subcmd__create_commands() {

@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH context 1  "context " 
+.SH NAME
+context \- Porcelain: Retrieve point\-to\-point context surrounding root elements
+.SH SYNOPSIS
+\fBcontext\fR [\fB\-\-direction\fR] [\fB\-\-depth\fR] [\fB\-\-categorize\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIROOTS\fR] 
+.SH DESCRIPTION
+Porcelain: Retrieve point\-to\-point context surrounding root elements
+.SH OPTIONS
+.TP
+\fB\-\-direction\fR \fI<DIRECTION>\fR [default: upstream]
+Traversal direction (upstream, downstream, both)
+.TP
+\fB\-\-depth\fR \fI<DEPTH>\fR
+Maximum depth of relationship hops
+.TP
+\fB\-\-categorize\fR
+Group context elements by ontology category
+.TP
+\fB\-\-json\fR
+Output structured machine JSON envelope
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIROOTS\fR]
+Root element references (UUIDs, 8\-hex prefixes, or @handles)
