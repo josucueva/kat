@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn invalid_envelope_fails_invariant_validation() {
         let invalid_env = CommonResultEnvelope {
-            kat_version: "0.4.0".to_string(),
+            kat_version: env!("CARGO_PKG_VERSION").to_string(),
             interface_schema_version: 1,
             success: true,
             repository_id: None,
