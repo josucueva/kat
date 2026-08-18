@@ -55,10 +55,12 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (author)
 _arguments "${_arguments_options[@]}" : \
+'-e[Print a working JSON authoring claim template example]' \
+'--example[Print a working JSON authoring claim template example]' \
 '--json[Output structured machine JSON envelope]' \
-'-h[Print help]' \
-'--help[Print help]' \
-'::claims_file -- Path to file containing declarative claims (reads stdin if omitted or '\''-'\''):_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'::claims_file -- Path to JSON file containing declarative claims (reads stdin if omitted or '\''-'\''):_default' \
 && ret=0
 ;;
 (check)
@@ -509,7 +511,7 @@ _kat_commands() {
 'init:Initialize a new KAT repository in the current directory' \
 'status:Display a concise summary of current accepted repository status and health' \
 'context:Porcelain\: Retrieve point-to-point context surrounding root elements' \
-'author:Porcelain\: Declaratively compile and stage a batch of authoring claims' \
+'author:Porcelain\: Declaratively compile and stage a JSON batch of authoring claims' \
 'check:Porcelain\: Perform comprehensive mechanical consistency check and advisory graph quality analysis' \
 'commit:Porcelain\: Commit all staged operations in open transaction and publish' \
 'abort:Porcelain\: Abort open transaction and discard all staged operations' \
@@ -651,7 +653,7 @@ _kat__subcmd__help_commands() {
 'init:Initialize a new KAT repository in the current directory' \
 'status:Display a concise summary of current accepted repository status and health' \
 'context:Porcelain\: Retrieve point-to-point context surrounding root elements' \
-'author:Porcelain\: Declaratively compile and stage a batch of authoring claims' \
+'author:Porcelain\: Declaratively compile and stage a JSON batch of authoring claims' \
 'check:Porcelain\: Perform comprehensive mechanical consistency check and advisory graph quality analysis' \
 'commit:Porcelain\: Commit all staged operations in open transaction and publish' \
 'abort:Porcelain\: Abort open transaction and discard all staged operations' \

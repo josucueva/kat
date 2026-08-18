@@ -2,18 +2,25 @@
 .el .ds Aq '
 .TH author 1  "author " 
 .SH NAME
-author \- Porcelain: Declaratively compile and stage a batch of authoring claims
+author \- Porcelain: Declaratively compile and stage a JSON batch of authoring claims
 .SH SYNOPSIS
-\fBauthor\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fICLAIMS_FILE\fR] 
+\fBauthor\fR [\fB\-e\fR|\fB\-\-example\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fICLAIMS_FILE\fR] 
 .SH DESCRIPTION
-Porcelain: Declaratively compile and stage a batch of authoring claims
+Porcelain: Declaratively compile and stage a JSON batch of authoring claims
+.PP
+Accepts a JSON array of AuthorClaim objects via FILE or stdin (\-).
+.PP
+Example JSON claims input: [ { "kind": "create_element", "type_id": "kat.core/requirement", "title": "Auth Requirement", "handle": "@req\-auth" }, { "kind": "create_element", "type_id": "kat.core/implementation", "title": "Auth Module", "handle": "@imp\-auth" }, { "kind": "link_element", "relationship_type_id": "kat.core/realizes", "source_ref": "@imp\-auth", "target_ref": "@req\-auth" } ]
 .SH OPTIONS
+.TP
+\fB\-e\fR, \fB\-\-example\fR
+Print a working JSON authoring claim template example
 .TP
 \fB\-\-json\fR
 Output structured machine JSON envelope
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 [\fICLAIMS_FILE\fR]
-Path to file containing declarative claims (reads stdin if omitted or \*(Aq\-\*(Aq)
+Path to JSON file containing declarative claims (reads stdin if omitted or \*(Aq\-\*(Aq)

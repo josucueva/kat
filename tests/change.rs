@@ -2487,7 +2487,7 @@ fn supersede_ontology_forbidden_source_type_rejected() {
     let err = validate_supersede_element_ontology(prepared).unwrap_err();
     assert!(matches!(
         err,
-        ChangeError::Ontology(OntologyError::RelationshipSourceTypeNotAllowed { relationship_type, source_type })
+        ChangeError::Ontology(OntologyError::RelationshipSourceTypeNotAllowed { relationship_type, source_type, .. })
             if relationship_type == "kat.core/supersedes" && source_type == "kat.core/requirement"
     ));
 }
@@ -2519,7 +2519,7 @@ fn supersede_ontology_forbidden_target_type_rejected() {
     let err = validate_supersede_element_ontology(prepared).unwrap_err();
     assert!(matches!(
         err,
-        ChangeError::Ontology(OntologyError::RelationshipTargetTypeNotAllowed { relationship_type, target_type })
+        ChangeError::Ontology(OntologyError::RelationshipTargetTypeNotAllowed { relationship_type, target_type, .. })
             if relationship_type == "kat.core/supersedes" && target_type == "kat.core/requirement"
     ));
 }
@@ -2572,6 +2572,8 @@ fn supersede_ontology_obeys_custom_ontology_and_direction() {
         OntologyError::RelationshipSourceTypeNotAllowed {
             relationship_type: "kat.core/supersedes".into(),
             source_type: "custom/type-b".into(),
+            allowed_sources: vec!["custom/type-a".into()],
+            allowed_targets: vec!["custom/type-b".into()],
         }
     );
 }
@@ -3662,6 +3664,7 @@ fn link_ontology_rejections() {
         ChangeError::Ontology(OntologyError::RelationshipSourceTypeNotAllowed {
             ref relationship_type,
             ref source_type,
+            ..
         }) if relationship_type == "kat.core/addresses" && source_type == "kat.core/requirement"
     ));
 
@@ -3685,6 +3688,7 @@ fn link_ontology_rejections() {
         ChangeError::Ontology(OntologyError::RelationshipTargetTypeNotAllowed {
             ref relationship_type,
             ref target_type,
+            ..
         }) if relationship_type == "kat.core/addresses" && target_type == "kat.core/design-decision"
     ));
 }

@@ -79,7 +79,11 @@ fn main() -> ExitCode {
             categorize,
             json,
         } => run_context(roots, direction, depth, categorize, json),
-        Command::Author { claims_file, json } => run_author(claims_file, json),
+        Command::Author {
+            claims_file,
+            example,
+            json,
+        } => run_author(claims_file, example, json),
         Command::Check { compact, json } => run_check(compact, json),
         Command::Commit { json } => run_commit(json),
         Command::Abort { json } => run_abort(json),
@@ -3064,78 +3068,38 @@ fn run_context(
     }
 }
 
-fn parse_author_claims_text(text: &str) -> Vec<kat::repository::author::AuthorClaim> {
-    use kat::repository::author::AuthorClaim;
-    let mut claims = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
+fn run_author(claims_file: Option<String>, example: bool, json: bool) -> ExitCode {
+    if example {
+        let template = serde_json::json!([
+            {
+                "kind": "create_element",
+                "type_id": "kat.core/requirement",
+                "title": "Auth Requirement",
+                "description": "System shall support JWT auth",
+                "handle": "@req-auth"
+            },
+            {
+                "kind": "create_element",
+                "type_id": "kat.core/implementation",
+                "title": "Auth Module",
+                "handle": "@imp-auth"
+            },
+            {
+                "kind": "link_element",
+                "relationship_type_id": "kat.core/realizes",
+                "source_ref": "@imp-auth",
+                "target_ref": "@req-auth"
+            }
+        ]);
+        if json {
+            println!("{}", serde_json::to_string_pretty(&template).unwrap());
+        } else {
+            println!("KAT Authoring Claims JSON Template Example:");
+            println!("{}", serde_json::to_string_pretty(&template).unwrap());
         }
-
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.is_empty() {
-            continue;
-        }
-
-        match parts[0] {
-            "create" if parts.len() >= 2 => {
-                let type_id = parts[1].to_string();
-                let title = parts.get(2).unwrap_or(&"Untitled").to_string();
-                claims.push(AuthorClaim::CreateElement {
-                    type_id,
-                    title,
-                    description: None,
-                    handle: None,
-                });
-            }
-            "link" if parts.len() >= 4 => {
-                claims.push(AuthorClaim::LinkElement {
-                    source_ref: parts[1].to_string(),
-                    relationship_type_id: parts[2].to_string(),
-                    target_ref: parts[3].to_string(),
-                });
-            }
-            "unlink" if parts.len() >= 2 => {
-                claims.push(AuthorClaim::UnlinkElement {
-                    relationship_ref: parts[1].to_string(),
-                });
-            }
-            "account" if parts.len() >= 3 => {
-                claims.push(AuthorClaim::AccountArtifact {
-                    artifact_path: parts[1].to_string(),
-                    element_ref: parts[2].to_string(),
-                });
-            }
-            "update" if parts.len() >= 2 => {
-                let element_ref = parts[1].to_string();
-                let title = parts.get(2).map(|s| s.to_string());
-                claims.push(AuthorClaim::UpdateElement {
-                    element_ref,
-                    title,
-                    description: None,
-                });
-            }
-            "deprecate" if parts.len() >= 2 => {
-                claims.push(AuthorClaim::DeprecateElement {
-                    element_ref: parts[1].to_string(),
-                });
-            }
-            "supersede" if parts.len() >= 4 => {
-                claims.push(AuthorClaim::SupersedeElement {
-                    existing_ref: parts[1].to_string(),
-                    replacement_type_id: parts[3].to_string(),
-                    replacement_title: parts.get(4).unwrap_or(&"Replacement").to_string(),
-                    handle: None,
-                });
-            }
-            _ => {}
-        }
+        return ExitCode::SUCCESS;
     }
-    claims
-}
 
-fn run_author(claims_file: Option<String>, json: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repo) => repo,
         Err(err) => {
@@ -3183,13 +3147,53 @@ fn run_author(claims_file: Option<String>, json: bool) -> ExitCode {
         }
     };
 
-    let claims = if let Ok(json_claims) =
-        serde_json::from_str::<Vec<kat::repository::author::AuthorClaim>>(&text)
-    {
-        json_claims
-    } else {
-        parse_author_claims_text(&text)
-    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        if json {
+            MachinePresenter::present_error(
+                Some(&repository),
+                "AuthorParseError",
+                "empty authoring input provided; at least one AuthorClaim object is required",
+            );
+        } else {
+            eprintln!(
+                "kat author: empty authoring input provided; at least one AuthorClaim object is required"
+            );
+        }
+        return ExitCode::FAILURE;
+    }
+
+    let claims: Vec<kat::repository::author::AuthorClaim> =
+        match serde_json::from_str::<Vec<kat::repository::author::AuthorClaim>>(trimmed) {
+            Ok(json_claims) => json_claims,
+            Err(err) => {
+                if json {
+                    MachinePresenter::present_error(
+                        Some(&repository),
+                        "AuthorParseError",
+                        &format!("failed to parse JSON authoring claims: {err}"),
+                    );
+                } else {
+                    eprintln!("kat author: failed to parse JSON authoring claims: {err}");
+                }
+                return ExitCode::FAILURE;
+            }
+        };
+
+    if claims.is_empty() {
+        if json {
+            MachinePresenter::present_error(
+                Some(&repository),
+                "AuthorParseError",
+                "authoring claims array is empty; at least one AuthorClaim object is required",
+            );
+        } else {
+            eprintln!(
+                "kat author: authoring claims array is empty; at least one AuthorClaim object is required"
+            );
+        }
+        return ExitCode::FAILURE;
+    }
 
     match kat::repository::author::compile_and_stage_claims(&repository, &claims) {
         Ok(res) => {
@@ -3521,8 +3525,6 @@ fn cmd_change_status(compact: bool) -> ExitCode {
 
     ExitCode::SUCCESS
 }
-
-
 
 fn cmd_ontology(compact: bool, command: Option<OntologyCommands>) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {

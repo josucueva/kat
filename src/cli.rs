@@ -57,10 +57,38 @@ pub enum Command {
         json: bool,
     },
 
-    /// Porcelain: Declaratively compile and stage a batch of authoring claims
+    /// Porcelain: Declaratively compile and stage a JSON batch of authoring claims
+    ///
+    /// Accepts a JSON array of AuthorClaim objects via FILE or stdin (-).
+    ///
+    /// Example JSON claims input:
+    /// [
+    ///   {
+    ///     "kind": "create_element",
+    ///     "type_id": "kat.core/requirement",
+    ///     "title": "Auth Requirement",
+    ///     "handle": "@req-auth"
+    ///   },
+    ///   {
+    ///     "kind": "create_element",
+    ///     "type_id": "kat.core/implementation",
+    ///     "title": "Auth Module",
+    ///     "handle": "@imp-auth"
+    ///   },
+    ///   {
+    ///     "kind": "link_element",
+    ///     "relationship_type_id": "kat.core/realizes",
+    ///     "source_ref": "@imp-auth",
+    ///     "target_ref": "@req-auth"
+    ///   }
+    /// ]
     Author {
-        /// Path to file containing declarative claims (reads stdin if omitted or '-')
+        /// Path to JSON file containing declarative claims (reads stdin if omitted or '-')
         claims_file: Option<String>,
+
+        /// Print a working JSON authoring claim template example
+        #[arg(short = 'e', long)]
+        example: bool,
 
         /// Output structured machine JSON envelope
         #[arg(long)]

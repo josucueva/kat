@@ -30,23 +30,31 @@ pub enum OntologyError {
     UnknownRelationshipType(String),
     /// The relationship's source element type is not allowed for this relationship type.
     #[error(
-        "relationship type {relationship_type} does not allow source element type {source_type}"
+        "relationship type '{relationship_type}' does not allow source element type '{source_type}' (requires source in {allowed_sources:?}, target in {allowed_targets:?})"
     )]
     RelationshipSourceTypeNotAllowed {
         /// The relationship type being validated.
         relationship_type: String,
         /// The source element type.
         source_type: String,
+        /// Allowed source types according to ontology.
+        allowed_sources: Vec<String>,
+        /// Allowed target types according to ontology.
+        allowed_targets: Vec<String>,
     },
     /// The relationship's target element type is not allowed for this relationship type.
     #[error(
-        "relationship type {relationship_type} does not allow target element type {target_type}"
+        "relationship type '{relationship_type}' does not allow target element type '{target_type}' (requires source in {allowed_sources:?}, target in {allowed_targets:?})"
     )]
     RelationshipTargetTypeNotAllowed {
         /// The relationship type being validated.
         relationship_type: String,
         /// The target element type.
         target_type: String,
+        /// Allowed source types according to ontology.
+        allowed_sources: Vec<String>,
+        /// Allowed target types according to ontology.
+        allowed_targets: Vec<String>,
     },
 }
 
@@ -88,6 +96,8 @@ pub fn validate_relationship(
         return Err(OntologyError::RelationshipSourceTypeNotAllowed {
             relationship_type: relationship_type.to_string(),
             source_type: source_type.to_string(),
+            allowed_sources: rel_def.allowed_source_types.clone(),
+            allowed_targets: rel_def.allowed_target_types.clone(),
         });
     }
 
@@ -99,6 +109,8 @@ pub fn validate_relationship(
         return Err(OntologyError::RelationshipTargetTypeNotAllowed {
             relationship_type: relationship_type.to_string(),
             target_type: target_type.to_string(),
+            allowed_sources: rel_def.allowed_source_types.clone(),
+            allowed_targets: rel_def.allowed_target_types.clone(),
         });
     }
 
@@ -184,6 +196,8 @@ mod tests {
             Err(OntologyError::RelationshipSourceTypeNotAllowed {
                 relationship_type: "kat.core/supersedes".into(),
                 source_type: "kat.core/requirement".into(),
+                allowed_sources: vec!["kat.core/design-decision".into()],
+                allowed_targets: vec!["kat.core/design-decision".into()],
             })
         );
     }
@@ -201,6 +215,8 @@ mod tests {
             Err(OntologyError::RelationshipTargetTypeNotAllowed {
                 relationship_type: "kat.core/supersedes".into(),
                 target_type: "kat.core/requirement".into(),
+                allowed_sources: vec!["kat.core/design-decision".into()],
+                allowed_targets: vec!["kat.core/design-decision".into()],
             })
         );
     }

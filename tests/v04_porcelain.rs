@@ -29,27 +29,24 @@ fn v04_porcelain_author_context_check_commit_flow() {
         &claims_file,
         r#"[
   {
-    "CreateElement": {
-      "type_id": "kat.core/requirement",
-      "title": "Auth Spec",
-      "description": "System shall verify JWT",
-      "handle": "@req-auth"
-    }
+    "kind": "create_element",
+    "type_id": "kat.core/requirement",
+    "title": "Auth Spec",
+    "description": "System shall verify JWT",
+    "handle": "@req-auth"
   },
   {
-    "CreateElement": {
-      "type_id": "kat.core/implementation",
-      "title": "Auth Service",
-      "description": "Auth module",
-      "handle": "@imp-auth"
-    }
+    "kind": "create_element",
+    "type_id": "kat.core/implementation",
+    "title": "Auth Service",
+    "description": "Auth module",
+    "handle": "@imp-auth"
   },
   {
-    "LinkElement": {
-      "source_ref": "@imp-auth",
-      "relationship_type_id": "kat.core/realizes",
-      "target_ref": "@req-auth"
-    }
+    "kind": "link_element",
+    "source_ref": "@imp-auth",
+    "relationship_type_id": "kat.core/realizes",
+    "target_ref": "@req-auth"
   }
 ]"#,
     )
@@ -136,8 +133,12 @@ fn v04_porcelain_author_context_check_commit_flow() {
 fn v04_porcelain_abort_clears_staged_claims() {
     let dir = setup_repo();
 
-    let claims_file = dir.path().join("claims.txt");
-    fs::write(&claims_file, "create kat.core/requirement \"Temp Req\"\n").unwrap();
+    let claims_file = dir.path().join("claims.json");
+    fs::write(
+        &claims_file,
+        r#"[{"kind": "create_element", "type_id": "kat.core/requirement", "title": "Temp Req"}]"#,
+    )
+    .unwrap();
 
     let status = Command::new(kat_bin())
         .args(["author", claims_file.to_str().unwrap()])
@@ -158,4 +159,97 @@ fn v04_porcelain_abort_clears_staged_claims() {
         serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
     assert_eq!(json["success"], true);
     assert_eq!(json["data"]["aborted"], true);
+}
+
+#[test]
+fn v04_porcelain_author_fail_closed_and_example_test() {
+    let dir = setup_repo();
+
+    // 1. kat author --example
+    let output = Command::new(kat_bin())
+        .args(["author", "--example", "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(json.is_array());
+    assert_eq!(json[0]["kind"], "create_element");
+
+    // 2. Malformed claims JSON -> fail closed with AuthorParseError
+    let claims_file = dir.path().join("bad_claims.json");
+    fs::write(&claims_file, "this is definitely not valid json").unwrap();
+
+    let output = Command::new(kat_bin())
+        .args(["author", claims_file.to_str().unwrap(), "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error"]["code"], "AuthorParseError");
+
+    // 3. Verify 0 draft transaction operations staged
+    let output = Command::new(kat_bin())
+        .args(["status", "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
+    assert_eq!(json["data"]["knowledge"]["total_elements"], 0);
+}
+
+#[test]
+fn v04_porcelain_ontology_guidance_test() {
+    let dir = setup_repo();
+
+    let claims_file = dir.path().join("invalid_rel.json");
+    fs::write(
+        &claims_file,
+        r#"[
+  {
+    "kind": "create_element",
+    "type_id": "kat.core/artifact",
+    "title": "Auth Spec File",
+    "handle": "@art-auth"
+  },
+  {
+    "kind": "create_element",
+    "type_id": "kat.core/validation",
+    "title": "Auth Test Suite",
+    "handle": "@val-auth"
+  },
+  {
+    "kind": "link_element",
+    "relationship_type_id": "kat.core/represents",
+    "source_ref": "@art-auth",
+    "target_ref": "@val-auth"
+  }
+]"#,
+    )
+    .unwrap();
+
+    let output = Command::new(kat_bin())
+        .args(["author", claims_file.to_str().unwrap(), "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error"]["code"], "AuthorCompilationFailed");
+
+    let err_msg = json["error"]["message"].as_str().unwrap();
+    assert!(err_msg.contains("requires source in"));
+    assert!(err_msg.contains("kat.core/implementation"));
 }

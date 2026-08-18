@@ -284,7 +284,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__author)
-            opts="-h --json --help"
+            opts="-e -h --example --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

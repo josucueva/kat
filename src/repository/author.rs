@@ -22,33 +22,42 @@ use crate::repository::session::{begin_draft_session, has_draft_session, read_dr
 
 /// Declarative claim supported by the authoring compiler.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AuthorClaim {
     /// Create a new knowledge element.
+    #[serde(alias = "CreateElement")]
     CreateElement {
         /// Ontology type ID (e.g. `kat.core/requirement`).
+        #[serde(alias = "type")]
         type_id: String,
         /// Title property.
         title: String,
         /// Optional description property.
+        #[serde(default)]
         description: Option<String>,
         /// Optional workflow reference handle (e.g. `@req-auth`).
+        #[serde(default)]
         handle: Option<String>,
     },
     /// Link two knowledge elements via relationship.
+    #[serde(alias = "LinkElement")]
     LinkElement {
         /// Source element reference (UUID, prefix, or `@handle`).
         source_ref: String,
         /// Relationship type ID (e.g. `kat.core/realizes`).
+        #[serde(alias = "relationship_type")]
         relationship_type_id: String,
         /// Target element reference (UUID, prefix, or `@handle`).
         target_ref: String,
     },
     /// Unlink an existing relationship.
+    #[serde(alias = "UnlinkElement")]
     UnlinkElement {
         /// Relationship reference.
         relationship_ref: String,
     },
     /// Re-baseline artifact accountability.
+    #[serde(alias = "AccountArtifact")]
     AccountArtifact {
         /// Relative path to artifact file.
         artifact_path: String,
@@ -56,28 +65,35 @@ pub enum AuthorClaim {
         element_ref: String,
     },
     /// Patch properties on an existing element.
+    #[serde(alias = "UpdateElement")]
     UpdateElement {
         /// Target element reference.
         element_ref: String,
         /// New title property value.
+        #[serde(default)]
         title: Option<String>,
         /// New description property value.
+        #[serde(default)]
         description: Option<String>,
     },
     /// Deprecate an active element.
+    #[serde(alias = "DeprecateElement")]
     DeprecateElement {
         /// Target element reference.
         element_ref: String,
     },
     /// Supersede an existing element with a replacement element.
+    #[serde(alias = "SupersedeElement")]
     SupersedeElement {
         /// Existing element reference to supersede.
         existing_ref: String,
         /// Replacement element ontology type ID.
+        #[serde(alias = "replacement_type")]
         replacement_type_id: String,
         /// Replacement element title.
         replacement_title: String,
         /// Optional workflow handle for replacement element.
+        #[serde(default)]
         handle: Option<String>,
     },
 }
