@@ -162,25 +162,15 @@ fn v04_porcelain_abort_clears_staged_claims() {
 }
 
 #[test]
-fn v04_porcelain_author_fail_closed_and_example_test() {
+fn v04_porcelain_unknown_claim_kind_fails_closed() {
     let dir = setup_repo();
 
-    // 1. kat author --example
-    let output = Command::new(kat_bin())
-        .args(["author", "--example", "--json"])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert!(json.is_array());
-    assert_eq!(json[0]["kind"], "create_element");
-
-    // 2. Malformed claims JSON -> fail closed with AuthorParseError
-    let claims_file = dir.path().join("bad_claims.json");
-    fs::write(&claims_file, "this is definitely not valid json").unwrap();
+    let claims_file = dir.path().join("bad_kind.json");
+    fs::write(
+        &claims_file,
+        r#"[{"kind": "unknown_claim_type", "type_id": "kat.core/requirement", "title": "Bad"}]"#,
+    )
+    .unwrap();
 
     let output = Command::new(kat_bin())
         .args(["author", claims_file.to_str().unwrap(), "--json"])
@@ -192,9 +182,10 @@ fn v04_porcelain_author_fail_closed_and_example_test() {
     let json: serde_json::Value =
         serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
     assert_eq!(json["success"], false);
-    assert_eq!(json["error"]["code"], "AuthorParseError");
+    assert_eq!(json["error"]["code"], "AUTHOR_PARSE_ERROR");
+    assert!(json["error"]["details"]["reason"].is_string());
 
-    // 3. Verify 0 draft transaction operations staged
+    // Verify 0 session operations staged
     let output = Command::new(kat_bin())
         .args(["status", "--json"])
         .current_dir(dir.path())
@@ -205,6 +196,217 @@ fn v04_porcelain_author_fail_closed_and_example_test() {
     let json: serde_json::Value =
         serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
     assert_eq!(json["data"]["knowledge"]["total_elements"], 0);
+}
+
+#[test]
+fn v04_porcelain_claim_n_malformed_rejects_whole_batch() {
+    let dir = setup_repo();
+
+    let claims_file = dir.path().join("partially_bad.json");
+    fs::write(
+        &claims_file,
+        r#"[
+  {
+    "kind": "create_element",
+    "type_id": "kat.core/requirement",
+    "title": "Good Claim 1",
+    "handle": "@req-1"
+  },
+  {
+    "kind": "create_element",
+    "title": "Missing required type_id field"
+  }
+]"#,
+    )
+    .unwrap();
+
+    let output = Command::new(kat_bin())
+        .args(["author", claims_file.to_str().unwrap(), "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error"]["code"], "AUTHOR_PARSE_ERROR");
+
+    // Verify atomic rejection: 0 claims staged
+    let output = Command::new(kat_bin())
+        .args(["status", "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
+    assert_eq!(json["data"]["knowledge"]["total_elements"], 0);
+}
+
+#[test]
+fn v04_porcelain_empty_or_whitespace_input_succeeds() {
+    let dir = setup_repo();
+
+    let claims_file = dir.path().join("empty.json");
+    fs::write(&claims_file, "   \n\t  ").unwrap();
+
+    let output = Command::new(kat_bin())
+        .args(["author", claims_file.to_str().unwrap(), "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["claims_processed"], 0);
+    assert_eq!(json["data"]["operations_staged"], 0);
+
+    // Verify no draft session created
+    let session_file = dir.path().join(".kat/work/change/session.json");
+    assert!(!session_file.exists());
+}
+
+#[test]
+fn v04_porcelain_duplicate_workflow_handle_fails_atomically() {
+    let dir = setup_repo();
+
+    let claims_file = dir.path().join("dup_handles.json");
+    fs::write(
+        &claims_file,
+        r#"[
+  {
+    "kind": "create_element",
+    "type_id": "kat.core/requirement",
+    "title": "Req 1",
+    "handle": "@dup-handle"
+  },
+  {
+    "kind": "create_element",
+    "type_id": "kat.core/requirement",
+    "title": "Req 2",
+    "handle": "@dup-handle"
+  }
+]"#,
+    )
+    .unwrap();
+
+    let output = Command::new(kat_bin())
+        .args(["author", claims_file.to_str().unwrap(), "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error"]["code"], "AUTHOR_COMPILATION_FAILED");
+    assert!(json["error"]["message"].as_str().unwrap().contains("duplicate workflow reference handle"));
+}
+
+#[test]
+fn v04_porcelain_example_outside_kat_repository() {
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    let output = Command::new(kat_bin())
+        .args(["author", "--example"])
+        .current_dir(temp_dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("create_element"));
+    assert!(stdout.contains("kat.core/requirement"));
+}
+
+#[test]
+fn v04_porcelain_example_template_is_valid_and_stageable() {
+    let dir = setup_repo();
+
+    // 1. Get template output from --example
+    let output = Command::new(kat_bin())
+        .args(["author", "--example"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    // 2. Write example template to file and author it
+    let claims_file = dir.path().join("example_claims.json");
+    fs::write(&claims_file, &stdout).unwrap();
+
+    let output = Command::new(kat_bin())
+        .args(["author", claims_file.to_str().unwrap(), "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["claims_processed"], 3);
+    assert_eq!(json["data"]["operations_staged"], 3);
+}
+
+#[test]
+fn v04_porcelain_example_conflicts() {
+    let dir = setup_repo();
+
+    // 1. --example with CLAIMS_FILE -> exit 2
+    let output = Command::new(kat_bin())
+        .args(["author", "--example", "some_file.json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+
+    // 2. --example with --json -> exit 2
+    let output = Command::new(kat_bin())
+        .args(["author", "--example", "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn v04_porcelain_legacy_v040_externally_tagged_json() {
+    let dir = setup_repo();
+
+    let claims_file = dir.path().join("legacy_claims.json");
+    fs::write(
+        &claims_file,
+        r#"[
+  {
+    "CreateElement": {
+      "type_id": "kat.core/requirement",
+      "title": "Legacy Req",
+      "handle": "@legacy-req"
+    }
+  }
+]"#,
+    )
+    .unwrap();
+
+    let output = Command::new(kat_bin())
+        .args(["author", claims_file.to_str().unwrap(), "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["claims_processed"], 1);
 }
 
 #[test]
@@ -247,7 +449,7 @@ fn v04_porcelain_ontology_guidance_test() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(json["success"], false);
-    assert_eq!(json["error"]["code"], "AuthorCompilationFailed");
+    assert_eq!(json["error"]["code"], "AUTHOR_COMPILATION_FAILED");
 
     let err_msg = json["error"]["message"].as_str().unwrap();
     assert!(err_msg.contains("requires source in"));

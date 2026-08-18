@@ -3070,6 +3070,22 @@ fn run_context(
 
 fn run_author(claims_file: Option<String>, example: bool, json: bool) -> ExitCode {
     if example {
+        if claims_file.is_some() {
+            if json {
+                MachinePresenter::present_error(
+                    None,
+                    "INVALID_ARGUMENTS",
+                    "kat author: --example cannot be combined with CLAIMS_FILE",
+                );
+            } else {
+                eprintln!("kat author: --example cannot be combined with CLAIMS_FILE");
+            }
+            return ExitCode::from(2);
+        }
+        if json {
+            eprintln!("kat author: --example cannot be combined with --json");
+            return ExitCode::from(2);
+        }
         let template = serde_json::json!([
             {
                 "kind": "create_element",
@@ -3091,12 +3107,7 @@ fn run_author(claims_file: Option<String>, example: bool, json: bool) -> ExitCod
                 "target_ref": "@req-auth"
             }
         ]);
-        if json {
-            println!("{}", serde_json::to_string_pretty(&template).unwrap());
-        } else {
-            println!("KAT Authoring Claims JSON Template Example:");
-            println!("{}", serde_json::to_string_pretty(&template).unwrap());
-        }
+        println!("{}", serde_json::to_string_pretty(&template).unwrap());
         return ExitCode::SUCCESS;
     }
 
@@ -3104,7 +3115,7 @@ fn run_author(claims_file: Option<String>, example: bool, json: bool) -> ExitCod
         Ok(repo) => repo,
         Err(err) => {
             if json {
-                MachinePresenter::present_error(None, "NotInRepository", &err.to_string());
+                MachinePresenter::present_error(None, "NOT_IN_REPOSITORY", &err.to_string());
             } else {
                 eprintln!("kat author: {err}");
             }
@@ -3119,7 +3130,7 @@ fn run_author(claims_file: Option<String>, example: bool, json: bool) -> ExitCod
                 if json {
                     MachinePresenter::present_error(
                         Some(&repository),
-                        "FileIoError",
+                        "FILE_IO_ERROR",
                         &format!("failed to read claims file '{path}': {err}"),
                     );
                 } else {
@@ -3135,7 +3146,7 @@ fn run_author(claims_file: Option<String>, example: bool, json: bool) -> ExitCod
                 if json {
                     MachinePresenter::present_error(
                         Some(&repository),
-                        "FileIoError",
+                        "FILE_IO_ERROR",
                         &format!("failed to read claims from stdin: {err}"),
                     );
                 } else {
@@ -3149,51 +3160,47 @@ fn run_author(claims_file: Option<String>, example: bool, json: bool) -> ExitCod
 
     let trimmed = text.trim();
     if trimmed.is_empty() {
+        let res = kat::repository::author::AuthorBatchResult {
+            claims_processed: 0,
+            operations_staged: 0,
+            workflow_references: std::collections::HashMap::new(),
+        };
         if json {
-            MachinePresenter::present_error(
-                Some(&repository),
-                "AuthorParseError",
-                "empty authoring input provided; at least one AuthorClaim object is required",
-            );
+            MachinePresenter::present_success(&repository, &res);
         } else {
-            eprintln!(
-                "kat author: empty authoring input provided; at least one AuthorClaim object is required"
-            );
+            println!("Porcelain Authoring Compiler");
+            println!("  claims_processed:  0");
+            println!("  operations_staged: 0");
         }
-        return ExitCode::FAILURE;
+        return ExitCode::SUCCESS;
     }
 
     let claims: Vec<kat::repository::author::AuthorClaim> =
-        match serde_json::from_str::<Vec<kat::repository::author::AuthorClaim>>(trimmed) {
+        match kat::repository::author::parse_author_claims_json(trimmed) {
             Ok(json_claims) => json_claims,
             Err(err) => {
                 if json {
-                    MachinePresenter::present_error(
+                    MachinePresenter::present_error_with_details(
                         Some(&repository),
-                        "AuthorParseError",
+                        "AUTHOR_PARSE_ERROR",
                         &format!("failed to parse JSON authoring claims: {err}"),
+                        serde_json::json!({
+                            "line": err.line(),
+                            "column": err.column(),
+                            "reason": err.to_string()
+                        }),
                     );
                 } else {
-                    eprintln!("kat author: failed to parse JSON authoring claims: {err}");
+                    eprintln!(
+                        "kat author: JSON parse error at line {}, column {}: {}",
+                        err.line(),
+                        err.column(),
+                        err
+                    );
                 }
                 return ExitCode::FAILURE;
             }
         };
-
-    if claims.is_empty() {
-        if json {
-            MachinePresenter::present_error(
-                Some(&repository),
-                "AuthorParseError",
-                "authoring claims array is empty; at least one AuthorClaim object is required",
-            );
-        } else {
-            eprintln!(
-                "kat author: authoring claims array is empty; at least one AuthorClaim object is required"
-            );
-        }
-        return ExitCode::FAILURE;
-    }
 
     match kat::repository::author::compile_and_stage_claims(&repository, &claims) {
         Ok(res) => {
@@ -3216,7 +3223,7 @@ fn run_author(claims_file: Option<String>, example: bool, json: bool) -> ExitCod
             if json {
                 MachinePresenter::present_error(
                     Some(&repository),
-                    "AuthorCompilationFailed",
+                    "AUTHOR_COMPILATION_FAILED",
                     &err.to_string(),
                 );
             } else {

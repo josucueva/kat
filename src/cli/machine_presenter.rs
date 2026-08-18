@@ -36,6 +36,16 @@ impl MachinePresenter {
 
     /// Renders an error machine result envelope and prints it to stdout.
     pub fn present_error(repository: Option<&Repository>, code: &str, message: &str) {
+        Self::present_error_with_details(repository, code, message, serde_json::Value::Null);
+    }
+
+    /// Renders an error machine result envelope with structured details and prints it to stdout.
+    pub fn present_error_with_details(
+        repository: Option<&Repository>,
+        code: &str,
+        message: &str,
+        details: serde_json::Value,
+    ) {
         let repo_id = repository.map(|r| r.metadata.repository_id);
         let state_id = repository.map(|r| r.accepted.state);
         let envelope = CommonResultEnvelope::<()>::failure(
@@ -43,7 +53,7 @@ impl MachinePresenter {
             state_id,
             code,
             message,
-            serde_json::Value::Null,
+            details,
         );
         if let Ok(json) = Self::render_envelope(&envelope) {
             println!("{json}");

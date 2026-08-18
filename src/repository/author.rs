@@ -98,6 +98,121 @@ pub enum AuthorClaim {
     },
 }
 
+/// Legacy externally-tagged DTO for backward compatibility with v0.4.0 JSON shapes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub enum AuthorClaimLegacy {
+    CreateElement {
+        #[serde(alias = "type")]
+        type_id: String,
+        title: String,
+        description: Option<String>,
+        handle: Option<String>,
+    },
+    LinkElement {
+        source_ref: String,
+        #[serde(alias = "relationship_type")]
+        relationship_type_id: String,
+        target_ref: String,
+    },
+    UnlinkElement {
+        relationship_ref: String,
+    },
+    AccountArtifact {
+        artifact_path: String,
+        element_ref: String,
+    },
+    UpdateElement {
+        element_ref: String,
+        title: Option<String>,
+        description: Option<String>,
+    },
+    DeprecateElement {
+        element_ref: String,
+    },
+    SupersedeElement {
+        existing_ref: String,
+        #[serde(alias = "replacement_type")]
+        replacement_type_id: String,
+        replacement_title: String,
+        handle: Option<String>,
+    },
+}
+
+impl From<AuthorClaimLegacy> for AuthorClaim {
+    fn from(legacy: AuthorClaimLegacy) -> Self {
+        match legacy {
+            AuthorClaimLegacy::CreateElement {
+                type_id,
+                title,
+                description,
+                handle,
+            } => AuthorClaim::CreateElement {
+                type_id,
+                title,
+                description,
+                handle,
+            },
+            AuthorClaimLegacy::LinkElement {
+                source_ref,
+                relationship_type_id,
+                target_ref,
+            } => AuthorClaim::LinkElement {
+                source_ref,
+                relationship_type_id,
+                target_ref,
+            },
+            AuthorClaimLegacy::UnlinkElement { relationship_ref } => {
+                AuthorClaim::UnlinkElement { relationship_ref }
+            }
+            AuthorClaimLegacy::AccountArtifact {
+                artifact_path,
+                element_ref,
+            } => AuthorClaim::AccountArtifact {
+                artifact_path,
+                element_ref,
+            },
+            AuthorClaimLegacy::UpdateElement {
+                element_ref,
+                title,
+                description,
+            } => AuthorClaim::UpdateElement {
+                element_ref,
+                title,
+                description,
+            },
+            AuthorClaimLegacy::DeprecateElement { element_ref } => {
+                AuthorClaim::DeprecateElement { element_ref }
+            }
+            AuthorClaimLegacy::SupersedeElement {
+                existing_ref,
+                replacement_type_id,
+                replacement_title,
+                handle,
+            } => AuthorClaim::SupersedeElement {
+                existing_ref,
+                replacement_type_id,
+                replacement_title,
+                handle,
+            },
+        }
+    }
+}
+
+/// Parses a JSON payload of authoring claims, attempting normative internally-tagged `"kind"`
+/// format first, and falling back to legacy v0.4.0 externally-tagged shapes if needed.
+pub fn parse_author_claims_json(text: &str) -> Result<Vec<AuthorClaim>, serde_json::Error> {
+    match serde_json::from_str::<Vec<AuthorClaim>>(text) {
+        Ok(claims) => Ok(claims),
+        Err(normative_err) => {
+            if let Ok(legacy_claims) = serde_json::from_str::<Vec<AuthorClaimLegacy>>(text) {
+                Ok(legacy_claims.into_iter().map(AuthorClaim::from).collect())
+            } else {
+                Err(normative_err)
+            }
+        }
+    }
+}
+
 /// Result produced by compiling and staging authoring claims.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AuthorBatchResult {
@@ -109,7 +224,7 @@ pub struct AuthorBatchResult {
     pub workflow_references: HashMap<String, ElementId>,
 }
 
-/// Compiles declarative claims into canonical KAT operations and stages them atomically into the draft session.
+/// Compiles and stages a batch of authoring claims into a draft session.
 pub fn compile_and_stage_claims(
     repository: &Repository,
     claims: &[AuthorClaim],
@@ -146,11 +261,24 @@ pub fn compile_and_stage_claims(
                 let element_id = ElementId::new();
                 let handle_str = match handle {
                     Some(h) => {
-                        if h.starts_with('@') {
+                        let formatted = if h.starts_with('@') {
                             h.clone()
                         } else {
                             format!("@{h}")
+                        };
+                        if created_handles.contains_key(&formatted)
+                            || session
+                                .workflow_references
+                                .iter()
+                                .any(|b| b.handle == formatted)
+                        {
+                            return Err(ChangeError::RefStore(
+                                crate::repository::ref_store::RefStoreError::Parse(format!(
+                                    "duplicate workflow reference handle: {formatted}"
+                                )),
+                            ));
                         }
+                        formatted
                     }
                     None => {
                         let auto_h = format!("@elem-{auto_handle_counter}");
