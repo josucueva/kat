@@ -41,6 +41,7 @@ _arguments "${_arguments_options[@]}" : \
 '--direction=[Traversal direction (upstream, downstream, both)]:DIRECTION:_default' \
 '--depth=[Maximum depth of relationship hops]:DEPTH:_default' \
 '--categorize[Group context elements by ontology category]' \
+'--compact[Display compact single-line per element layout]' \
 '--json[Output structured machine JSON envelope]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \

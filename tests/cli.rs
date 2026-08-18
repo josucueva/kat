@@ -3992,3 +3992,119 @@ fn docs_man_pages_regenerate_without_diff_test() {
     let change_man = std::fs::read_to_string("generated/man/kat-change.1").unwrap();
     assert!(change_man.contains("automatically opens a draft Change when needed."));
 }
+
+// ---------------------------------------------------------------------------
+// v0.4.2 Context Human Presentation Tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn v042_context_default_presentation_acceptance_test() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+
+    let claims = r#"[
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/requirement",
+            "title": "Active Workout Tracking",
+            "handle": "@req-auth"
+        },
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/implementation",
+            "title": "Workout Engine Service",
+            "handle": "@imp-auth"
+        },
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/artifact",
+            "title": "Active Workout Screen UI",
+            "handle": "@art-ui"
+        },
+        {
+            "kind": "link_element",
+            "relationship_type_id": "kat.core/realizes",
+            "source_ref": "@imp-auth",
+            "target_ref": "@req-auth"
+        },
+        {
+            "kind": "link_element",
+            "relationship_type_id": "kat.core/represents",
+            "source_ref": "@art-ui",
+            "target_ref": "@imp-auth"
+        }
+    ]"#;
+
+    let claims_file = root.join("claims.json");
+    std::fs::write(&claims_file, claims).unwrap();
+
+    let (auth_out, auth_err, auth_ok) = run_kat(root, &["author", "claims.json"]);
+    assert!(auth_ok, "kat author failed: {auth_err}\n{auth_out}");
+    let (com_out, com_err, com_ok) = run_kat(root, &["commit"]);
+    assert!(com_ok, "kat commit failed: {com_err}\n{com_out}");
+
+    // Get requirement element ID
+    let (list_out, _, list_ok) = run_kat(root, &["list", "requirement"]);
+    assert!(list_ok);
+    let req_id = id_line(&list_out, "element_id");
+
+    // Test default context presentation contains titles, category headers, and provenance
+    let (ctx_out, ctx_err, ctx_ok) = run_kat(root, &["context", req_id, "--direction", "both"]);
+    assert!(ctx_ok, "kat context failed: {ctx_err}\n{ctx_out}");
+    assert!(ctx_out.contains("Context"));
+    assert!(ctx_out.contains("Root"));
+    assert!(ctx_out.contains("Requirements"));
+    assert!(ctx_out.contains("Implementations"));
+    assert!(ctx_out.contains("Artifacts"));
+    assert!(ctx_out.contains("Active Workout Tracking"));
+    assert!(ctx_out.contains("Workout Engine Service"));
+    assert!(ctx_out.contains("realizes <-"));
+
+    // Test compact layout
+    let (compact_out, _, compact_ok) = run_kat(root, &["context", req_id, "--direction", "both", "--compact"]);
+    assert!(compact_ok);
+    assert!(compact_out.contains("REQ"));
+    assert!(compact_out.contains("IMP"));
+
+    // Test deterministic output
+    let (ctx_out2, _, _) = run_kat(root, &["context", req_id, "--direction", "both"]);
+    assert_eq!(ctx_out, ctx_out2);
+
+    // Test truncation notice when depth is specified
+    let (depth_out, _, depth_ok) = run_kat(root, &["context", req_id, "--depth", "1"]);
+    assert!(depth_ok);
+    assert!(depth_out.contains("Context truncated at max depth 1."));
+}
+
+#[test]
+fn v042_context_physical_locator_vs_no_heuristic_test() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_kat(root, &["init"]);
+
+    let (c1_out, _, _) = run_kat(root, &["create", "artifact", "--title", "Explicit Artifact"]);
+    let art1_id = id_line(&c1_out, "element_id");
+
+    let (c2_out, _, _) = run_kat(
+        root,
+        &[
+            "create",
+            "artifact",
+            "--title",
+            "Description Artifact",
+            "--description",
+            "Located in lib/features/workout.dart",
+        ],
+    );
+    let art2_id = id_line(&c2_out, "element_id");
+
+    let (ctx1_out, _, ok1) = run_kat(root, &["context", art1_id]);
+    assert!(ok1);
+    assert!(ctx1_out.contains("Explicit Artifact"));
+
+    // Description text must NOT manufacture a physical locator path
+    let (ctx2_out, _, ok2) = run_kat(root, &["context", art2_id]);
+    assert!(ok2);
+    assert!(!ctx2_out.contains("path: lib/features/workout.dart"));
+}

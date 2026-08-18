@@ -77,8 +77,9 @@ fn main() -> ExitCode {
             direction,
             depth,
             categorize,
+            compact,
             json,
-        } => run_context(roots, direction, depth, categorize, json),
+        } => run_context(roots, direction, depth, categorize, compact, json),
         Command::Author {
             claims_file,
             example,
@@ -2984,6 +2985,7 @@ fn run_context(
     direction: String,
     depth: Option<usize>,
     categorize: bool,
+    compact: bool,
     json: bool,
 ) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
@@ -3042,18 +3044,7 @@ fn run_context(
             if json {
                 MachinePresenter::present_success(&repository, &res);
             } else {
-                println!("Context Retrieval Result");
-                println!("  roots:      {}", res.roots.len());
-                println!("  elements:   {}", res.elements.len());
-                println!("  routes:     {}", res.physical_routes.len());
-                if let Some(cat) = &res.categorized {
-                    println!("  categorized:");
-                    println!("    requirements: {}", cat.requirements.len());
-                    println!("    realizations: {}", cat.realizations.len());
-                    println!("    verification: {}", cat.verification.len());
-                    println!("    design:       {}", cat.design.len());
-                    println!("    system:       {}", cat.system.len());
-                }
+                kat::cli::context_presenter::present_human_context(&res, compact, depth);
             }
             ExitCode::SUCCESS
         }

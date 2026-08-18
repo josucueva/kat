@@ -56,6 +56,7 @@ complete -c kat -n "__fish_kat_using_subcommand status" -s h -l help -d 'Print h
 complete -c kat -n "__fish_kat_using_subcommand context" -l direction -d 'Traversal direction (upstream, downstream, both)' -r
 complete -c kat -n "__fish_kat_using_subcommand context" -l depth -d 'Maximum depth of relationship hops' -r
 complete -c kat -n "__fish_kat_using_subcommand context" -l categorize -d 'Group context elements by ontology category'
+complete -c kat -n "__fish_kat_using_subcommand context" -l compact -d 'Display compact single-line per element layout'
 complete -c kat -n "__fish_kat_using_subcommand context" -l json -d 'Output structured machine JSON envelope'
 complete -c kat -n "__fish_kat_using_subcommand context" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c kat -n "__fish_kat_using_subcommand author" -s e -l example -d 'Print a complete working JSON example and exit'

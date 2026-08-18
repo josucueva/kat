@@ -4,11 +4,11 @@
 .SH NAME
 context \- Retrieve bounded semantic development context around elements
 .SH SYNOPSIS
-\fBcontext\fR [\fB\-\-direction\fR] [\fB\-\-depth\fR] [\fB\-\-categorize\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIROOTS\fR] 
+\fBcontext\fR [\fB\-\-direction\fR] [\fB\-\-depth\fR] [\fB\-\-categorize\fR] [\fB\-\-compact\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIROOTS\fR] 
 .SH DESCRIPTION
 Retrieve bounded semantic development context around elements
 .PP
-Context is a deterministic semantic projection over accepted state. It is intended for orientation and development routing.
+Context is a deterministic, categorized semantic projection over accepted state including provenance and modeled physical routing anchors.
 .PP
 It does not claim to return every physical file involved in a change.
 .PP
@@ -27,6 +27,9 @@ Maximum depth of relationship hops
 .TP
 \fB\-\-categorize\fR
 Group context elements by ontology category
+.TP
+\fB\-\-compact\fR
+Display compact single\-line per element layout
 .TP
 \fB\-\-json\fR
 Output structured machine JSON envelope

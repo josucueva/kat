@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 
+pub mod context_presenter;
 pub mod machine_presenter;
 
 /// KAT (Knowledge Abstraction Tracker)
@@ -81,8 +82,8 @@ pub enum Command {
 
     /// Retrieve bounded semantic development context around elements
     ///
-    /// Context is a deterministic semantic projection over accepted state.
-    /// It is intended for orientation and development routing.
+    /// Context is a deterministic, categorized semantic projection over accepted state
+    /// including provenance and modeled physical routing anchors.
     ///
     /// It does not claim to return every physical file involved in a change.
     ///
@@ -103,6 +104,10 @@ pub enum Command {
         /// Group context elements by ontology category
         #[arg(long)]
         categorize: bool,
+
+        /// Display compact single-line per element layout
+        #[arg(long)]
+        compact: bool,
 
         /// Output structured machine JSON envelope
         #[arg(long)]

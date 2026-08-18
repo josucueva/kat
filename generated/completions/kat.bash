@@ -484,7 +484,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__context)
-            opts="-h --direction --depth --categorize --json --help"
+            opts="-h --direction --depth --categorize --compact --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
