@@ -2,21 +2,22 @@
 .el .ds Aq '
 .TH create 1  "create " 
 .SH NAME
-create \- Create a new knowledge element
+create \- Create a knowledge element (prefer kat author for normal authoring)
 .SH SYNOPSIS
 \fBcreate\fR <\fB\-\-title\fR> [\fB\-\-description\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_TYPE\fR> 
 .SH DESCRIPTION
-Create a new knowledge element
+Create a knowledge element (prefer kat author for normal authoring)
 .SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "ADVANCED AUTHORING"
 .TP
 \fB\-\-title\fR \fI<TITLE>\fR
 Title of the knowledge element
 .TP
 \fB\-\-description\fR \fI<DESCRIPTION>\fR
 Optional detailed description
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
 .TP
 <\fIELEMENT_TYPE\fR>
 Type of element to create (e.g. requirement, constraint, design\-decision, implementation, artifact)

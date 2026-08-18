@@ -2,21 +2,22 @@
 .el .ds Aq '
 .TH artifacts 1  "artifacts " 
 .SH NAME
-artifacts \- Evaluate artifact accountability baselines against accepted state
+artifacts \- Evaluate artifact accountability baselines
 .SH SYNOPSIS
 \fBartifacts\fR [\fB\-\-stale\fR] [\fB\-\-compact\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIARTIFACT_ID\fR] 
 .SH DESCRIPTION
-Evaluate artifact accountability baselines against accepted state
+Evaluate artifact accountability baselines
 .SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH INSPECTION
 .TP
 \fB\-\-stale\fR
 Filter accountability report to display only STALE artifacts
 .TP
 \fB\-\-compact\fR
 Display compact status table layout
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
 .TP
 [\fIARTIFACT_ID\fR]
 Optional artifact element ID (UUID or prefix) for detailed inspection

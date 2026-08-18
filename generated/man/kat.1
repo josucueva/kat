@@ -1,91 +1,113 @@
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.TH kat 1  "kat 0.4.1" 
+.TH kat 1 "kat 0.4.1"
 .SH NAME
 kat \- Knowledge Abstraction Tracker
 .SH SYNOPSIS
-\fBkat\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.B kat
+[\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIcommand\fR>
 .SH DESCRIPTION
 A specification\-first semantic software repository for representing, evolving, tracing, and validating authoritative software knowledge independently from source code files.
+.SH EVERYDAY WORKFLOW
+.TP
+.BR kat\-status (1)
+Show accepted repository state and current draft status
+.TP
+.BR kat\-context (1)
+Retrieve bounded semantic development context around elements
+.TP
+.BR kat\-author (1)
+Stage a semantic Change from declarative JSON
+.TP
+.BR kat\-check (1)
+Check consistency, evidence, accountability, and graph quality
+.TP
+.BR kat\-commit (1)
+Publish the current draft Change
+.TP
+.BR kat\-abort (1)
+Discard the current draft Change
+.SH INSPECTION
+.TP
+.BR kat\-list (1)
+List knowledge elements in the accepted state
+.TP
+.BR kat\-show (1)
+Inspect a detailed view of a resolved knowledge element
+.TP
+.BR kat\-history (1)
+Show accepted Change history
+.TP
+.BR kat\-trace (1)
+Trace an element to its semantic origin
+.TP
+.BR kat\-impact (1)
+Analyze consequences of changing an element
+.TP
+.BR kat\-artifacts (1)
+Evaluate artifact accountability baselines
+.TP
+.BR kat\-ontology (1)
+Discover semantic types and valid relationships
+.TP
+.BR kat\-validate (1)
+Run mechanical consistency validation
+.SH ADVANCED AUTHORING
+.TP
+.BR kat\-create (1)
+Create a knowledge element (prefer kat-author(1) for normal authoring)
+.TP
+.BR kat\-update (1)
+Update an active knowledge element (prefer kat-author(1) for normal authoring)
+.TP
+.BR kat\-deprecate (1)
+Deprecate an active knowledge element (prefer kat-author(1) for normal authoring)
+.TP
+.BR kat\-supersede (1)
+Replace an element while preserving semantic history (prefer kat-author(1) for normal authoring)
+.TP
+.BR kat\-link (1)
+Establish a semantic relationship (prefer kat-author(1) for normal authoring)
+.TP
+.BR kat\-unlink (1)
+Remove a semantic relationship (prefer kat-author(1) for normal authoring)
+.TP
+.BR kat\-account (1)
+Re-baseline artifact accountability (prefer kat-author(1) for normal authoring)
+.TP
+.BR kat\-change (1)
+Manage draft Change transactions explicitly
+.SH REPOSITORY
+.TP
+.BR kat\-init (1)
+Initialize a KAT repository
+.SH BASIC WORKFLOW
+.nf
+Initialize:
+    kat init
+
+Inspect state:
+    kat status
+
+Stage a semantic Change:
+    kat author change.json
+
+Check health:
+    kat check
+
+Publish Change:
+    kat commit
+
+Retrieve development context:
+    kat context <element>
+.fi
 .SH OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Print help
 .TP
 \fB\-V\fR, \fB\-\-version\fR
 Print version
-.SH SUBCOMMANDS
-.TP
-kat\-init(1)
-Initialize a new KAT repository in the current directory
-.TP
-kat\-status(1)
-Display a concise summary of current accepted repository status and health
-.TP
-kat\-context(1)
-Porcelain: Retrieve point\-to\-point context surrounding root elements
-.TP
-kat\-author(1)
-Porcelain: Declaratively compile and stage a JSON batch of authoring claims
-.TP
-kat\-check(1)
-Porcelain: Perform comprehensive mechanical consistency check and advisory graph quality analysis
-.TP
-kat\-commit(1)
-Porcelain: Commit all staged operations in open transaction and publish
-.TP
-kat\-abort(1)
-Porcelain: Abort open transaction and discard all staged operations
-.TP
-kat\-list(1)
-List knowledge elements in the current accepted state
-.TP
-kat\-create(1)
-Create a new knowledge element
-.TP
-kat\-update(1)
-Update title or description of an existing active knowledge element
-.TP
-kat\-deprecate(1)
-Mark an active knowledge element as Deprecated
-.TP
-kat\-supersede(1)
-Supersede an existing knowledge element with a new replacement element
-.TP
-kat\-link(1)
-Establish a semantic relationship between two elements
-.TP
-kat\-unlink(1)
-Remove a relationship from the current accepted state
-.TP
-kat\-account(1)
-Re\-baseline an artifact\*(Aqs accountability relationships against current knowledge versions
-.TP
-kat\-show(1)
-Show detailed view of a resolved active knowledge element
-.TP
-kat\-history(1)
-Reconstruct and display the accepted change revision graph
-.TP
-kat\-trace(1)
-Trace a knowledge element back to its origin
-.TP
-kat\-impact(1)
-Analyze potential impact and consequences of changing an element
-.TP
-kat\-validate(1)
-Run mechanical consistency validation across the current accepted state
-.TP
-kat\-artifacts(1)
-Evaluate artifact accountability baselines against accepted state
-.TP
-kat\-change(1)
-Manage multi\-operation change transactions
-.TP
-kat\-ontology(1)
-Discover active ontology element types, relationship types, and endpoint capabilities
-.TP
-kat\-help(1)
-Print this message or the help of the given subcommand(s)
-.SH VERSION
-v0.4.1
+.SH SEE ALSO
+.BR kat\-author (1),
+.BR kat\-status (1),
+.BR kat\-check (1),
+.BR kat\-context (1)

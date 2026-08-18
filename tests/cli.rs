@@ -3933,3 +3933,52 @@ fn v031_artifacts_compact_suppresses_note() {
     assert!(out_compact.contains("current      src/auth.js"));
     assert!(!out_compact.contains("Note: KAT accountability evaluates"));
 }
+
+// ---------------------------------------------------------------------------
+// Documentation Golden & Snapshot Verification Tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn docs_cli_root_help_grouping_test() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kat"))
+        .arg("--help")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Everyday workflow:"));
+    assert!(stdout.contains("Inspection:"));
+    assert!(stdout.contains("Advanced authoring:"));
+    assert!(stdout.contains("Repository:"));
+}
+
+#[test]
+fn docs_author_help_workflow_references_test() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kat"))
+        .args(["author", "--help"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("WORKFLOW REFERENCES"));
+    assert!(stdout.contains("DRAFT-LOCAL"));
+    assert!(stdout.contains("CROSS-CHANGE REFERENCES"));
+}
+
+#[test]
+fn docs_man_pages_regenerate_without_diff_test() {
+    let status = Command::new(env!("CARGO_BIN_EXE_generate_assets"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let root_man = std::fs::read_to_string("generated/man/kat.1").unwrap();
+    assert!(root_man.contains("EVERYDAY WORKFLOW"));
+    assert!(root_man.contains("BASIC WORKFLOW"));
+
+    let author_man = std::fs::read_to_string("generated/man/kat-author.1").unwrap();
+    assert!(author_man.contains("WORKFLOW REFERENCES"));
+    assert!(author_man.contains("CROSS-CHANGE REFERENCES"));
+}

@@ -2,18 +2,21 @@
 .el .ds Aq '
 .TH link 1  "link " 
 .SH NAME
-link \- Establish a semantic relationship between two elements
+link \- Establish a semantic relationship (prefer kat author for normal authoring)
 .SH SYNOPSIS
 \fBlink\fR [\fB\-\-description\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIRELATIONSHIP_TYPE\fR> <\fISOURCE_ELEMENT_ID\fR> <\fITARGET_ELEMENT_ID\fR> 
 .SH DESCRIPTION
-Establish a semantic relationship between two elements
+Establish a semantic relationship (prefer kat author for normal authoring)
+.PP
+If a relationship violates ontology endpoint constraints, KAT reports the provided source/target types together with allowed source and target types.
 .SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "ADVANCED AUTHORING"
 .TP
 \fB\-\-description\fR \fI<DESCRIPTION>\fR
 Optional detailed description
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
 .TP
 <\fIRELATIONSHIP_TYPE\fR>
 Relationship type (e.g. addresses, depends\-on, derived\-from, guides, motivates, realizes, represents, restricts, validates)

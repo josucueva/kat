@@ -2,15 +2,20 @@
 .el .ds Aq '
 .TH commit 1  "commit " 
 .SH NAME
-commit \- Porcelain: Commit all staged operations in open transaction and publish
+commit \- Publish the current draft Change
 .SH SYNOPSIS
 \fBcommit\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
-Porcelain: Commit all staged operations in open transaction and publish
+Publish the current draft Change
+.PP
+Commits all staged operations in open draft transaction into a single ChangeRevision and publishes to accepted state.
+.PP
+Machine JSON supported: \-\-json flag.
 .SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "EVERYDAY WORKFLOW"
 .TP
 \fB\-\-json\fR
 Output structured machine JSON envelope
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help

@@ -28,18 +28,12 @@ _kat() {
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:kat-command-$line[1]:"
         case $line[1] in
-            (init)
-_arguments "${_arguments_options[@]}" : \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(status)
+            (status)
 _arguments "${_arguments_options[@]}" : \
 '--compact[Display compact single-line dashboard]' \
 '--json[Output structured machine JSON envelope]' \
-'-h[Print help]' \
-'--help[Print help]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
 (context)
@@ -48,15 +42,15 @@ _arguments "${_arguments_options[@]}" : \
 '--depth=[Maximum depth of relationship hops]:DEPTH:_default' \
 '--categorize[Group context elements by ontology category]' \
 '--json[Output structured machine JSON envelope]' \
-'-h[Print help]' \
-'--help[Print help]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
 '*::roots -- Root element references (UUIDs, 8-hex prefixes, or @handles):_default' \
 && ret=0
 ;;
 (author)
 _arguments "${_arguments_options[@]}" : \
-'-e[Print a working JSON authoring claim template example]' \
-'--example[Print a working JSON authoring claim template example]' \
+'-e[Print a complete working JSON example and exit]' \
+'--example[Print a complete working JSON example and exit]' \
 '--json[Output structured machine JSON envelope]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -67,22 +61,22 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--json[Output structured machine JSON envelope]' \
 '--compact[Display compact single-line summary]' \
-'-h[Print help]' \
-'--help[Print help]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
 (commit)
 _arguments "${_arguments_options[@]}" : \
 '--json[Output structured machine JSON envelope]' \
-'-h[Print help]' \
-'--help[Print help]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
 (abort)
 _arguments "${_arguments_options[@]}" : \
 '--json[Output structured machine JSON envelope]' \
-'-h[Print help]' \
-'--help[Print help]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
 (list)
@@ -92,6 +86,111 @@ _arguments "${_arguments_options[@]}" : \
 '-h[Print help]' \
 '--help[Print help]' \
 '::element_type -- Optional element type positional shorthand (e.g. requirement, design-decision):_default' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--compact[Display compact single-line element summary]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':element_id -- Element ID (UUID or prefix) to display:_default' \
+&& ret=0
+;;
+(history)
+_arguments "${_arguments_options[@]}" : \
+'--limit=[Limit output to the N most recent revisions]:LIMIT:_default' \
+'--element=[Filter history to revisions touching a specific element ID or prefix]:ELEMENT:_default' \
+'--oneline[Format each history entry as a single line]' \
+'--compact[Display compact output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(trace)
+_arguments "${_arguments_options[@]}" : \
+'--max-depth=[Limit traversal depth to N relationship hops]:MAX_DEPTH:_default' \
+'--paths[Display explicit exhaustive path list instead of collapsed tree hierarchy]' \
+'--compact[Display compact arrow-joined path rendering]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':element_id -- Target element ID (UUID or prefix) to trace:_default' \
+&& ret=0
+;;
+(impact)
+_arguments "${_arguments_options[@]}" : \
+'--max-depth=[Limit impact propagation depth to N relationship hops]:MAX_DEPTH:_default' \
+'--compact[Display compact flat table layout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':element_id -- Target element ID (UUID or prefix) to analyze:_default' \
+&& ret=0
+;;
+(artifacts)
+_arguments "${_arguments_options[@]}" : \
+'--stale[Filter accountability report to display only STALE artifacts]' \
+'--compact[Display compact status table layout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::artifact_id -- Optional artifact element ID (UUID or prefix) for detailed inspection:_default' \
+&& ret=0
+;;
+(ontology)
+_arguments "${_arguments_options[@]}" : \
+'--compact[Display compact shortened type IDs without human-readable names]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_kat__subcmd__ontology_commands" \
+"*::: :->ontology" \
+&& ret=0
+
+    case $state in
+    (ontology)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-ontology-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+'--compact[Display compact shortened type IDs without human-readable names]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':type_id -- Type ID (e.g. `kat.core/requirement` or `requirement`):_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_kat__subcmd__ontology__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-ontology-help-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(validate)
+_arguments "${_arguments_options[@]}" : \
+'--coverage[Focus on validation evidence coverage reporting across knowledge categories]' \
+'--compact[Display compact single-line counts summary]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
 (create)
@@ -132,8 +231,8 @@ _arguments "${_arguments_options[@]}" : \
 (link)
 _arguments "${_arguments_options[@]}" : \
 '--description=[Optional detailed description]:DESCRIPTION:_default' \
-'-h[Print help]' \
-'--help[Print help]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
 ':relationship_type -- Relationship type (e.g. addresses, depends-on, derived-from, guides, motivates, realizes, represents, restricts, validates):_default' \
 ':source_element_id -- Source element ID (UUID):_default' \
 ':target_element_id -- Target element ID (UUID):_default' \
@@ -153,60 +252,6 @@ _arguments "${_arguments_options[@]}" : \
 '-h[Print help]' \
 '--help[Print help]' \
 ':artifact_id -- Artifact element ID or unique hex prefix:_default' \
-&& ret=0
-;;
-(show)
-_arguments "${_arguments_options[@]}" : \
-'--compact[Display compact single-line element summary]' \
-'-h[Print help]' \
-'--help[Print help]' \
-':element_id -- Element ID (UUID or prefix) to display:_default' \
-&& ret=0
-;;
-(history)
-_arguments "${_arguments_options[@]}" : \
-'--limit=[Limit output to the N most recent revisions]:LIMIT:_default' \
-'--element=[Filter history to revisions touching a specific element ID or prefix]:ELEMENT:_default' \
-'--oneline[Format each history entry as a single line]' \
-'--compact[Display compact output]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(trace)
-_arguments "${_arguments_options[@]}" : \
-'--max-depth=[Limit traversal depth to N relationship hops]:MAX_DEPTH:_default' \
-'--paths[Display explicit exhaustive path list instead of collapsed tree hierarchy]' \
-'--compact[Display compact arrow-joined path rendering]' \
-'-h[Print help]' \
-'--help[Print help]' \
-':element_id -- Target element ID (UUID or prefix) to trace:_default' \
-&& ret=0
-;;
-(impact)
-_arguments "${_arguments_options[@]}" : \
-'--max-depth=[Limit impact propagation depth to N relationship hops]:MAX_DEPTH:_default' \
-'--compact[Display compact flat table layout]' \
-'-h[Print help]' \
-'--help[Print help]' \
-':element_id -- Target element ID (UUID or prefix) to analyze:_default' \
-&& ret=0
-;;
-(validate)
-_arguments "${_arguments_options[@]}" : \
-'--coverage[Focus on validation evidence coverage reporting across knowledge categories]' \
-'--compact[Display compact single-line counts summary]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(artifacts)
-_arguments "${_arguments_options[@]}" : \
-'--stale[Filter accountability report to display only STALE artifacts]' \
-'--compact[Display compact status table layout]' \
-'-h[Print help]' \
-'--help[Print help]' \
-'::artifact_id -- Optional artifact element ID (UUID or prefix) for detailed inspection:_default' \
 && ret=0
 ;;
 (change)
@@ -293,56 +338,11 @@ esac
     ;;
 esac
 ;;
-(ontology)
+(init)
 _arguments "${_arguments_options[@]}" : \
-'--compact[Display compact shortened type IDs without human-readable names]' \
 '-h[Print help]' \
 '--help[Print help]' \
-":: :_kat__subcmd__ontology_commands" \
-"*::: :->ontology" \
 && ret=0
-
-    case $state in
-    (ontology)
-        words=($line[1] "${words[@]}")
-        (( CURRENT += 1 ))
-        curcontext="${curcontext%:*:*}:kat-ontology-command-$line[1]:"
-        case $line[1] in
-            (show)
-_arguments "${_arguments_options[@]}" : \
-'--compact[Display compact shortened type IDs without human-readable names]' \
-'-h[Print help]' \
-'--help[Print help]' \
-':type_id -- Type ID (e.g. `kat.core/requirement` or `requirement`):_default' \
-&& ret=0
-;;
-(help)
-_arguments "${_arguments_options[@]}" : \
-":: :_kat__subcmd__ontology__subcmd__help_commands" \
-"*::: :->help" \
-&& ret=0
-
-    case $state in
-    (help)
-        words=($line[1] "${words[@]}")
-        (( CURRENT += 1 ))
-        curcontext="${curcontext%:*:*}:kat-ontology-help-command-$line[1]:"
-        case $line[1] in
-            (show)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(help)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-        esac
-    ;;
-esac
-;;
-        esac
-    ;;
-esac
 ;;
 (help)
 _arguments "${_arguments_options[@]}" : \
@@ -356,11 +356,7 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:kat-help-command-$line[1]:"
         case $line[1] in
-            (init)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(status)
+            (status)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -385,6 +381,50 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(history)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(trace)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(impact)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(artifacts)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(ontology)
+_arguments "${_arguments_options[@]}" : \
+":: :_kat__subcmd__help__subcmd__ontology_commands" \
+"*::: :->ontology" \
+&& ret=0
+
+    case $state in
+    (ontology)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-help-ontology-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(validate)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -413,30 +453,6 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (account)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(show)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(history)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(trace)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(impact)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(validate)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(artifacts)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -472,25 +488,9 @@ _arguments "${_arguments_options[@]}" : \
     ;;
 esac
 ;;
-(ontology)
-_arguments "${_arguments_options[@]}" : \
-":: :_kat__subcmd__help__subcmd__ontology_commands" \
-"*::: :->ontology" \
-&& ret=0
-
-    case $state in
-    (ontology)
-        words=($line[1] "${words[@]}")
-        (( CURRENT += 1 ))
-        curcontext="${curcontext%:*:*}:kat-help-ontology-command-$line[1]:"
-        case $line[1] in
-            (show)
+(init)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
-;;
-        esac
-    ;;
-esac
 ;;
 (help)
 _arguments "${_arguments_options[@]}" : \
@@ -508,29 +508,29 @@ esac
 (( $+functions[_kat_commands] )) ||
 _kat_commands() {
     local commands; commands=(
-'init:Initialize a new KAT repository in the current directory' \
-'status:Display a concise summary of current accepted repository status and health' \
-'context:Porcelain\: Retrieve point-to-point context surrounding root elements' \
-'author:Porcelain\: Declaratively compile and stage a JSON batch of authoring claims' \
-'check:Porcelain\: Perform comprehensive mechanical consistency check and advisory graph quality analysis' \
-'commit:Porcelain\: Commit all staged operations in open transaction and publish' \
-'abort:Porcelain\: Abort open transaction and discard all staged operations' \
+'status:Show accepted repository state and current draft status' \
+'context:Retrieve bounded semantic development context around elements' \
+'author:Stage a semantic Change from declarative JSON' \
+'check:Check consistency, evidence, accountability, and graph quality' \
+'commit:Publish the current draft Change' \
+'abort:Discard the current draft Change' \
 'list:List knowledge elements in the current accepted state' \
-'create:Create a new knowledge element' \
-'update:Update title or description of an existing active knowledge element' \
-'deprecate:Mark an active knowledge element as Deprecated' \
-'supersede:Supersede an existing knowledge element with a new replacement element' \
-'link:Establish a semantic relationship between two elements' \
-'unlink:Remove a relationship from the current accepted state' \
-'account:Re-baseline an artifact'\''s accountability relationships against current knowledge versions' \
-'show:Show detailed view of a resolved active knowledge element' \
-'history:Reconstruct and display the accepted change revision graph' \
-'trace:Trace a knowledge element back to its origin' \
-'impact:Analyze potential impact and consequences of changing an element' \
-'validate:Run mechanical consistency validation across the current accepted state' \
-'artifacts:Evaluate artifact accountability baselines against accepted state' \
-'change:Manage multi-operation change transactions' \
-'ontology:Discover active ontology element types, relationship types, and endpoint capabilities' \
+'show:Inspect a detailed view of a resolved knowledge element' \
+'history:Show accepted Change history' \
+'trace:Trace an element to its semantic origin' \
+'impact:Analyze consequences of changing an element' \
+'artifacts:Evaluate artifact accountability baselines' \
+'ontology:Discover semantic types and valid relationships' \
+'validate:Run mechanical consistency validation' \
+'create:Create a knowledge element (prefer kat author for normal authoring)' \
+'update:Update an active knowledge element (prefer kat author for normal authoring)' \
+'deprecate:Deprecate an active knowledge element (prefer kat author for normal authoring)' \
+'supersede:Replace an element while preserving semantic history (prefer kat author for normal authoring)' \
+'link:Establish a semantic relationship (prefer kat author for normal authoring)' \
+'unlink:Remove a semantic relationship (prefer kat author for normal authoring)' \
+'account:Re-baseline artifact accountability (prefer kat author for normal authoring)' \
+'change:Manage draft Change transactions explicitly' \
+'init:Initialize a KAT repository' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'kat commands' commands "$@"
@@ -650,29 +650,29 @@ _kat__subcmd__deprecate_commands() {
 (( $+functions[_kat__subcmd__help_commands] )) ||
 _kat__subcmd__help_commands() {
     local commands; commands=(
-'init:Initialize a new KAT repository in the current directory' \
-'status:Display a concise summary of current accepted repository status and health' \
-'context:Porcelain\: Retrieve point-to-point context surrounding root elements' \
-'author:Porcelain\: Declaratively compile and stage a JSON batch of authoring claims' \
-'check:Porcelain\: Perform comprehensive mechanical consistency check and advisory graph quality analysis' \
-'commit:Porcelain\: Commit all staged operations in open transaction and publish' \
-'abort:Porcelain\: Abort open transaction and discard all staged operations' \
+'status:Show accepted repository state and current draft status' \
+'context:Retrieve bounded semantic development context around elements' \
+'author:Stage a semantic Change from declarative JSON' \
+'check:Check consistency, evidence, accountability, and graph quality' \
+'commit:Publish the current draft Change' \
+'abort:Discard the current draft Change' \
 'list:List knowledge elements in the current accepted state' \
-'create:Create a new knowledge element' \
-'update:Update title or description of an existing active knowledge element' \
-'deprecate:Mark an active knowledge element as Deprecated' \
-'supersede:Supersede an existing knowledge element with a new replacement element' \
-'link:Establish a semantic relationship between two elements' \
-'unlink:Remove a relationship from the current accepted state' \
-'account:Re-baseline an artifact'\''s accountability relationships against current knowledge versions' \
-'show:Show detailed view of a resolved active knowledge element' \
-'history:Reconstruct and display the accepted change revision graph' \
-'trace:Trace a knowledge element back to its origin' \
-'impact:Analyze potential impact and consequences of changing an element' \
-'validate:Run mechanical consistency validation across the current accepted state' \
-'artifacts:Evaluate artifact accountability baselines against accepted state' \
-'change:Manage multi-operation change transactions' \
-'ontology:Discover active ontology element types, relationship types, and endpoint capabilities' \
+'show:Inspect a detailed view of a resolved knowledge element' \
+'history:Show accepted Change history' \
+'trace:Trace an element to its semantic origin' \
+'impact:Analyze consequences of changing an element' \
+'artifacts:Evaluate artifact accountability baselines' \
+'ontology:Discover semantic types and valid relationships' \
+'validate:Run mechanical consistency validation' \
+'create:Create a knowledge element (prefer kat author for normal authoring)' \
+'update:Update an active knowledge element (prefer kat author for normal authoring)' \
+'deprecate:Deprecate an active knowledge element (prefer kat author for normal authoring)' \
+'supersede:Replace an element while preserving semantic history (prefer kat author for normal authoring)' \
+'link:Establish a semantic relationship (prefer kat author for normal authoring)' \
+'unlink:Remove a semantic relationship (prefer kat author for normal authoring)' \
+'account:Re-baseline artifact accountability (prefer kat author for normal authoring)' \
+'change:Manage draft Change transactions explicitly' \
+'init:Initialize a KAT repository' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'kat help commands' commands "$@"

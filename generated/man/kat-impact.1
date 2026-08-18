@@ -2,21 +2,22 @@
 .el .ds Aq '
 .TH impact 1  "impact " 
 .SH NAME
-impact \- Analyze potential impact and consequences of changing an element
+impact \- Analyze consequences of changing an element
 .SH SYNOPSIS
 \fBimpact\fR [\fB\-\-max\-depth\fR] [\fB\-\-compact\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_ID\fR> 
 .SH DESCRIPTION
-Analyze potential impact and consequences of changing an element
+Analyze consequences of changing an element
 .SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH INSPECTION
 .TP
 \fB\-\-max\-depth\fR \fI<MAX_DEPTH>\fR
 Limit impact propagation depth to N relationship hops
 .TP
 \fB\-\-compact\fR
 Display compact flat table layout
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
 .TP
 <\fIELEMENT_ID\fR>
 Target element ID (UUID or prefix) to analyze

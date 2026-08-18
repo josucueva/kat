@@ -2,15 +2,20 @@
 .el .ds Aq '
 .TH abort 1  "abort " 
 .SH NAME
-abort \- Porcelain: Abort open transaction and discard all staged operations
+abort \- Discard the current draft Change
 .SH SYNOPSIS
 \fBabort\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
-Porcelain: Abort open transaction and discard all staged operations
+Discard the current draft Change
+.PP
+Aborts open transaction and discards all staged operations.
+.PP
+Machine JSON supported: \-\-json flag.
 .SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "EVERYDAY WORKFLOW"
 .TP
 \fB\-\-json\fR
 Output structured machine JSON envelope
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help

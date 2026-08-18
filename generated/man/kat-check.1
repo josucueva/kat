@@ -2,18 +2,23 @@
 .el .ds Aq '
 .TH check 1  "check " 
 .SH NAME
-check \- Porcelain: Perform comprehensive mechanical consistency check and advisory graph quality analysis
+check \- Check consistency, evidence, accountability, and graph quality
 .SH SYNOPSIS
 \fBcheck\fR [\fB\-\-json\fR] [\fB\-\-compact\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
-Porcelain: Perform comprehensive mechanical consistency check and advisory graph quality analysis
+Check consistency, evidence, accountability, and graph quality
+.PP
+Evaluates whether the repository is healthy: mechanical consistency, evidence coverage, artifact accountability baselines, and graph quality advisories.
+.PP
+Machine JSON supported: \-\-json flag.
 .SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "EVERYDAY WORKFLOW"
 .TP
 \fB\-\-json\fR
 Output structured machine JSON envelope
 .TP
 \fB\-\-compact\fR
 Display compact single\-line summary
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help

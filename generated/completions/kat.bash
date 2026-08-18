@@ -224,7 +224,7 @@ _kat() {
 
     case "${cmd}" in
         kat)
-            opts="-h -V --help --version init status context author check commit abort list create update deprecate supersede link unlink account show history trace impact validate artifacts change ontology help"
+            opts="-h -V --help --version status context author check commit abort list show history trace impact artifacts ontology validate create update deprecate supersede link unlink account change init help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -542,7 +542,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__help)
-            opts="init status context author check commit abort list create update deprecate supersede link unlink account show history trace impact validate artifacts change ontology help"
+            opts="status context author check commit abort list show history trace impact artifacts ontology validate create update deprecate supersede link unlink account change init help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

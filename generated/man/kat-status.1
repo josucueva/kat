@@ -2,18 +2,23 @@
 .el .ds Aq '
 .TH status 1  "status " 
 .SH NAME
-status \- Display a concise summary of current accepted repository status and health
+status \- Show accepted repository state and current draft status
 .SH SYNOPSIS
 \fBstatus\fR [\fB\-\-compact\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
-Display a concise summary of current accepted repository status and health
+Show accepted repository state and current draft status
+.PP
+Displays where the repository is right now: current accepted state summary plus active draft transaction status.
+.PP
+Machine JSON supported: \-\-json flag.
 .SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "EVERYDAY WORKFLOW"
 .TP
 \fB\-\-compact\fR
 Display compact single\-line dashboard
 .TP
 \fB\-\-json\fR
 Output structured machine JSON envelope
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help

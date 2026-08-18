@@ -2,12 +2,22 @@
 .el .ds Aq '
 .TH context 1  "context " 
 .SH NAME
-context \- Porcelain: Retrieve point\-to\-point context surrounding root elements
+context \- Retrieve bounded semantic development context around elements
 .SH SYNOPSIS
 \fBcontext\fR [\fB\-\-direction\fR] [\fB\-\-depth\fR] [\fB\-\-categorize\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIROOTS\fR] 
 .SH DESCRIPTION
-Porcelain: Retrieve point\-to\-point context surrounding root elements
+Retrieve bounded semantic development context around elements
+.PP
+Context is a deterministic semantic projection over accepted state. It is intended for orientation and development routing.
+.PP
+It does not claim to return every physical file involved in a change.
+.PP
+Machine JSON supported: \-\-json flag.
 .SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "EVERYDAY WORKFLOW"
 .TP
 \fB\-\-direction\fR \fI<DIRECTION>\fR [default: upstream]
 Traversal direction (upstream, downstream, both)
@@ -20,9 +30,6 @@ Group context elements by ontology category
 .TP
 \fB\-\-json\fR
 Output structured machine JSON envelope
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
 .TP
 [\fIROOTS\fR]
 Root element references (UUIDs, 8\-hex prefixes, or @handles)

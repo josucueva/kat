@@ -2,18 +2,19 @@
 .el .ds Aq '
 .TH unlink 1  "unlink " 
 .SH NAME
-unlink \- Remove a relationship from the current accepted state
+unlink \- Remove a semantic relationship (prefer kat author for normal authoring)
 .SH SYNOPSIS
 \fBunlink\fR [\fB\-\-description\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIRELATIONSHIP_ID\fR> 
 .SH DESCRIPTION
-Remove a relationship from the current accepted state
+Remove a semantic relationship (prefer kat author for normal authoring)
 .SH OPTIONS
-.TP
-\fB\-\-description\fR \fI<DESCRIPTION>\fR
-Optional detailed description
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.SH "ADVANCED AUTHORING"
+.TP
+\fB\-\-description\fR \fI<DESCRIPTION>\fR
+Optional detailed description
 .TP
 <\fIRELATIONSHIP_ID\fR>
 Relationship ID (UUID) to remove
