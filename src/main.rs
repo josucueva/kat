@@ -60,7 +60,8 @@ use kat::repository::session::{
 };
 
 use clap::Parser;
-use kat::cli::{self, Cli, Command, OntologyCommands};
+use kat::cli::machine_presenter::MachinePresenter;
+use kat::cli::{Cli, Command, OntologyCommands};
 
 use kat::repository::query::{
     OntologySummary, OntologyTypeView, inspect_ontology, show_ontology_type,
@@ -70,7 +71,18 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Init => cmd_init(),
-        Command::Status { compact } => run_status(compact),
+        Command::Status { compact, json } => run_status(compact, json),
+        Command::Context {
+            roots,
+            direction,
+            depth,
+            categorize,
+            json,
+        } => run_context(roots, direction, depth, categorize, json),
+        Command::Author { claims_file, json } => run_author(claims_file, json),
+        Command::Check { compact, json } => run_check(compact, json),
+        Command::Commit { json } => run_commit(json),
+        Command::Abort { json } => run_abort(json),
         Command::List {
             element_type,
             type_flag,
@@ -162,18 +174,24 @@ fn cmd_init() -> ExitCode {
     }
 }
 
-fn run_status(compact: bool) -> ExitCode {
+fn run_status(compact: bool, json: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
-            eprintln!("kat status: {error}");
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &error.to_string());
+            } else {
+                eprintln!("kat status: {error}");
+            }
             return ExitCode::FAILURE;
         }
     };
 
     match repository_status(&repository) {
         Ok(status) => {
-            if compact {
+            if json {
+                MachinePresenter::present_success(&repository, &status);
+            } else if compact {
                 print_repository_status_compact(&status);
             } else {
                 print_repository_status(&status);
@@ -181,7 +199,11 @@ fn run_status(compact: bool) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("kat status: {error}");
+            if json {
+                MachinePresenter::present_error(Some(&repository), "StatusError", &error.to_string());
+            } else {
+                eprintln!("kat status: {error}");
+            }
             ExitCode::FAILURE
         }
     }
@@ -2914,36 +2936,453 @@ fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport, s
     );
 }
 
-fn cmd_change(command: cli::ChangeCommands) -> ExitCode {
+fn cmd_change(command: kat::cli::ChangeCommands) -> ExitCode {
     match command {
-        cli::ChangeCommands::Begin { description } => cmd_change_begin(description),
-        cli::ChangeCommands::Status { compact } => cmd_change_status(compact),
-        cli::ChangeCommands::Commit => cmd_change_commit(),
-        cli::ChangeCommands::Abort => cmd_change_abort(),
+        kat::cli::ChangeCommands::Begin { description, json } => cmd_change_begin(description, json),
+        kat::cli::ChangeCommands::Status { compact, json } => cmd_change_status_porcelain(compact, json),
+        kat::cli::ChangeCommands::Commit { json } => run_commit(json),
+        kat::cli::ChangeCommands::Abort { json } => run_abort(json),
     }
 }
 
-fn cmd_change_begin(description: Option<String>) -> ExitCode {
+fn cmd_change_status_porcelain(compact: bool, json: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repo) => repo,
         Err(err) => {
-            eprintln!("kat change begin: {err}");
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &err.to_string());
+            } else {
+                eprintln!("kat change status: {err}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if json {
+        let view = inspect_draft_session(&repository).ok().flatten();
+        MachinePresenter::present_success(&repository, &view);
+        ExitCode::SUCCESS
+    } else {
+        cmd_change_status(compact)
+    }
+}
+
+fn run_context(
+    roots: Vec<String>,
+    direction: String,
+    depth: Option<usize>,
+    categorize: bool,
+    json: bool,
+) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &err.to_string());
+            } else {
+                eprintln!("kat context: {err}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let session = read_draft_session(repository.root_dir()).ok();
+
+    let mut resolved_roots = Vec::new();
+    for root_str in &roots {
+        let resolved = if let Some(ref sess) = session {
+            kat::repository::resolve::resolve_element_in_draft_session(sess, root_str)
+        } else {
+            kat::repository::resolve::resolve_element_id(&repository, root_str)
+        };
+
+        match resolved {
+            Ok(id) => resolved_roots.push(id),
+            Err(err) => {
+                if json {
+                    MachinePresenter::present_error(
+                        Some(&repository),
+                        "ResolveError",
+                        &format!("failed to resolve root '{root_str}': {err}"),
+                    );
+                } else {
+                    eprintln!("kat context: failed to resolve root '{root_str}': {err}");
+                }
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let dir_enum = match direction.to_lowercase().as_str() {
+        "downstream" => kat::repository::query::ContextDirection::Downstream,
+        "both" => kat::repository::query::ContextDirection::Both,
+        _ => kat::repository::query::ContextDirection::Upstream,
+    };
+
+    match kat::repository::query::retrieve_context(&repository, &resolved_roots, dir_enum, depth, categorize) {
+        Ok(res) => {
+            if json {
+                MachinePresenter::present_success(&repository, &res);
+            } else {
+                println!("Context Retrieval Result");
+                println!("  roots:      {}", res.roots.len());
+                println!("  elements:   {}", res.elements.len());
+                println!("  routes:     {}", res.physical_routes.len());
+                if let Some(cat) = &res.categorized {
+                    println!("  categorized:");
+                    println!("    requirements: {}", cat.requirements.len());
+                    println!("    realizations: {}", cat.realizations.len());
+                    println!("    verification: {}", cat.verification.len());
+                    println!("    design:       {}", cat.design.len());
+                    println!("    system:       {}", cat.system.len());
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error(Some(&repository), "QueryError", &err.to_string());
+            } else {
+                eprintln!("kat context: {err}");
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn parse_author_claims_text(text: &str) -> Vec<kat::repository::author::AuthorClaim> {
+    use kat::repository::author::AuthorClaim;
+    let mut claims = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.is_empty() {
+            continue;
+        }
+
+        match parts[0] {
+            "create" if parts.len() >= 2 => {
+                let type_id = parts[1].to_string();
+                let title = parts.get(2).unwrap_or(&"Untitled").to_string();
+                claims.push(AuthorClaim::CreateElement {
+                    type_id,
+                    title,
+                    description: None,
+                    handle: None,
+                });
+            }
+            "link" if parts.len() >= 4 => {
+                claims.push(AuthorClaim::LinkElement {
+                    source_ref: parts[1].to_string(),
+                    relationship_type_id: parts[2].to_string(),
+                    target_ref: parts[3].to_string(),
+                });
+            }
+            "unlink" if parts.len() >= 2 => {
+                claims.push(AuthorClaim::UnlinkElement {
+                    relationship_ref: parts[1].to_string(),
+                });
+            }
+            "account" if parts.len() >= 3 => {
+                claims.push(AuthorClaim::AccountArtifact {
+                    artifact_path: parts[1].to_string(),
+                    element_ref: parts[2].to_string(),
+                });
+            }
+            "update" if parts.len() >= 2 => {
+                let element_ref = parts[1].to_string();
+                let title = parts.get(2).map(|s| s.to_string());
+                claims.push(AuthorClaim::UpdateElement {
+                    element_ref,
+                    title,
+                    description: None,
+                });
+            }
+            "deprecate" if parts.len() >= 2 => {
+                claims.push(AuthorClaim::DeprecateElement {
+                    element_ref: parts[1].to_string(),
+                });
+            }
+            "supersede" if parts.len() >= 4 => {
+                claims.push(AuthorClaim::SupersedeElement {
+                    existing_ref: parts[1].to_string(),
+                    replacement_type_id: parts[3].to_string(),
+                    replacement_title: parts.get(4).unwrap_or(&"Replacement").to_string(),
+                    handle: None,
+                });
+            }
+            _ => {}
+        }
+    }
+    claims
+}
+
+fn run_author(claims_file: Option<String>, json: bool) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &err.to_string());
+            } else {
+                eprintln!("kat author: {err}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let text = match &claims_file {
+        Some(path) if path != "-" => match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(err) => {
+                if json {
+                    MachinePresenter::present_error(
+                        Some(&repository),
+                        "FileIoError",
+                        &format!("failed to read claims file '{path}': {err}"),
+                    );
+                } else {
+                    eprintln!("kat author: failed to read claims file '{path}': {err}");
+                }
+                return ExitCode::FAILURE;
+            }
+        },
+        _ => {
+            use std::io::Read;
+            let mut stdin_buf = String::new();
+            if let Err(err) = std::io::stdin().read_to_string(&mut stdin_buf) {
+                if json {
+                    MachinePresenter::present_error(
+                        Some(&repository),
+                        "FileIoError",
+                        &format!("failed to read claims from stdin: {err}"),
+                    );
+                } else {
+                    eprintln!("kat author: failed to read stdin: {err}");
+                }
+                return ExitCode::FAILURE;
+            }
+            stdin_buf
+        }
+    };
+
+    let claims = if let Ok(json_claims) = serde_json::from_str::<Vec<kat::repository::author::AuthorClaim>>(&text) {
+        json_claims
+    } else {
+        parse_author_claims_text(&text)
+    };
+
+    match kat::repository::author::compile_and_stage_claims(&repository, &claims) {
+        Ok(res) => {
+            if json {
+                MachinePresenter::present_success(&repository, &res);
+            } else {
+                println!("Porcelain Authoring Compiler");
+                println!("  claims_processed:  {}", res.claims_processed);
+                println!("  operations_staged: {}", res.operations_staged);
+                if !res.workflow_references.is_empty() {
+                    println!("  workflow_handles:  {}", res.workflow_references.len());
+                    for (h, id) in &res.workflow_references {
+                        println!("    {h:<16} -> {id}");
+                    }
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error(Some(&repository), "AuthorCompilationFailed", &err.to_string());
+            } else {
+                eprintln!("kat author: {err}");
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_check(compact: bool, json: bool) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &err.to_string());
+            } else {
+                eprintln!("kat check: {err}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match kat::repository::validation::graph_quality::run_check(&repository) {
+        Ok(report) => {
+            if json {
+                MachinePresenter::present_success(&repository, &report);
+            } else if compact {
+                println!(
+                    "check status: clean={} / violations={} / gq_findings={}",
+                    report.repository_clean,
+                    report.mechanical_validation.violations.len(),
+                    report.graph_quality.total_findings
+                );
+            } else {
+                println!("KAT Repository Check");
+                println!("  clean:                 {}", report.repository_clean);
+                println!("  mechanical_violations: {}", report.mechanical_validation.violations.len());
+                println!("  graph_quality_findings:{}", report.graph_quality.total_findings);
+                if !report.graph_quality.findings.is_empty() {
+                    println!();
+                    println!("GRAPH QUALITY ADVISORY DIAGNOSTICS");
+                    for f in &report.graph_quality.findings {
+                        println!("  - [{}] {}", f.rule_id, f.message);
+                    }
+                }
+            }
+
+            if report.repository_clean {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error(Some(&repository), "CheckError", &err.to_string());
+            } else {
+                eprintln!("kat check: {err}");
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_commit(json: bool) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &err.to_string());
+            } else {
+                eprintln!("kat commit: {err}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match commit_draft_session(&repository) {
+        Ok(published) => {
+            let prepared = &published.persisted.prepared;
+            if json {
+                let commit_dto = serde_json::json!({
+                    "change_id": prepared.change.change_id,
+                    "change_revision_id": prepared.change_revision_id,
+                    "state_id": prepared.state_id,
+                    "operations_count": prepared.change.operations.len(),
+                });
+                MachinePresenter::present_success(&repository, &commit_dto);
+            } else {
+                println!("committed change transaction");
+                println!("  change_id:          {}", prepared.change.change_id);
+                println!("  change_revision_id: {}", prepared.change_revision_id);
+                println!("  state_id:           {}", prepared.state_id);
+                println!("  operations:         {}", prepared.change.operations.len());
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            if json {
+                let code = match err {
+                    ChangeError::Conflict => "CasConflict",
+                    _ => "CommitFailed",
+                };
+                MachinePresenter::present_error(Some(&repository), code, &err.to_string());
+            } else {
+                eprintln!("kat commit: {err}");
+            }
+            if matches!(err, ChangeError::Conflict) {
+                ExitCode::from(2)
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+    }
+}
+
+fn run_abort(json: bool) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &err.to_string());
+            } else {
+                eprintln!("kat abort: {err}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match abort_draft_session(repository.root_dir()) {
+        Ok(()) => {
+            if json {
+                let data = serde_json::json!({ "aborted": true });
+                MachinePresenter::present_success(&repository, &data);
+            } else {
+                println!("aborted draft change transaction");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error(Some(&repository), "AbortFailed", &err.to_string());
+            } else {
+                eprintln!("kat abort: {err}");
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn cmd_change_begin(description: Option<String>, json: bool) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(err) => {
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &err.to_string());
+            } else {
+                eprintln!("kat change begin: {err}");
+            }
             return ExitCode::FAILURE;
         }
     };
 
     match begin_draft_session(&repository, description) {
         Ok(session) => {
-            println!("opened draft change transaction");
-            println!("  base_state: {}", short_object_id(&session.base_state_id));
-            println!("  created_at: {}", session.created_at);
-            if let Some(desc) = &session.description {
-                println!("  description: {}", desc);
+            if json {
+                let session_dto = serde_json::json!({
+                    "status": format!("{:?}", session.status),
+                    "base_state_id": session.base_state_id,
+                    "created_at": session.created_at,
+                    "description": session.description,
+                });
+                MachinePresenter::present_success(&repository, &session_dto);
+            } else {
+                println!("opened draft change transaction");
+                println!("  base_state: {}", short_object_id(&session.base_state_id));
+                println!("  created_at: {}", session.created_at);
+                if let Some(desc) = &session.description {
+                    println!("  description: {}", desc);
+                }
             }
             ExitCode::SUCCESS
         }
         Err(err) => {
-            eprintln!("kat change begin: {err}");
+            if json {
+                MachinePresenter::present_error(Some(&repository), "BeginFailed", &err.to_string());
+            } else {
+                eprintln!("kat change begin: {err}");
+            }
             ExitCode::FAILURE
         }
     }

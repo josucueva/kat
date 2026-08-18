@@ -4,6 +4,7 @@
 //! See `docs/implementation/v0.4/machine-interface.md` and `docs/implementation/v0.4/cli.md`.
 
 use crate::domain::machine::CommonResultEnvelope;
+use crate::repository::open::Repository;
 
 /// Presenter for machine-readable JSON envelope outputs.
 pub struct MachinePresenter;
@@ -21,6 +22,32 @@ impl MachinePresenter {
 
         serde_json::to_string_pretty(envelope)
             .map_err(|err| format!("JSON serialization error: {err}"))
+    }
+
+    /// Renders a successful machine result envelope and prints it to stdout.
+    pub fn present_success<T: serde::Serialize>(repository: &Repository, data: &T) {
+        let repo_id = repository.metadata.repository_id;
+        let state_id = repository.accepted.state;
+        let envelope = CommonResultEnvelope::success(Some(repo_id), Some(state_id), data);
+        if let Ok(json) = Self::render_envelope(&envelope) {
+            println!("{json}");
+        }
+    }
+
+    /// Renders an error machine result envelope and prints it to stdout.
+    pub fn present_error(repository: Option<&Repository>, code: &str, message: &str) {
+        let repo_id = repository.map(|r| r.metadata.repository_id);
+        let state_id = repository.map(|r| r.accepted.state);
+        let envelope = CommonResultEnvelope::<()>::failure(
+            repo_id,
+            state_id,
+            code,
+            message,
+            serde_json::Value::Null,
+        );
+        if let Ok(json) = Self::render_envelope(&envelope) {
+            println!("{json}");
+        }
     }
 }
 

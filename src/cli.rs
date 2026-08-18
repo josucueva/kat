@@ -29,6 +29,67 @@ pub enum Command {
         /// Display compact single-line dashboard
         #[arg(long)]
         compact: bool,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Porcelain: Retrieve point-to-point context surrounding root elements
+    Context {
+        /// Root element references (UUIDs, 8-hex prefixes, or @handles)
+        roots: Vec<String>,
+
+        /// Traversal direction (upstream, downstream, both)
+        #[arg(long, default_value = "upstream")]
+        direction: String,
+
+        /// Maximum depth of relationship hops
+        #[arg(long)]
+        depth: Option<usize>,
+
+        /// Group context elements by ontology category
+        #[arg(long)]
+        categorize: bool,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Porcelain: Declaratively compile and stage a batch of authoring claims
+    Author {
+        /// Path to file containing declarative claims (reads stdin if omitted or '-')
+        claims_file: Option<String>,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Porcelain: Perform comprehensive mechanical consistency check and advisory graph quality analysis
+    Check {
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+
+        /// Display compact single-line summary
+        #[arg(long)]
+        compact: bool,
+    },
+
+    /// Porcelain: Commit all staged operations in open transaction and publish
+    Commit {
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Porcelain: Abort open transaction and discard all staged operations
+    Abort {
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
     },
 
     /// List knowledge elements in the current accepted state
@@ -250,15 +311,31 @@ pub enum ChangeCommands {
         /// Optional change description
         #[arg(long)]
         description: Option<String>,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
     },
     /// Inspect status and staged operations of the open change transaction
     Status {
         /// Display compact summary
         #[arg(long)]
         compact: bool,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
     },
     /// Commit all staged operations into a single ChangeRevision and publish
-    Commit,
+    Commit {
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
     /// Abort the open change transaction and discard all staged operations
-    Abort,
+    Abort {
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
 }

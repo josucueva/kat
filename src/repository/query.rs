@@ -1415,7 +1415,7 @@ pub fn analyze_artifact_accountability_filtered(
 }
 
 /// Breakdown of element and relationship counts in the accepted state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct KnowledgeCounts {
     /// Total elements in the accepted state across all lifecycles.
     pub total_elements: usize,
@@ -1430,7 +1430,7 @@ pub struct KnowledgeCounts {
 }
 
 /// Breakdown of mechanical consistency rule checks.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ConsistencyCounts {
     /// Total invariant or ontology rule violations detected.
     pub violations: usize,
@@ -1439,7 +1439,7 @@ pub struct ConsistencyCounts {
 }
 
 /// Breakdown of artifact accountability divergence checks.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AccountabilityCounts {
     /// Artifacts whose baseline relationships are current.
     pub current: usize,
@@ -1450,7 +1450,7 @@ pub struct AccountabilityCounts {
 }
 
 /// Summary of the latest accepted change revision, if any change has been published.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LatestChangeSummary {
     /// Object ID of the latest change revision.
     pub revision_id: ObjectId,
@@ -1461,7 +1461,7 @@ pub struct LatestChangeSummary {
 }
 
 /// Read-only snapshot summary of the repository's current accepted state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RepositoryStatus {
     /// Repository identity.
     pub repository_id: RepositoryId,
@@ -1874,7 +1874,7 @@ pub fn show_ontology_type(
 // ---------------------------------------------------------------------------
 
 /// Detailed overview of an operation staged into an open draft change session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StagedOperationDetail {
     pub index: usize,
     pub operation_kind: String,
@@ -1884,7 +1884,7 @@ pub struct StagedOperationDetail {
 }
 
 /// Delta metrics for candidate working state compared to base accepted state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CandidateEffectSummary {
     pub total_elements: usize,
     pub total_relationships: usize,
@@ -1897,7 +1897,7 @@ pub struct CandidateEffectSummary {
 }
 
 /// Inspection view of an open draft change session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DraftSessionView {
     pub base_state_id: ObjectId,
     pub base_change_id: Option<ObjectId>,
