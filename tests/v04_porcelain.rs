@@ -517,11 +517,11 @@ fn v04_graph_quality_gq03_gq04_frozen_semantics_test() {
 
     // Verify GQ-03 message: Implementation has no modeled Artifact representation route
     assert!(chk_out.contains("GQ-03"));
-    assert!(chk_out.contains("has no modeled Artifact representation route"));
+    assert!(chk_out.contains("no modeled Artifact representation route"));
 
     // Verify GQ-04 message: Design Decision has no consequence route through kat.core/addresses or kat.core/guides
     assert!(chk_out.contains("GQ-04"));
-    assert!(chk_out.contains("has no consequence route through kat.core/addresses or kat.core/guides"));
+    assert!(chk_out.contains("no consequence route through addresses or guides"));
 
     let out1_str = String::from_utf8(output1.stdout).unwrap();
     let imp_id = out1_str
@@ -626,6 +626,12 @@ fn v043_check_porcelain_acceptance_tests() {
         },
         {
             "kind": "create_element",
+            "type_id": "kat.core/implementation",
+            "title": "Auth Secondary Service",
+            "handle": "@imp2"
+        },
+        {
+            "kind": "create_element",
             "type_id": "kat.core/design-decision",
             "title": "Encryption Key Strategy",
             "handle": "@dec"
@@ -652,7 +658,7 @@ fn v043_check_porcelain_acceptance_tests() {
             "kind": "link_element",
             "relationship_type_id": "kat.core/represents",
             "source_ref": "@art-stale",
-            "target_ref": "@req"
+            "target_ref": "@imp"
         }
     ]"#;
 
@@ -664,7 +670,8 @@ fn v043_check_porcelain_acceptance_tests() {
         .current_dir(dir.path())
         .output()
         .unwrap();
-    assert!(out1.status.success());
+    let out1_str = String::from_utf8(out1.stdout).unwrap();
+    assert!(out1.status.success(), "kat author failed: {out1_str}");
     let com1 = Command::new(kat_bin())
         .arg("commit")
         .current_dir(dir.path())
@@ -672,19 +679,19 @@ fn v043_check_porcelain_acceptance_tests() {
         .unwrap();
     assert!(com1.status.success());
 
-    let out1_str = String::from_utf8(out1.stdout).unwrap();
     let req_id = out1_str.lines().find(|l| l.contains("@req")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
+    let imp_id = out1_str.lines().find(|l| l.contains("@imp")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
     let con_id = out1_str.lines().find(|l| l.contains("@con")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
     let art_stale_id = out1_str.lines().find(|l| l.contains("@art-stale")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
     let art_unacc_id = out1_str.lines().find(|l| l.contains("@art-unacc")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
 
-    // Update requirement to make art-stale stale
+    // Update implementation to make art-stale stale
     let claims2 = format!(
         r#"[
         {{
             "kind": "update_element",
-            "element_id": "{req_id}",
-            "properties": {{ "description": "Updated description" }}
+            "element_ref": "{imp_id}",
+            "description": "Updated implementation description"
         }}
     ]"#
     );
