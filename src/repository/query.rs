@@ -239,7 +239,7 @@ pub fn impact_propagation_direction(relationship_type_id: &str) -> Option<Traver
 }
 
 /// Status of an active Artifact element's alignment with upstream authoritative knowledge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ArtifactAccountabilityStatus {
     /// All direct accountability baselines match current active upstream versions.
     Current,
@@ -250,7 +250,7 @@ pub enum ArtifactAccountabilityStatus {
 }
 
 /// Alignment baseline of an Artifact with one direct upstream authoritative element.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactBaseline {
     /// Stable identity of the accountability relationship (represents / derived-from).
     pub relationship_id: RelationshipId,
@@ -269,7 +269,7 @@ pub struct ArtifactBaseline {
 }
 
 /// Accountability record for one active Artifact element.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactAccountability {
     /// Identity of the Artifact element.
     pub artifact_element_id: ElementId,
@@ -284,7 +284,7 @@ pub struct ArtifactAccountability {
 }
 
 /// Repository-wide summary totals for artifact accountability.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactAccountabilitySummary {
     pub total: usize,
     pub current: usize,
@@ -293,7 +293,7 @@ pub struct ArtifactAccountabilitySummary {
 }
 
 /// Comprehensive report produced by `analyze_artifact_accountability`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactAccountabilityReport {
     /// Records for active Artifact elements matching query selection.
     pub artifacts: Vec<ArtifactAccountability>,

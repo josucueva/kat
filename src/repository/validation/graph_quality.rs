@@ -1,8 +1,12 @@
 //! Advisory Graph Quality Diagnostics (GQ-01 to GQ-04) and Aggregated Check Porcelain.
 
 use crate::domain::identity::ElementId;
+use crate::domain::property::PropertyValue;
 use crate::repository::open::Repository;
-use crate::repository::query::{QueryError, list_elements, show_element};
+use crate::repository::query::{
+    ArtifactAccountabilityReport, QueryError, analyze_artifact_accountability, list_elements,
+    show_element,
+};
 use crate::repository::validation::repository::{ValidationReport, validate_repository};
 
 /// Severity level for graph quality diagnostic findings.
@@ -21,6 +25,8 @@ pub struct GraphQualityFinding {
     pub severity: QualitySeverity,
     /// Target element identity (if target-specific).
     pub target_element_id: Option<ElementId>,
+    /// Target element title (if present).
+    pub target_title: Option<String>,
     /// Human-oriented description of the finding.
     pub message: String,
     /// Supporting details or context lines.
@@ -45,6 +51,19 @@ pub struct CheckReport {
     pub mechanical_validation: ValidationReport,
     /// Advisory graph quality findings report.
     pub graph_quality: GraphQualityReport,
+    /// Artifact accountability report (if available).
+    pub artifact_accountability: Option<ArtifactAccountabilityReport>,
+}
+
+fn element_title(ev: &crate::domain::element::KnowledgeElementVersion) -> &str {
+    for (k, v) in &ev.properties {
+        if k.as_str() == "title"
+            && let PropertyValue::Text(t) = v
+        {
+            return t.as_str();
+        }
+    }
+    "<untitled>"
 }
 
 /// Runs advisory graph quality rule checks against the accepted repository state.
@@ -55,6 +74,7 @@ pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityRepo
     for elem_summary in &elements {
         let view = show_element(repository, elem_summary.element_id)?;
         let total_rels = view.relationships.incoming.len() + view.relationships.outgoing.len();
+        let title = element_title(&view.element).to_string();
 
         // GQ-01: Isolated Unlinked Element
         if total_rels == 0 {
@@ -62,10 +82,8 @@ pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityRepo
                 rule_id: "GQ-01".to_string(),
                 severity: QualitySeverity::Advisory,
                 target_element_id: Some(elem_summary.element_id),
-                message: format!(
-                    "Element {} ({}) has no incoming or outgoing relationships",
-                    elem_summary.element_id, view.element.type_id
-                ),
+                target_title: Some(title.clone()),
+                message: "has no incoming or outgoing relationships".to_string(),
                 details: vec!["Consider linking this element to upstream requirements or downstream realizations".to_string()],
             });
         }
@@ -88,10 +106,8 @@ pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityRepo
                     rule_id: "GQ-02".to_string(),
                     severity: QualitySeverity::Advisory,
                     target_element_id: Some(elem_summary.element_id),
-                    message: format!(
-                        "Requirement {} has no active incoming realization path via kat.core/realizes",
-                        elem_summary.element_id
-                    ),
+                    target_title: Some(title.clone()),
+                    message: "has no active incoming realization path via kat.core/realizes".to_string(),
                     details: vec!["Link an implementation element to this requirement using 'kat link --type kat.core/realizes'".to_string()],
                 });
             }
@@ -114,10 +130,8 @@ pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityRepo
                     rule_id: "GQ-03".to_string(),
                     severity: QualitySeverity::Advisory,
                     target_element_id: Some(elem_summary.element_id),
-                    message: format!(
-                        "Implementation {} has no modeled Artifact representation route",
-                        elem_summary.element_id
-                    ),
+                    target_title: Some(title.clone()),
+                    message: "no modeled Artifact representation route".to_string(),
                     details: vec!["Link an artifact element to this implementation using 'kat link --type kat.core/represents'".to_string()],
                 });
             }
@@ -145,10 +159,8 @@ pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityRepo
                     rule_id: "GQ-04".to_string(),
                     severity: QualitySeverity::Advisory,
                     target_element_id: Some(elem_summary.element_id),
-                    message: format!(
-                        "Design Decision {} has no consequence route through kat.core/addresses or kat.core/guides",
-                        elem_summary.element_id
-                    ),
+                    target_title: Some(title.clone()),
+                    message: "no consequence route through addresses or guides".to_string(),
                     details: vec![
                         "Link this design decision to a requirement using kat.core/addresses or to an implementation using kat.core/guides".to_string(),
                     ],
@@ -168,11 +180,13 @@ pub fn run_check(repository: &Repository) -> Result<CheckReport, QueryError> {
     let mechanical_validation = validate_repository(repository)?;
     let repository_clean = mechanical_validation.violations.is_empty();
     let graph_quality = analyze_graph_quality(repository)?;
+    let artifact_accountability = analyze_artifact_accountability(repository).ok();
 
     Ok(CheckReport {
         repository_clean,
         mechanical_validation,
         graph_quality,
+        artifact_accountability,
     })
 }
 

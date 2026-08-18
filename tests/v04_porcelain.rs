@@ -596,3 +596,174 @@ fn v04_graph_quality_gq03_gq04_frozen_semantics_test() {
     assert!(!chk2_out.contains("GQ-03"));
     assert!(!chk2_out.contains("GQ-04"));
 }
+
+// ---------------------------------------------------------------------------
+// v0.4.3 Check Porcelain Acceptance Tests (CHECK-01 to CHECK-09)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn v043_check_porcelain_acceptance_tests() {
+    let dir = setup_repo();
+
+    let claims1 = r#"[
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/requirement",
+            "title": "Auth Spec Requirement",
+            "handle": "@req"
+        },
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/constraint",
+            "title": "Local Storage Policy",
+            "handle": "@con"
+        },
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/implementation",
+            "title": "Auth Storage Service",
+            "handle": "@imp"
+        },
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/design-decision",
+            "title": "Encryption Key Strategy",
+            "handle": "@dec"
+        },
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/artifact",
+            "title": "Stale Auth File",
+            "handle": "@art-stale"
+        },
+        {
+            "kind": "create_element",
+            "type_id": "kat.core/artifact",
+            "title": "Unaccounted Config File",
+            "handle": "@art-unacc"
+        },
+        {
+            "kind": "link_element",
+            "relationship_type_id": "kat.core/realizes",
+            "source_ref": "@imp",
+            "target_ref": "@req"
+        },
+        {
+            "kind": "link_element",
+            "relationship_type_id": "kat.core/represents",
+            "source_ref": "@art-stale",
+            "target_ref": "@req"
+        }
+    ]"#;
+
+    let f1 = dir.path().join("c1.json");
+    fs::write(&f1, claims1).unwrap();
+
+    let out1 = Command::new(kat_bin())
+        .args(["author", f1.to_str().unwrap()])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out1.status.success());
+    let com1 = Command::new(kat_bin())
+        .arg("commit")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(com1.status.success());
+
+    let out1_str = String::from_utf8(out1.stdout).unwrap();
+    let req_id = out1_str.lines().find(|l| l.contains("@req")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
+    let con_id = out1_str.lines().find(|l| l.contains("@con")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
+    let art_stale_id = out1_str.lines().find(|l| l.contains("@art-stale")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
+    let art_unacc_id = out1_str.lines().find(|l| l.contains("@art-unacc")).and_then(|l| l.split("->").nth(1)).unwrap().trim();
+
+    // Update requirement to make art-stale stale
+    let claims2 = format!(
+        r#"[
+        {{
+            "kind": "update_element",
+            "element_id": "{req_id}",
+            "properties": {{ "description": "Updated description" }}
+        }}
+    ]"#
+    );
+    let f2 = dir.path().join("c2.json");
+    fs::write(&f2, claims2).unwrap();
+    let out2 = Command::new(kat_bin())
+        .args(["author", f2.to_str().unwrap()])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out2.status.success());
+    let com2 = Command::new(kat_bin())
+        .arg("commit")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(com2.status.success());
+
+    // Execute kat check
+    let chk = Command::new(kat_bin())
+        .arg("check")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    // CHECK-07: Advisory findings do not alter mechanical cleanliness (exit code == 0, clean == true)
+    assert_eq!(chk.status.code().unwrap(), 0);
+    let chk_stdout = String::from_utf8(chk.stdout).unwrap();
+    assert!(chk_stdout.contains("clean: true"));
+
+    // CHECK-01: Four dimensions visible
+    assert!(chk_stdout.contains("MECHANICAL CONSISTENCY"));
+    assert!(chk_stdout.contains("EVIDENCE COVERAGE"));
+    assert!(chk_stdout.contains("ARTIFACT ACCOUNTABILITY"));
+    assert!(chk_stdout.contains("GRAPH QUALITY"));
+
+    // CHECK-02: Uncovered constraint identified
+    let con_sid = &con_id[..8];
+    assert!(chk_stdout.contains("constraints: 0 / 1 evidence-backed (0.0%)"));
+    assert!(chk_stdout.contains(con_sid));
+    assert!(chk_stdout.contains("Local Storage Policy"));
+
+    // CHECK-03 & CHECK-04: Stale & Unaccounted Artifacts identified
+    let stale_sid = &art_stale_id[..8];
+    let unacc_sid = &art_unacc_id[..8];
+    assert!(chk_stdout.contains("Stale:"));
+    assert!(chk_stdout.contains(stale_sid));
+    assert!(chk_stdout.contains("Stale Auth File"));
+    assert!(chk_stdout.contains("Unaccounted:"));
+    assert!(chk_stdout.contains(unacc_sid));
+    assert!(chk_stdout.contains("Unaccounted Config File"));
+
+    // CHECK-05: No accountability baseline dump in check default output
+    assert!(!chk_stdout.contains("baseline_version"));
+
+    // CHECK-06: GQ findings include identity
+    assert!(chk_stdout.contains("[GQ-04]"));
+    assert!(chk_stdout.contains("[GQ-03]"));
+    assert!(chk_stdout.contains("Encryption Key Strategy"));
+
+    // Test --compact mode
+    let chk_compact = Command::new(kat_bin())
+        .args(["check", "--compact"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(chk_compact.status.success());
+    let compact_stdout = String::from_utf8(chk_compact.stdout).unwrap();
+    assert!(compact_stdout.contains("CLEAN | mechanical 0 | evidence 0/1 | artifacts 0 current, 1 stale, 1 unaccounted | GQ"));
+
+    // CHECK-09: JSON regression test
+    let chk_json = Command::new(kat_bin())
+        .args(["check", "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(chk_json.status.success());
+    let json_val: serde_json::Value = serde_json::from_str(&String::from_utf8(chk_json.stdout).unwrap()).unwrap();
+    assert_eq!(json_val["success"], true);
+    assert_eq!(json_val["data"]["repository_clean"], true);
+    assert!(json_val["data"]["artifact_accountability"]["repository_summary"]["stale"].as_u64().unwrap() >= 1);
+}

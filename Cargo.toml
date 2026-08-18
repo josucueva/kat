@@ -1,6 +1,6 @@
 [package]
 name = "kat"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2024"
 description = "KAT (Knowledge Abstraction Tracker) - a semantic software repository for representing, evolving, tracing, and validating authoritative software knowledge."
 

@@ -3243,30 +3243,9 @@ fn run_check(compact: bool, json: bool) -> ExitCode {
             if json {
                 MachinePresenter::present_success(&repository, &report);
             } else if compact {
-                println!(
-                    "check status: clean={} / violations={} / gq_findings={}",
-                    report.repository_clean,
-                    report.mechanical_validation.violations.len(),
-                    report.graph_quality.total_findings
-                );
+                print_compact_check_report(&report);
             } else {
-                println!("KAT Repository Check");
-                println!("  clean:                 {}", report.repository_clean);
-                println!(
-                    "  mechanical_violations: {}",
-                    report.mechanical_validation.violations.len()
-                );
-                println!(
-                    "  graph_quality_findings:{}",
-                    report.graph_quality.total_findings
-                );
-                if !report.graph_quality.findings.is_empty() {
-                    println!();
-                    println!("GRAPH QUALITY ADVISORY DIAGNOSTICS");
-                    for f in &report.graph_quality.findings {
-                        println!("  - [{}] {}", f.rule_id, f.message);
-                    }
-                }
+                print_human_check_report(&report);
             }
 
             if report.repository_clean {
@@ -3284,6 +3263,156 @@ fn run_check(compact: bool, json: bool) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn print_human_check_report(report: &kat::repository::validation::graph_quality::CheckReport) {
+    let clean_str = if report.repository_clean { "true" } else { "false" };
+
+    println!("KAT Repository Check");
+    println!("  clean: {clean_str}");
+    println!();
+
+    // 1. MECHANICAL CONSISTENCY
+    let v_count = report.mechanical_validation.violations.len();
+    let mech_status = if v_count == 0 { "clean" } else { "invalid" };
+    println!("MECHANICAL CONSISTENCY");
+    println!("  violations: {v_count}");
+    println!("  status:     {mech_status}");
+    if !report.mechanical_validation.violations.is_empty() {
+        println!();
+        for v in &report.mechanical_validation.violations {
+            println!("  - {}", v.message);
+        }
+    }
+    println!();
+
+    // 2. EVIDENCE COVERAGE
+    let constraint_details = &report.mechanical_validation.constraint_details;
+    let total_constraints = constraint_details.len();
+    let backed_constraints = constraint_details
+        .iter()
+        .filter(|c| !c.validation_evidence.is_empty())
+        .count();
+    let pct = if total_constraints > 0 {
+        (backed_constraints as f64 * 100.0) / total_constraints as f64
+    } else {
+        100.0
+    };
+
+    println!("EVIDENCE COVERAGE");
+    println!(
+        "  constraints: {backed_constraints} / {total_constraints} evidence-backed ({pct:.1}%)"
+    );
+
+    let uncovered_constraints: Vec<_> = constraint_details
+        .iter()
+        .filter(|c| c.validation_evidence.is_empty())
+        .collect();
+
+    if !uncovered_constraints.is_empty() {
+        println!();
+        println!("  Uncovered:");
+        for c in uncovered_constraints {
+            let sid: String = c.constraint_id.to_string().chars().take(8).collect();
+            let title = c.title.as_deref().unwrap_or("<untitled>");
+            println!("    {sid}  {title}");
+        }
+    }
+    println!();
+
+    // 3. ARTIFACT ACCOUNTABILITY
+    println!("ARTIFACT ACCOUNTABILITY");
+    if let Some(ref account) = report.artifact_accountability {
+        let cur = account.repository_summary.current;
+        let stale = account.repository_summary.stale;
+        let unacc = account.repository_summary.unaccounted;
+
+        println!("  current:      {cur}");
+        println!("  stale:         {stale}");
+        println!("  unaccounted:   {unacc}");
+
+        let stale_artifacts: Vec<_> = account
+            .artifacts
+            .iter()
+            .filter(|a| a.status == kat::repository::query::ArtifactAccountabilityStatus::Stale)
+            .collect();
+        if !stale_artifacts.is_empty() {
+            println!();
+            println!("  Stale:");
+            for a in stale_artifacts {
+                let sid: String = a.artifact_element_id.to_string().chars().take(8).collect();
+                let title = a.title.as_deref().unwrap_or("<untitled>");
+                println!("    {sid}  {title}");
+            }
+        }
+
+        let unacc_artifacts: Vec<_> = account
+            .artifacts
+            .iter()
+            .filter(|a| a.status == kat::repository::query::ArtifactAccountabilityStatus::Unaccounted)
+            .collect();
+        if !unacc_artifacts.is_empty() {
+            println!();
+            println!("  Unaccounted:");
+            for a in unacc_artifacts {
+                let sid: String = a.artifact_element_id.to_string().chars().take(8).collect();
+                let title = a.title.as_deref().unwrap_or("<untitled>");
+                println!("    {sid}  {title}");
+            }
+        }
+    } else {
+        println!("  current:      0");
+        println!("  stale:         0");
+        println!("  unaccounted:   0");
+    }
+    println!();
+
+    // 4. GRAPH QUALITY
+    let gq_count = report.graph_quality.total_findings;
+    println!("GRAPH QUALITY");
+    println!("  advisory findings: {gq_count}");
+
+    if !report.graph_quality.findings.is_empty() {
+        println!();
+        for f in &report.graph_quality.findings {
+            if let Some(target_id) = f.target_element_id {
+                let sid: String = target_id.to_string().chars().take(8).collect();
+                let title = f.target_title.as_deref().unwrap_or("<untitled>");
+                println!("  [{}] {sid}  {title}", f.rule_id);
+                println!("    {}", f.message);
+            } else {
+                println!("  [{}] {}", f.rule_id, f.message);
+            }
+        }
+    }
+}
+
+fn print_compact_check_report(report: &kat::repository::validation::graph_quality::CheckReport) {
+    let status = if report.repository_clean { "CLEAN" } else { "INVALID" };
+    let mech_violations = report.mechanical_validation.violations.len();
+
+    let constraint_details = &report.mechanical_validation.constraint_details;
+    let total_constraints = constraint_details.len();
+    let backed_constraints = constraint_details
+        .iter()
+        .filter(|c| !c.validation_evidence.is_empty())
+        .count();
+
+    let (art_cur, art_stale, art_unacc) = if let Some(ref account) = report.artifact_accountability {
+        (
+            account.repository_summary.current,
+            account.repository_summary.stale,
+            account.repository_summary.unaccounted,
+        )
+    } else {
+        (0, 0, 0)
+    };
+
+    let gq_count = report.graph_quality.total_findings;
+
+    println!(
+        "{status} | mechanical {mech_violations} | evidence {backed_constraints}/{total_constraints} | artifacts {art_cur} current, {art_stale} stale, {art_unacc} unaccounted | GQ {gq_count}"
+    );
 }
 
 fn run_commit(json: bool) -> ExitCode {
