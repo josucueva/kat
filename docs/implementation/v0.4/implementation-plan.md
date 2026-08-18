@@ -40,14 +40,26 @@ src/
 │   └── context.rs           Context traversal projection builder
 │
 └── cli/                     (CLI grammar & stream output formatting)
-    ├── main.rs              [MODIFY] Wire porcelain commands & flags
+    ├── main.rs              [MODIFY] Wire porcelain commands, aliases & flags
     ├── output.rs            [MODIFY] Enforce stdout/stderr --json process rules
     └── machine_presenter.rs [NEW] Serialize CommonResultEnvelope JSON output
 ```
 
 ---
 
-# 2. Dependency-Ordered Phased Roadmap
+# 2. Command & Transaction CLI Compatibility Policy
+
+KAT v0.4 preserves 100% backward compatibility for existing CLI commands:
+
+1. **Transaction Subcommands (`kat change ...`)**:
+   - `kat change begin`, `kat change status`, `kat change commit`, `kat change abort` remain fully supported as canonical transaction commands.
+   - Top-level porcelain commands (`kat status`, `kat commit`, `kat abort`) function as convenient porcelain aliases over the underlying draft transaction engine.
+2. **Plumbing Mutation Commands**:
+   - All 7 mutation commands (`kat create`, `kat update`, `kat deprecate`, `kat supersede`, `kat link`, `kat unlink`, `kat account`) remain available without modification.
+
+---
+
+# 3. Dependency-Ordered Phased Roadmap
 
 ```mermaid
 gantt
@@ -78,7 +90,7 @@ gantt
 ## Phase 1: Machine Result / Envelope Infrastructure & DTOs
 - **Goal**: Implement `CommonResultEnvelope<T>` and `ErrorEnvelope` with `interface_schema_version = 1`, nullable repository IDs, explicit `_object_id` field naming, and `INV-MI-01` validation logic.
 - **Files**: `src/domain/machine.rs` [NEW], `src/cli/machine_presenter.rs` [NEW].
-- **Milestone 1**: Unit tests verify that serialized JSON output conforms to `machine-interface.md` schema, object keys are unordered, and DTO arrays are sorted deterministically.
+- **Milestone 1**: Unit tests verify that serialized JSON output conforms to `machine-interface.md` schema, set-like arrays satisfy specified deterministic sorting, and `CommonResultEnvelope` respects `INV-MI-01`.
 
 ---
 
@@ -90,16 +102,16 @@ gantt
 ---
 
 ## Phase 3: Atomic Multi-Operation Batch Staging & Rollback
-- **Goal**: Implement multi-operation batch staging loop with atomic rollback semantics. If operation $j$ of $M$ fails during batch staging, candidate state $S_{\text{working}}$ rolls back in memory to $S_{\text{pre-batch}}$, `session.json` remains untouched, and structured error details are returned.
+- **Goal**: Implement multi-operation batch staging loop with atomic rollback semantics. If operation $j$ of $M$ fails during batch staging, candidate state $S_{\text{working}}$ rolls back in memory to $S_{\text{pre-batch}}$, `session.json` remains untouched on disk, and structured error details are returned.
 - **Files**: `src/repository/change.rs` [MODIFY], `src/domain/operation.rs` [MODIFY].
-- **Milestone 3**: Integration tests verify atomic batch rollback when an intermediate operation in a multi-op payload fails.
+- **Milestone 3**: Integration tests verify that a batch failing at operation $j$ leaves the persisted draft session (`session.json`) byte-for-byte unchanged from its pre-batch representation.
 
 ---
 
 ## Phase 4: Context Retrieval Query Engine
 - **Goal**: Implement `Context` query traversal algorithm over accepted state $S_{\text{accepted}}$, applying path-local `RelationshipId` cycle prevention, type-driven semantic role categorization, deduplication by `ElementId`, and `ArtifactAnchorNode` physical locator extraction.
 - **Files**: `src/porcelain/context.rs` [NEW], `src/repository/query.rs` [MODIFY].
-- **Milestone 4**: Integration tests verify that `context` executes in a single call, respects path-local cycle rules, outputs 8 categorized roles, and sets `is_truncated = true` when `max_depth` limits traversal.
+- **Milestone 4**: Integration tests verify that `context` executes in a single call over $S_{\text{accepted}}$, respects path-local cycle rules, outputs 8 categorized roles, and sets `is_truncated = true` when `max_depth` limits traversal.
 
 ---
 
@@ -118,20 +130,26 @@ gantt
 ---
 
 ## Phase 7: CLI Porcelain Wiring & Standard Stream / Exit Code Integration
-- **Goal**: Wire porcelain commands (`kat status`, `kat context`, `kat author`, `kat check`, `kat commit`, `kat abort`) in `src/main.rs`. Enforce stdout/stderr `--json` process rules (stdout receives 1 JSON envelope; stderr receives logging/diagnostics) and exit code policies (`kat check --json` returns `success: true` envelope to stdout while exit code is `1` if mechanical violations > 0).
+- **Goal**: Wire porcelain commands (`kat status`, `kat context`, `kat author`, `kat check`, `kat commit`, `kat abort`) and transaction aliases in `src/main.rs`. Enforce stdout/stderr `--json` process rules (stdout receives 1 JSON envelope; stderr receives logging/diagnostics) and exit code policies (`kat check --json` returns `success: true` envelope to stdout while exit code is `1` if mechanical violations > 0).
 - **Files**: `src/main.rs` [MODIFY], `src/cli/output.rs` [MODIFY].
 - **Milestone 7**: CLI integration tests verify stdout/stderr separation and process exit codes for text and machine modes.
 
 ---
 
-## Phase 8: Comprehensive Regression & Evaluation Validation
-- **Goal**: Run all 445+ existing unit/integration tests, generate man pages and assets (`cargo run --bin generate_assets`), verify zero regression across existing plumbing commands, and run evaluation scripts.
+## Phase 8: Comprehensive Regression, Golden Vectors & Verification Gates
+- **Goal**: Run all 445+ existing unit/integration tests, generate man pages and assets (`cargo run --bin generate_assets`), verify zero regression across existing plumbing and transaction commands, and run evaluation scripts.
+- **Regression Gates**:
+  1. Canonical golden vectors remain byte-identical;
+  2. Derived SHA-256 ObjectIds remain byte-identical;
+  3. Existing repositories open and validate unchanged;
+  4. Accepted-state query isolation is preserved;
+  5. Candidate accountability preview invariants are preserved.
 - **Files**: `tests/`, `generated/man/kat.1`.
-- **Milestone 8**: All unit and integration tests pass cleanly; man pages updated and committed.
+- **Milestone 8**: All unit and integration tests pass cleanly; regression gates pass; man pages updated and committed.
 
 ---
 
-# 3. Verification & Testing Strategy
+# 4. Verification & Testing Strategy
 
 ```text
                             TESTING STRATEGY
@@ -150,9 +168,9 @@ gantt
 
 ---
 
-# 4. Success Invariants
+# 5. Success Invariants
 
 1. **Canonical Format Integrity**: 0 changes to CDDL specs, canonical CBOR encodings, or `refs/accepted` storage layout.
-2. **Backward Compatibility**: All existing plumbing commands (`kat create`, `kat link`, `kat show`, `kat trace`, `kat impact`, `kat artifacts`, `kat validate`) continue to function identically.
-3. **Primitive Exposure Target**: Primitive Exposure $PE \to 0.0$ for standard porcelain workflows.
+2. **Backward Compatibility**: All existing plumbing commands and transaction subcommands (`kat change begin/status/commit/abort`) continue to function identically.
+3. **Primitive Exposure Target**: Primitive Exposure $PE \le 0.05$ for standard porcelain workflows.
 4. **Machine Interface Invariant**: `INV-MI-01` strictly enforced across all JSON payloads.
