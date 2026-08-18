@@ -23,6 +23,7 @@ use crate::domain::identity::{
 use crate::domain::ontology::OntologyVersion;
 use crate::domain::operation::Operation;
 use crate::domain::property::PropertyValue;
+use crate::domain::relationship::RelationshipVersion;
 use crate::encoding::decode::DecodingError;
 use crate::encoding::decode_canonical;
 use crate::encoding::hash::canonical_object_id;
@@ -356,7 +357,7 @@ pub enum QueryError {
 }
 
 /// Detailed view of a single relationship attached to an element.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RelationshipView {
     /// Canonical relationship identity.
     pub relationship_id: RelationshipId,
@@ -373,7 +374,7 @@ pub struct RelationshipView {
 }
 
 /// 1-hop relationship neighborhood surrounding an element in the current accepted state.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct RelationshipNeighborhood {
     /// Incoming relationships (where target_element_id == queried element).
     pub incoming: Vec<RelationshipView>,
@@ -382,7 +383,7 @@ pub struct RelationshipNeighborhood {
 }
 
 /// The currently accepted version of one element, including its local relationship neighborhood.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ElementView {
     /// Stable identity of the element (the queried ElementId).
     pub element_id: ElementId,
@@ -2314,4 +2315,264 @@ pub fn analyze_candidate_artifact_accountability(
         artifacts: artifact_records,
         repository_summary,
     })
+}
+
+/// Traversal direction filter for Context retrieval queries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ContextDirection {
+    /// Follow outgoing relationships from source to target.
+    Downstream,
+    /// Follow incoming relationships from target to source.
+    Upstream,
+    /// Follow both incoming and outgoing relationships.
+    Both,
+}
+
+/// Category buckets for context elements.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CategorizedContext {
+    pub requirements: Vec<ElementId>,
+    pub realizations: Vec<ElementId>,
+    pub verification: Vec<ElementId>,
+    pub design: Vec<ElementId>,
+    pub system: Vec<ElementId>,
+}
+
+/// Resolved physical source or artifact route for a context element.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PhysicalRoute {
+    pub element_id: ElementId,
+    pub path: String,
+    pub role: String,
+}
+
+/// Context retrieval query response.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ContextResult {
+    /// Root element identities queried.
+    pub roots: Vec<ElementId>,
+    /// Unique elements in the retrieved context graph (including roots), ordered deterministically by ElementId.
+    pub elements: Vec<ElementView>,
+    /// Optional categorization by ontology type.
+    pub categorized: Option<CategorizedContext>,
+    /// Resolved physical file routes.
+    pub physical_routes: Vec<PhysicalRoute>,
+}
+
+/// Retrieves point-in-time context for a set of root elements over the accepted state $S_{accepted}$.
+pub fn retrieve_context(
+    repository: &Repository,
+    roots: &[ElementId],
+    direction: ContextDirection,
+    max_depth: Option<usize>,
+    categorize: bool,
+) -> Result<ContextResult, QueryError> {
+    if let Some(depth) = max_depth {
+        if depth == 0 {
+            return Err(QueryError::InvalidMaxDepth(0));
+        }
+    }
+
+    let accepted = repository
+        .ref_store()
+        .read_accepted()?;
+    let store = repository.object_store();
+
+    let state_bytes = store
+        .get(accepted.state)?;
+    let state_canonical = decode_canonical(&state_bytes)?;
+    let state = match state_canonical.payload {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => {
+            return Err(QueryError::UnexpectedObjectKind {
+                expected: ObjectKind::SemanticState,
+                actual: state_canonical.object_kind(),
+            });
+        }
+    };
+
+    let mut loaded_rel_versions: HashMap<RelationshipId, RelationshipVersion> = HashMap::new();
+    for entry in &state.relationships {
+        let bytes = store.get(entry.version)?;
+        let canonical = decode_canonical(&bytes)?;
+        if let CanonicalPayload::RelationshipVersion(rv) = canonical.payload {
+            loaded_rel_versions.insert(entry.relationship_id, rv);
+        }
+    }
+
+    let mut reached_elements: HashSet<ElementId> = HashSet::new();
+
+    for &root in roots {
+        reached_elements.insert(root);
+        let mut path_visited_rels: HashSet<RelationshipId> = HashSet::new();
+        explore_context_graph(
+            root,
+            &state.relationships,
+            &loaded_rel_versions,
+            direction,
+            0,
+            max_depth,
+            &mut path_visited_rels,
+            &mut reached_elements,
+        );
+    }
+
+    let mut elements: Vec<ElementView> = Vec::new();
+    let mut physical_routes: Vec<PhysicalRoute> = Vec::new();
+
+    let mut sorted_reached: Vec<ElementId> = reached_elements.into_iter().collect();
+    sorted_reached.sort();
+
+    for elem_id in sorted_reached {
+        let view = show_element(repository, elem_id)?;
+
+        for (prop_key, prop_val) in &view.element.properties {
+            let key_lower = prop_key.to_lowercase();
+            if key_lower == "path" || key_lower == "file" || key_lower == "uri" || key_lower == "location" {
+                if let PropertyValue::Text(val_str) = prop_val {
+                    physical_routes.push(PhysicalRoute {
+                        element_id: elem_id,
+                        path: val_str.clone(),
+                        role: "source".to_string(),
+                    });
+                }
+            }
+        }
+
+        for rel in &view.relationships.outgoing {
+            if rel.relationship_type_id == "kat.core/realizes" || rel.relationship_type_id == "kat.core/accounts-for" {
+                if let Ok(target_view) = show_element(repository, rel.target_element_id) {
+                    for (pk, pv) in &target_view.element.properties {
+                        if pk.to_lowercase() == "path" || pk.to_lowercase() == "file" {
+                            if let PropertyValue::Text(val_str) = pv {
+                                physical_routes.push(PhysicalRoute {
+                                    element_id: elem_id,
+                                    path: val_str.clone(),
+                                    role: "realizes".to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        elements.push(view);
+    }
+
+    let categorized = if categorize {
+        let mut reqs = Vec::new();
+        let mut reals = Vec::new();
+        let mut verifs = Vec::new();
+        let mut des = Vec::new();
+        let mut sys = Vec::new();
+
+        for ev in &elements {
+            let t = ev.element.type_id.as_str();
+            match t {
+                "kat.core/requirement" | "kat.core/goal" | "kat.core/use-case" | "kat.core/user-story" => {
+                    reqs.push(ev.element_id)
+                }
+                "kat.core/implementation" | "kat.core/code" | "kat.core/module" | "kat.core/service" => {
+                    reals.push(ev.element_id)
+                }
+                "kat.core/test" | "kat.core/verification" | "kat.core/benchmark" => {
+                    verifs.push(ev.element_id)
+                }
+                "kat.core/architecture" | "kat.core/design" | "kat.core/decision" | "kat.core/model" => {
+                    des.push(ev.element_id)
+                }
+                _ => sys.push(ev.element_id),
+            }
+        }
+
+        Some(CategorizedContext {
+            requirements: reqs,
+            realizations: reals,
+            verification: verifs,
+            design: des,
+            system: sys,
+        })
+    } else {
+        None
+    };
+
+    Ok(ContextResult {
+        roots: roots.to_vec(),
+        elements,
+        categorized,
+        physical_routes,
+    })
+}
+
+fn explore_context_graph(
+    current: ElementId,
+    state_rels: &[crate::domain::state::RelationshipStateEntry],
+    loaded_rel_versions: &HashMap<RelationshipId, RelationshipVersion>,
+    direction: ContextDirection,
+    current_depth: usize,
+    max_depth: Option<usize>,
+    path_visited_rels: &mut HashSet<RelationshipId>,
+    reached_elements: &mut HashSet<ElementId>,
+) {
+    if let Some(limit) = max_depth {
+        if current_depth >= limit {
+            return;
+        }
+    }
+
+    for entry in state_rels {
+        if path_visited_rels.contains(&entry.relationship_id) {
+            continue;
+        }
+
+        let Some(rel_v) = loaded_rel_versions.get(&entry.relationship_id) else {
+            continue;
+        };
+
+        let (next_id, allowed) = match direction {
+            ContextDirection::Downstream => {
+                if rel_v.source_element_id == current {
+                    (Some(rel_v.target_element_id), true)
+                } else {
+                    (None, false)
+                }
+            }
+            ContextDirection::Upstream => {
+                if rel_v.target_element_id == current {
+                    (Some(rel_v.source_element_id), true)
+                } else {
+                    (None, false)
+                }
+            }
+            ContextDirection::Both => {
+                if rel_v.source_element_id == current {
+                    (Some(rel_v.target_element_id), true)
+                } else if rel_v.target_element_id == current {
+                    (Some(rel_v.source_element_id), true)
+                } else {
+                    (None, false)
+                }
+            }
+        };
+
+        if allowed {
+            if let Some(target_id) = next_id {
+                reached_elements.insert(target_id);
+
+                path_visited_rels.insert(entry.relationship_id);
+                explore_context_graph(
+                    target_id,
+                    state_rels,
+                    loaded_rel_versions,
+                    direction,
+                    current_depth + 1,
+                    max_depth,
+                    path_visited_rels,
+                    reached_elements,
+                );
+                path_visited_rels.remove(&entry.relationship_id);
+            }
+        }
+    }
 }

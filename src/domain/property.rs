@@ -11,7 +11,7 @@ use uuid::Uuid;
 /// `(key, value)` pairs so that malformed input such as duplicate or unsorted
 /// keys remains observable to the canonical validator instead of being
 /// silently normalized or dropped at construction time.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub enum PropertyValue {
     /// `null`
     Null,

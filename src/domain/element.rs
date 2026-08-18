@@ -11,7 +11,7 @@ use crate::domain::property::PropertyValue;
 /// The canonical numeric values (`0` active, `1` deprecated, `2` superseded)
 /// are assigned explicitly by the encoder (step 0.4); this enum does not
 /// hard-code them.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub enum Lifecycle {
     /// `0`
     Active,
@@ -38,7 +38,7 @@ impl fmt::Display for Lifecycle {
 ///
 /// Holds semantic identity and values only; the canonical ObjectId is derived
 /// from its encoding and is never cached here.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct KnowledgeElementVersion {
     /// Stable identity of the element, unchanged across versions.
     pub element_id: ElementId,

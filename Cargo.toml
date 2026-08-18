@@ -5,7 +5,7 @@ edition = "2024"
 description = "KAT (Knowledge Abstraction Tracker) - a semantic software repository for representing, evolving, tracing, and validating authoritative software knowledge."
 
 [dependencies]
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 hex = "0.4"
 thiserror = "2"
 sha2 = "0.10"
