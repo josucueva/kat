@@ -8,41 +8,8 @@ kat\-author \- Stage a semantic Change from declarative JSON
 Declaratively compile and stage a JSON batch of authoring claims into the active draft transaction. If no draft Change exists, one is opened automatically.
 .SH INPUT FORMAT
 Accepts a JSON array of claim objects via \fICLAIMS_FILE\fR or standard input (\fB\-\fR).
-.SH CLAIM KINDS
-.TP
-.B create_element
-Declare a new knowledge element (requires \fBtype_id\fR, \fBtitle\fR; optional \fBdescription\fR, \fBhandle\fR).
-.TP
-.B update_element
-Patch title or description on an active element.
-.TP
-.B deprecate_element
-Mark an active element as Deprecated.
-.TP
-.B supersede_element
-Replace an existing element while preserving historical linkage.
-.TP
-.B link_element
-Establish a typed semantic relationship between two elements.
-.TP
-.B unlink_element
-Remove an existing relationship from draft state.
-.TP
-.B account_artifact
-Re-baseline artifact accountability.
-.SH WORKFLOW REFERENCES
-@handles are temporary references scoped to the current draft Change.
-They may be used by later claims in that Change after the defining
-claim has succeeded.
 
-Workflow references expire when the Change is committed or aborted.
-.SH CROSS-CHANGE REFERENCES
-To reference knowledge from an accepted Change, use its stable UUID
-or an unambiguous UUID prefix. Workflow references are not persistent
-aliases.
-.SH ATOMICITY
-Valid input is compiled and staged atomically. If any claim in a non-empty document is invalid, the entire input is rejected with exit code 1 and 0 operations are staged, leaving any pre-existing draft transaction byte-for-byte unchanged. Empty or whitespace-only input is a successful no-op (exit 0).
-.SH EXAMPLES
+The normative JSON format uses internal tagging with a \fBkind\fR discriminator field (snake_case):
 .nf
 [
   {
@@ -50,23 +17,51 @@ Valid input is compiled and staged atomically. If any claim in a non-empty docum
     "type_id": "kat.core/requirement",
     "title": "Auth Spec",
     "handle": "@req-auth"
-  },
-  {
-    "kind": "create_element",
-    "type_id": "kat.core/implementation",
-    "title": "Auth Service",
-    "handle": "@imp-auth"
-  },
-  {
-    "kind": "link_element",
-    "relationship_type_id": "kat.core/realizes",
-    "source_ref": "@imp-auth",
-    "target_ref": "@req-auth"
   }
 ]
 .fi
-.SH ERRORS
-If input cannot be parsed or violates ontology rules, KAT outputs explicit error information. In machine mode (\fB\-\-json\fR), error code \fBAUTHOR_PARSE_ERROR\fR or \fBAUTHOR_COMPILATION_FAILED\fR is returned with structured line, column, and reason details. Endpoint constraint violations return allowed source/target element types.
+
+Legacy v0.4.0 externally tagged DTOs (e.g. \fB{"CreateElement": {...}}\fR) remain supported for backward compatibility, but internal tagging with \fBkind\fR is normative.
+.SH CLAIM KINDS
+.TP
+.B create_element
+Declare a new knowledge element (requires \fBtype_id\fR / \fBtype\fR, \fBtitle\fR; optional \fBdescription\fR, \fBhandle\fR).
+.TP
+.B update_element
+Patch title or description on an active element (requires \fBelement_id\fR; optional \fBtitle\fR, \fBdescription\fR).
+.TP
+.B deprecate_element
+Mark an active element as Deprecated (requires \fBelement_id\fR).
+.TP
+.B supersede_element
+Replace an existing element while preserving historical linkage (requires \fBexisting_element_id\fR, \fBreplacement_type\fR, \fBtitle\fR; optional \fBdescription\fR, \fBhandle\fR).
+.TP
+.B link_element
+Establish a typed semantic relationship between two elements (requires \fBrelationship_type_id\fR / \fBrelationship_type\fR, \fBsource_ref\fR, \fBtarget_ref\fR; optional \fBdescription\fR).
+.TP
+.B unlink_element
+Remove an existing relationship from draft state (requires \fBrelationship_id\fR; optional \fBdescription\fR).
+.TP
+.B account_artifact
+Re-baseline artifact accountability (requires \fBartifact_id\fR; optional \fBdescription\fR).
+.SH WORKFLOW REFERENCES
+@handles are temporary references scoped to the current draft Change.
+They may be used by later claims in that Change after the defining
+claim has succeeded.
+
+Workflow references expire when the Change is committed or aborted. Duplicate handles within the same batch fail compilation atomically. Forward references (referencing a handle before its declaration) are rejected.
+.SH CROSS-CHANGE REFERENCES
+To reference knowledge from an accepted Change, use its stable UUID
+or an unambiguous UUID prefix. Workflow references are not persistent
+aliases.
+.SH ATOMICITY
+Valid input is compiled and staged atomically. If any claim in a non-empty document is invalid, the entire input is rejected with exit code 1 and 0 operations are staged, leaving any pre-existing draft transaction byte-for-byte unchanged.
+.SH EMPTY INPUT BEHAVIOR
+Empty or whitespace-only input is a successful no-op (0 claims processed, exit status 0). If no draft Change exists, no draft transaction is opened.
+.SH INFORMATIONAL EXAMPLES
+Passing \fB\-e\fR or \fB\-\-example\fR prints a complete working JSON authoring claim template and exits 0 immediately. It cannot be combined with \fICLAIMS_FILE\fR or \fB\-\-json\fR (exit status 2).
+.SH ERRORS AND DIAGNOSTICS
+If input cannot be parsed or violates ontology rules, KAT outputs explicit error information with line, column, and reason. In machine mode (\fB\-\-json\fR), error code \fBAUTHOR_PARSE_ERROR\fR (JSON syntax) or \fBAUTHOR_COMPILATION_FAILED\fR (domain validation failure) is returned in the result envelope. Endpoint constraint violations report provided source/target types alongside allowed source and target types.
 .SH EXIT STATUS
 .TP
 .B 0
