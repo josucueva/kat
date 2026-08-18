@@ -2373,13 +2373,10 @@ pub fn retrieve_context(
         }
     }
 
-    let accepted = repository
-        .ref_store()
-        .read_accepted()?;
+    let accepted = repository.ref_store().read_accepted()?;
     let store = repository.object_store();
 
-    let state_bytes = store
-        .get(accepted.state)?;
+    let state_bytes = store.get(accepted.state)?;
     let state_canonical = decode_canonical(&state_bytes)?;
     let state = match state_canonical.payload {
         CanonicalPayload::SemanticState(s) => s,
@@ -2428,7 +2425,11 @@ pub fn retrieve_context(
 
         for (prop_key, prop_val) in &view.element.properties {
             let key_lower = prop_key.to_lowercase();
-            if key_lower == "path" || key_lower == "file" || key_lower == "uri" || key_lower == "location" {
+            if key_lower == "path"
+                || key_lower == "file"
+                || key_lower == "uri"
+                || key_lower == "location"
+            {
                 if let PropertyValue::Text(val_str) = prop_val {
                     physical_routes.push(PhysicalRoute {
                         element_id: elem_id,
@@ -2440,7 +2441,9 @@ pub fn retrieve_context(
         }
 
         for rel in &view.relationships.outgoing {
-            if rel.relationship_type_id == "kat.core/realizes" || rel.relationship_type_id == "kat.core/accounts-for" {
+            if rel.relationship_type_id == "kat.core/realizes"
+                || rel.relationship_type_id == "kat.core/accounts-for"
+            {
                 if let Ok(target_view) = show_element(repository, rel.target_element_id) {
                     for (pk, pv) in &target_view.element.properties {
                         if pk.to_lowercase() == "path" || pk.to_lowercase() == "file" {
@@ -2470,18 +2473,21 @@ pub fn retrieve_context(
         for ev in &elements {
             let t = ev.element.type_id.as_str();
             match t {
-                "kat.core/requirement" | "kat.core/goal" | "kat.core/use-case" | "kat.core/user-story" => {
-                    reqs.push(ev.element_id)
-                }
-                "kat.core/implementation" | "kat.core/code" | "kat.core/module" | "kat.core/service" => {
-                    reals.push(ev.element_id)
-                }
+                "kat.core/requirement"
+                | "kat.core/goal"
+                | "kat.core/use-case"
+                | "kat.core/user-story" => reqs.push(ev.element_id),
+                "kat.core/implementation"
+                | "kat.core/code"
+                | "kat.core/module"
+                | "kat.core/service" => reals.push(ev.element_id),
                 "kat.core/test" | "kat.core/verification" | "kat.core/benchmark" => {
                     verifs.push(ev.element_id)
                 }
-                "kat.core/architecture" | "kat.core/design" | "kat.core/decision" | "kat.core/model" => {
-                    des.push(ev.element_id)
-                }
+                "kat.core/architecture"
+                | "kat.core/design"
+                | "kat.core/decision"
+                | "kat.core/model" => des.push(ev.element_id),
                 _ => sys.push(ev.element_id),
             }
         }

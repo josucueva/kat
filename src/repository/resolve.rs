@@ -286,10 +286,13 @@ mod tests {
         };
 
         let elem_id = ElementId::new();
-        session.working_state.elements.push(crate::domain::state::ElementStateEntry {
-            element_id: elem_id,
-            version: ObjectId::from_bytes([3; 32]),
-        });
+        session
+            .working_state
+            .elements
+            .push(crate::domain::state::ElementStateEntry {
+                element_id: elem_id,
+                version: ObjectId::from_bytes([3; 32]),
+            });
         session.bind_workflow_reference("@req-auth", elem_id);
 
         // Resolve with @ prefix

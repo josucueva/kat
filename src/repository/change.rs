@@ -3808,18 +3808,28 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         crate::repository::init::init_repository(temp.path()).unwrap();
         let repository = crate::repository::open::open_repository(temp.path()).unwrap();
-        let _session = crate::repository::session::begin_draft_session(&repository, Some("batch test".to_string())).unwrap();
+        let _session = crate::repository::session::begin_draft_session(
+            &repository,
+            Some("batch test".to_string()),
+        )
+        .unwrap();
 
         let session_path = crate::repository::session::draft_session_path(temp.path());
         let pre_batch_bytes = std::fs::read(&session_path).unwrap();
 
-        let valid_op = StagedOperationInput::CreateElement(input(10, "kat.core/requirement", vec![]));
-        let invalid_op = StagedOperationInput::CreateElement(input(11, "invalid.type/unknown", vec![]));
+        let valid_op =
+            StagedOperationInput::CreateElement(input(10, "kat.core/requirement", vec![]));
+        let invalid_op =
+            StagedOperationInput::CreateElement(input(11, "invalid.type/unknown", vec![]));
 
         // Batch with operation 0 valid, operation 1 invalid -> batch fails
-        let err = stage_batch_operations_into_session(&repository, vec![valid_op, invalid_op]).unwrap_err();
+        let err = stage_batch_operations_into_session(&repository, vec![valid_op, invalid_op])
+            .unwrap_err();
 
-        assert!(matches!(err, ChangeError::BatchStagingFailed { index: 1, .. }));
+        assert!(matches!(
+            err,
+            ChangeError::BatchStagingFailed { index: 1, .. }
+        ));
 
         // Milestone 3 Invariant Verification: session.json on disk remains byte-for-byte identical to pre-batch
         let post_batch_bytes = std::fs::read(&session_path).unwrap();

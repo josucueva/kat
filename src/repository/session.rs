@@ -300,8 +300,9 @@ fn format_draft_session_json(session: &DraftSession) -> Result<String, DraftSess
         .map_err(|e| DraftSessionError::Invalid(format!("failed to encode working state: {e}")))?;
     let state_hex = hex::encode(state_bytes);
 
-    let refs_json = serde_json::to_string(&session.workflow_references)
-        .map_err(|e| DraftSessionError::Invalid(format!("failed to encode workflow_references: {e}")))?;
+    let refs_json = serde_json::to_string(&session.workflow_references).map_err(|e| {
+        DraftSessionError::Invalid(format!("failed to encode workflow_references: {e}"))
+    })?;
 
     let desc_str = match &session.description {
         Some(d) => format!("\"{}\"", escape_json_string(d)),
@@ -467,8 +468,9 @@ fn extract_json_workflow_references(
         if rest.starts_with('[') {
             if let Some(end) = rest.find(']') {
                 let slice = &rest[..=end];
-                return serde_json::from_str::<Vec<WorkflowReferenceBinding>>(slice)
-                    .map_err(|e| DraftSessionError::Invalid(format!("failed to parse workflow_references: {e}")));
+                return serde_json::from_str::<Vec<WorkflowReferenceBinding>>(slice).map_err(|e| {
+                    DraftSessionError::Invalid(format!("failed to parse workflow_references: {e}"))
+                });
             }
         }
     }

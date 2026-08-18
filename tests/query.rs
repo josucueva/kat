@@ -3419,8 +3419,12 @@ fn retrieve_context_traversal_and_categorization() {
     let root = dir.path();
     init_repository(root).unwrap();
 
-    let FirstChange { element_id: req_id, .. } = publish_first_change(root, 101, 201);
-    let FirstChange { element_id: imp_id, .. } = publish_first_change(root, 102, 202);
+    let FirstChange {
+        element_id: req_id, ..
+    } = publish_first_change(root, 101, 201);
+    let FirstChange {
+        element_id: imp_id, ..
+    } = publish_first_change(root, 102, 202);
 
     let repo = open_repository(root).unwrap();
     let ctx = kat::repository::query::retrieve_context(

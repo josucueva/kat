@@ -3,7 +3,8 @@
 use crate::domain::identity::ElementId;
 use crate::repository::open::Repository;
 use crate::repository::query::{
-    QueryError, list_elements, show_element, analyze_artifact_accountability, ArtifactAccountabilityStatus,
+    ArtifactAccountabilityStatus, QueryError, analyze_artifact_accountability, list_elements,
+    show_element,
 };
 use crate::repository::validation::repository::{ValidationReport, validate_repository};
 
@@ -50,9 +51,7 @@ pub struct CheckReport {
 }
 
 /// Runs advisory graph quality rule checks against the accepted repository state.
-pub fn analyze_graph_quality(
-    repository: &Repository,
-) -> Result<GraphQualityReport, QueryError> {
+pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityReport, QueryError> {
     let elements = list_elements(repository, Default::default())?;
     let mut findings = Vec::new();
 
@@ -76,10 +75,15 @@ pub fn analyze_graph_quality(
 
         // GQ-02: Requirement Lacks Realization Path
         let type_id = view.element.type_id.as_str();
-        if type_id == "kat.core/requirement" || type_id == "kat.core/user-story" || type_id == "kat.core/use-case" {
-            let has_realization = view.relationships.incoming.iter().any(|rel| {
-                rel.relationship_type_id == "kat.core/realizes"
-            });
+        if type_id == "kat.core/requirement"
+            || type_id == "kat.core/user-story"
+            || type_id == "kat.core/use-case"
+        {
+            let has_realization = view
+                .relationships
+                .incoming
+                .iter()
+                .any(|rel| rel.relationship_type_id == "kat.core/realizes");
             if !has_realization {
                 findings.push(GraphQualityFinding {
                     rule_id: "GQ-02".to_string(),
@@ -95,10 +99,15 @@ pub fn analyze_graph_quality(
         }
 
         // GQ-03: Implementation Lacks Verification
-        if type_id == "kat.core/implementation" || type_id == "kat.core/code" || type_id == "kat.core/service" {
-            let has_verification = view.relationships.incoming.iter().any(|rel| {
-                rel.relationship_type_id == "kat.core/validates"
-            });
+        if type_id == "kat.core/implementation"
+            || type_id == "kat.core/code"
+            || type_id == "kat.core/service"
+        {
+            let has_verification = view
+                .relationships
+                .incoming
+                .iter()
+                .any(|rel| rel.relationship_type_id == "kat.core/validates");
             if !has_verification {
                 findings.push(GraphQualityFinding {
                     rule_id: "GQ-03".to_string(),
@@ -117,7 +126,9 @@ pub fn analyze_graph_quality(
     // GQ-04: Unaccounted Artifact File Link
     if let Ok(account_report) = analyze_artifact_accountability(repository) {
         for artifact in &account_report.artifacts {
-            if artifact.status == ArtifactAccountabilityStatus::Unaccounted || artifact.status == ArtifactAccountabilityStatus::Stale {
+            if artifact.status == ArtifactAccountabilityStatus::Unaccounted
+                || artifact.status == ArtifactAccountabilityStatus::Stale
+            {
                 findings.push(GraphQualityFinding {
                     rule_id: "GQ-04".to_string(),
                     severity: QualitySeverity::Advisory,
@@ -126,7 +137,9 @@ pub fn analyze_graph_quality(
                         "Artifact {} has accountability status: {:?}",
                         artifact.artifact_element_id, artifact.status
                     ),
-                    details: vec!["Update artifact accountability coverage using 'kat account'".to_string()],
+                    details: vec![
+                        "Update artifact accountability coverage using 'kat account'".to_string(),
+                    ],
                 });
             }
         }

@@ -200,7 +200,11 @@ fn run_status(compact: bool, json: bool) -> ExitCode {
         }
         Err(error) => {
             if json {
-                MachinePresenter::present_error(Some(&repository), "StatusError", &error.to_string());
+                MachinePresenter::present_error(
+                    Some(&repository),
+                    "StatusError",
+                    &error.to_string(),
+                );
             } else {
                 eprintln!("kat status: {error}");
             }
@@ -2938,8 +2942,12 @@ fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport, s
 
 fn cmd_change(command: kat::cli::ChangeCommands) -> ExitCode {
     match command {
-        kat::cli::ChangeCommands::Begin { description, json } => cmd_change_begin(description, json),
-        kat::cli::ChangeCommands::Status { compact, json } => cmd_change_status_porcelain(compact, json),
+        kat::cli::ChangeCommands::Begin { description, json } => {
+            cmd_change_begin(description, json)
+        }
+        kat::cli::ChangeCommands::Status { compact, json } => {
+            cmd_change_status_porcelain(compact, json)
+        }
         kat::cli::ChangeCommands::Commit { json } => run_commit(json),
         kat::cli::ChangeCommands::Abort { json } => run_abort(json),
     }
@@ -3019,7 +3027,13 @@ fn run_context(
         _ => kat::repository::query::ContextDirection::Upstream,
     };
 
-    match kat::repository::query::retrieve_context(&repository, &resolved_roots, dir_enum, depth, categorize) {
+    match kat::repository::query::retrieve_context(
+        &repository,
+        &resolved_roots,
+        dir_enum,
+        depth,
+        categorize,
+    ) {
         Ok(res) => {
             if json {
                 MachinePresenter::present_success(&repository, &res);
@@ -3169,7 +3183,9 @@ fn run_author(claims_file: Option<String>, json: bool) -> ExitCode {
         }
     };
 
-    let claims = if let Ok(json_claims) = serde_json::from_str::<Vec<kat::repository::author::AuthorClaim>>(&text) {
+    let claims = if let Ok(json_claims) =
+        serde_json::from_str::<Vec<kat::repository::author::AuthorClaim>>(&text)
+    {
         json_claims
     } else {
         parse_author_claims_text(&text)
@@ -3194,7 +3210,11 @@ fn run_author(claims_file: Option<String>, json: bool) -> ExitCode {
         }
         Err(err) => {
             if json {
-                MachinePresenter::present_error(Some(&repository), "AuthorCompilationFailed", &err.to_string());
+                MachinePresenter::present_error(
+                    Some(&repository),
+                    "AuthorCompilationFailed",
+                    &err.to_string(),
+                );
             } else {
                 eprintln!("kat author: {err}");
             }
@@ -3230,8 +3250,14 @@ fn run_check(compact: bool, json: bool) -> ExitCode {
             } else {
                 println!("KAT Repository Check");
                 println!("  clean:                 {}", report.repository_clean);
-                println!("  mechanical_violations: {}", report.mechanical_validation.violations.len());
-                println!("  graph_quality_findings:{}", report.graph_quality.total_findings);
+                println!(
+                    "  mechanical_violations: {}",
+                    report.mechanical_validation.violations.len()
+                );
+                println!(
+                    "  graph_quality_findings:{}",
+                    report.graph_quality.total_findings
+                );
                 if !report.graph_quality.findings.is_empty() {
                     println!();
                     println!("GRAPH QUALITY ADVISORY DIAGNOSTICS");

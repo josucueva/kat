@@ -79,10 +79,14 @@ impl<T> CommonResultEnvelope<T> {
     pub fn validate_invariants(&self) -> Result<(), &'static str> {
         if self.success {
             if self.data.is_none() || self.error.is_some() {
-                return Err("INV-MI-01 violation: success == true requires data != None and error == None");
+                return Err(
+                    "INV-MI-01 violation: success == true requires data != None and error == None",
+                );
             }
         } else if self.data.is_some() || self.error.is_none() {
-            return Err("INV-MI-01 violation: success == false requires data == None and error != None");
+            return Err(
+                "INV-MI-01 violation: success == false requires data == None and error != None",
+            );
         }
         Ok(())
     }
@@ -108,11 +112,8 @@ mod tests {
     fn success_envelope_construction_and_invariants() {
         let repo_id = RepositoryId::from_uuid(Uuid::nil());
         let state_id = ObjectId::from_bytes([0xaa; 32]);
-        let envelope = CommonResultEnvelope::success(
-            Some(repo_id),
-            Some(state_id),
-            "payload".to_string(),
-        );
+        let envelope =
+            CommonResultEnvelope::success(Some(repo_id), Some(state_id), "payload".to_string());
 
         assert!(envelope.success);
         assert_eq!(envelope.interface_schema_version, 1);

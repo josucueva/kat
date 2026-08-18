@@ -104,11 +104,13 @@ pub fn compile_and_stage_claims(
             ))
         })?
     } else {
-        begin_draft_session(repository, Some("porcelain authoring batch".to_string())).map_err(|e| {
-            ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
-                e.to_string(),
-            ))
-        })?
+        begin_draft_session(repository, Some("porcelain authoring batch".to_string())).map_err(
+            |e| {
+                ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
+                    e.to_string(),
+                ))
+            },
+        )?
     };
 
     let mut staged_inputs = Vec::new();
@@ -142,7 +144,8 @@ pub fn compile_and_stage_claims(
                 session.bind_workflow_reference(&handle_str, element_id);
                 created_handles.insert(handle_str, element_id);
 
-                let mut properties = vec![("title".to_string(), PropertyValue::Text(title.clone()))];
+                let mut properties =
+                    vec![("title".to_string(), PropertyValue::Text(title.clone()))];
                 if let Some(desc) = description {
                     properties.push(("description".to_string(), PropertyValue::Text(desc.clone())));
                 }
@@ -159,9 +162,17 @@ pub fn compile_and_stage_claims(
                 target_ref,
             } => {
                 let source_element_id = resolve_element_in_draft_session(&session, source_ref)
-                    .map_err(|e| ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(e.to_string())))?;
+                    .map_err(|e| {
+                        ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
+                            e.to_string(),
+                        ))
+                    })?;
                 let target_element_id = resolve_element_in_draft_session(&session, target_ref)
-                    .map_err(|e| ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(e.to_string())))?;
+                    .map_err(|e| {
+                        ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
+                            e.to_string(),
+                        ))
+                    })?;
 
                 let relationship_id = crate::domain::identity::RelationshipId::new();
                 staged_inputs.push(StagedOperationInput::LinkElement(LinkElementInput {
@@ -174,16 +185,22 @@ pub fn compile_and_stage_claims(
             }
             AuthorClaim::UnlinkElement { relationship_ref } => {
                 let relationship_id = resolve_relationship_id(repository, relationship_ref)
-                    .map_err(|e| ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(e.to_string())))?;
+                    .map_err(|e| {
+                        ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
+                            e.to_string(),
+                        ))
+                    })?;
                 let rel_entry = session
                     .working_state
                     .relationships
                     .iter()
                     .find(|r| r.relationship_id == relationship_id)
                     .ok_or_else(|| {
-                        ChangeError::Precondition(crate::repository::change::PreconditionError::RelationshipAlreadyExists(
-                            relationship_id,
-                        ))
+                        ChangeError::Precondition(
+                            crate::repository::change::PreconditionError::RelationshipAlreadyExists(
+                                relationship_id,
+                            ),
+                        )
                     })?;
 
                 staged_inputs.push(StagedOperationInput::UnlinkElement(UnlinkElementInput {
@@ -195,27 +212,39 @@ pub fn compile_and_stage_claims(
                 artifact_path: _,
                 element_ref,
             } => {
-                let artifact_id = resolve_element_in_draft_session(&session, element_ref)
-                    .map_err(|e| ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(e.to_string())))?;
+                let artifact_id =
+                    resolve_element_in_draft_session(&session, element_ref).map_err(|e| {
+                        ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
+                            e.to_string(),
+                        ))
+                    })?;
 
-                staged_inputs.push(StagedOperationInput::AccountArtifact(AccountArtifactInput {
-                    artifact_id,
-                }));
+                staged_inputs.push(StagedOperationInput::AccountArtifact(
+                    AccountArtifactInput { artifact_id },
+                ));
             }
             AuthorClaim::UpdateElement {
                 element_ref,
                 title,
                 description,
             } => {
-                let element_id = resolve_element_in_draft_session(&session, element_ref)
-                    .map_err(|e| ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(e.to_string())))?;
+                let element_id =
+                    resolve_element_in_draft_session(&session, element_ref).map_err(|e| {
+                        ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
+                            e.to_string(),
+                        ))
+                    })?;
                 let elem_entry = session
                     .working_state
                     .elements
                     .iter()
                     .find(|e| e.element_id == element_id)
                     .ok_or_else(|| {
-                        ChangeError::Precondition(crate::repository::change::PreconditionError::ElementNotFound(element_id))
+                        ChangeError::Precondition(
+                            crate::repository::change::PreconditionError::ElementNotFound(
+                                element_id,
+                            ),
+                        )
                     })?;
 
                 let mut properties = Vec::new();
@@ -233,21 +262,31 @@ pub fn compile_and_stage_claims(
                 }));
             }
             AuthorClaim::DeprecateElement { element_ref } => {
-                let element_id = resolve_element_in_draft_session(&session, element_ref)
-                    .map_err(|e| ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(e.to_string())))?;
+                let element_id =
+                    resolve_element_in_draft_session(&session, element_ref).map_err(|e| {
+                        ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
+                            e.to_string(),
+                        ))
+                    })?;
                 let elem_entry = session
                     .working_state
                     .elements
                     .iter()
                     .find(|e| e.element_id == element_id)
                     .ok_or_else(|| {
-                        ChangeError::Precondition(crate::repository::change::PreconditionError::ElementNotFound(element_id))
+                        ChangeError::Precondition(
+                            crate::repository::change::PreconditionError::ElementNotFound(
+                                element_id,
+                            ),
+                        )
                     })?;
 
-                staged_inputs.push(StagedOperationInput::DeprecateElement(DeprecateElementInput {
-                    element_id,
-                    expected_version: elem_entry.version,
-                }));
+                staged_inputs.push(StagedOperationInput::DeprecateElement(
+                    DeprecateElementInput {
+                        element_id,
+                        expected_version: elem_entry.version,
+                    },
+                ));
             }
             AuthorClaim::SupersedeElement {
                 existing_ref,
@@ -256,41 +295,58 @@ pub fn compile_and_stage_claims(
                 handle,
             } => {
                 let existing_element_id = resolve_element_in_draft_session(&session, existing_ref)
-                    .map_err(|e| ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(e.to_string())))?;
+                    .map_err(|e| {
+                        ChangeError::RefStore(crate::repository::ref_store::RefStoreError::Parse(
+                            e.to_string(),
+                        ))
+                    })?;
                 let existing_version = session
                     .working_state
                     .elements
                     .iter()
                     .find(|e| e.element_id == existing_element_id)
                     .ok_or_else(|| {
-                        ChangeError::Precondition(crate::repository::change::PreconditionError::ElementNotFound(
-                            existing_element_id,
-                        ))
-                    })?.version;
+                        ChangeError::Precondition(
+                            crate::repository::change::PreconditionError::ElementNotFound(
+                                existing_element_id,
+                            ),
+                        )
+                    })?
+                    .version;
 
                 let replacement_element_id = ElementId::new();
                 if let Some(h) = handle {
-                    let norm = if h.starts_with('@') { h.clone() } else { format!("@{h}") };
+                    let norm = if h.starts_with('@') {
+                        h.clone()
+                    } else {
+                        format!("@{h}")
+                    };
                     session.bind_workflow_reference(&norm, replacement_element_id);
                     created_handles.insert(norm, replacement_element_id);
                 }
 
                 let relationship_id = crate::domain::identity::RelationshipId::new();
-                let properties = vec![("title".to_string(), PropertyValue::Text(replacement_title.clone()))];
+                let properties = vec![(
+                    "title".to_string(),
+                    PropertyValue::Text(replacement_title.clone()),
+                )];
 
-                staged_inputs.push(StagedOperationInput::SupersedeElement(SupersedeElementInput {
-                    existing_element_id,
-                    expected_existing_version: existing_version,
-                    replacement_element_id,
-                    replacement_type_id: replacement_type_id.clone(),
-                    replacement_properties: properties,
-                    relationship_id,
-                }));
+                staged_inputs.push(StagedOperationInput::SupersedeElement(
+                    SupersedeElementInput {
+                        existing_element_id,
+                        expected_existing_version: existing_version,
+                        replacement_element_id,
+                        replacement_type_id: replacement_type_id.clone(),
+                        replacement_properties: properties,
+                        relationship_id,
+                    },
+                ));
             }
         }
     }
 
-    let (staged_ops, _updated_session) = stage_batch_operations_into_session(repository, staged_inputs)?;
+    let (staged_ops, _updated_session) =
+        stage_batch_operations_into_session(repository, staged_inputs)?;
 
     Ok(AuthorBatchResult {
         claims_processed: claims.len(),
