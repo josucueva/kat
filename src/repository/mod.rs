@@ -1,6 +1,7 @@
 //! Physical repository: object store, reference store, metadata,
 //! initialization, and open/integrity.
 
+pub mod author;
 pub mod change;
 pub mod error;
 pub mod init;
@@ -12,6 +13,8 @@ pub mod ref_store;
 pub mod resolve;
 pub mod session;
 pub mod validation;
+
+pub use author::*;
 
 pub use session::{
     DRAFT_SESSION_VERSION, DraftSession, DraftSessionError, DraftSessionState, abort_draft_session,
