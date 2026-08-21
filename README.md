@@ -28,7 +28,7 @@ To install KAT (including the `kat` binary, UNIX man pages, and shell completion
 curl -fsSL https://raw.githubusercontent.com/josucueva/kat/main/install.sh | bash
 ```
 
-> **Prerequisites**: Requires `git` and [Rust / Cargo](https://rustup.rs).
+> **Note**: Downloads pre-built binaries automatically for Linux and macOS. (Fallback build from source requires [Rust](https://rustup.rs)).
 
 ### Build & Install from Source
 

@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive_format: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            archive_format: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-13
+            archive_format: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive_format: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive_format: zip
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Generate assets (man pages and shell completions)
+        run: cargo run --bin generate_assets
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare release archive (Unix)
+        if: matrix.archive_format == 'tar.gz'
+        run: |
+          ARCHIVE_DIR="kat-${{ matrix.target }}"
+          mkdir -p "${ARCHIVE_DIR}"
+          cp "target/${{ matrix.target }}/release/kat" "${ARCHIVE_DIR}/"
+          cp -r generated "${ARCHIVE_DIR}/"
+          cp README.md "${ARCHIVE_DIR}/"
+          tar -czf "kat-${{ matrix.target }}.tar.gz" "${ARCHIVE_DIR}"
+
+      - name: Prepare release archive (Windows)
+        if: matrix.archive_format == 'zip'
+        shell: bash
+        run: |
+          ARCHIVE_DIR="kat-${{ matrix.target }}"
+          mkdir -p "${ARCHIVE_DIR}"
+          cp "target/${{ matrix.target }}/release/kat.exe" "${ARCHIVE_DIR}/"
+          cp -r generated "${ARCHIVE_DIR}/"
+          cp README.md "${ARCHIVE_DIR}/"
+          7z a "kat-${{ matrix.target }}.zip" "${ARCHIVE_DIR}"
+
+      - name: Upload binaries to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            kat-${{ matrix.target }}.${{ matrix.archive_format }}
+          generate_release_notes: true

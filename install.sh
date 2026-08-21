@@ -88,8 +88,87 @@ if [[ "${UNINSTALL}" == "true" ]]; then
     exit 0
 fi
 
-# If executed remotely (e.g. via `curl | bash`), clone to a temporary directory and execute installer
+# Helper to detect current OS and architecture target
+detect_target() {
+    local os arch target_os target_arch
+    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    case "${os}" in
+        linux*)  target_os="unknown-linux-gnu" ;;
+        darwin*) target_os="apple-darwin" ;;
+        *)       return 1 ;;
+    esac
+
+    arch="$(uname -m)"
+    case "${arch}" in
+        x86_64|amd64)   target_arch="x86_64" ;;
+        aarch64|arm64)  target_arch="aarch64" ;;
+        *)              return 1 ;;
+    esac
+
+    echo "${target_arch}-${target_os}"
+}
+
+# If executed remotely (e.g. via `curl | bash`), try prebuilt release first, fallback to source build
 if [[ "${IS_IN_REPO}" != "true" ]]; then
+    TMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t 'kat-install')
+    cleanup() {
+        rm -rf "${TMP_DIR}"
+    }
+    trap cleanup EXIT INT TERM
+
+    TARGET=$(detect_target 2>/dev/null || echo "")
+
+    # 1. Attempt downloading prebuilt release archive from GitHub Releases
+    if [[ -n "${TARGET}" ]]; then
+        ARCHIVE_NAME="kat-${TARGET}.tar.gz"
+        RELEASE_URL="https://github.com/josucueva/kat/releases/latest/download/${ARCHIVE_NAME}"
+        echo "==> Checking for prebuilt release (${TARGET})..."
+        if curl -fsSL "${RELEASE_URL}" -o "${TMP_DIR}/${ARCHIVE_NAME}" 2>/dev/null; then
+            echo "==> Extracting release archive..."
+            tar -xzf "${TMP_DIR}/${ARCHIVE_NAME}" -C "${TMP_DIR}"
+            EXTRACTED_DIR="${TMP_DIR}/kat-${TARGET}"
+
+            mkdir -p "${BIN_DIR}" "${MAN_DIR}" "${BASH_COMP_DIR}" "${ZSH_COMP_DIR}" "${FISH_COMP_DIR}"
+
+            echo "==> Installing binary to ${BIN_DIR}/kat..."
+            install -m 755 "${EXTRACTED_DIR}/kat" "${BIN_DIR}/kat"
+
+            echo "==> Installing man pages to ${MAN_DIR}..."
+            for manpage in "${EXTRACTED_DIR}"/generated/man/*.1; do
+                if [[ -f "${manpage}" ]]; then
+                    install -m 644 "${manpage}" "${MAN_DIR}/"
+                fi
+            done
+
+            echo "==> Installing shell completions..."
+            if [[ -f "${EXTRACTED_DIR}/generated/completions/kat.bash" ]]; then
+                install -m 644 "${EXTRACTED_DIR}/generated/completions/kat.bash" "${BASH_COMP_DIR}/kat"
+            fi
+            if [[ -f "${EXTRACTED_DIR}/generated/completions/_kat" ]]; then
+                install -m 644 "${EXTRACTED_DIR}/generated/completions/_kat" "${ZSH_COMP_DIR}/_kat"
+            fi
+            if [[ -f "${EXTRACTED_DIR}/generated/completions/kat.fish" ]]; then
+                install -m 644 "${EXTRACTED_DIR}/generated/completions/kat.fish" "${FISH_COMP_DIR}/kat.fish"
+            fi
+
+            if command -v mandb >/dev/null 2>&1; then
+                echo "==> Updating man database..."
+                mandb -q "${PREFIX}/share/man" 2>/dev/null || true
+            fi
+
+            echo ""
+            echo "Installation complete!"
+            echo "Binary:      ${BIN_DIR}/kat"
+            echo "Man Pages:   ${MAN_DIR}/"
+            echo "Completions: Bash, Zsh, Fish"
+            echo ""
+            echo "Ensure ${BIN_DIR} is on your PATH."
+            exit 0
+        fi
+    fi
+
+    # 2. Fallback: clone and build from source
+    echo "==> Prebuilt binary not available, falling back to building from source..."
     if ! command -v git >/dev/null 2>&1; then
         echo "Error: 'git' is required to fetch KAT repository." >&2
         exit 1
@@ -100,18 +179,12 @@ if [[ "${IS_IN_REPO}" != "true" ]]; then
         exit 1
     fi
 
-    TMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t 'kat-install')
-    cleanup() {
-        rm -rf "${TMP_DIR}"
-    }
-    trap cleanup EXIT INT TERM
-
     echo "==> Fetching KAT from ${REPO_URL} (${BRANCH})..."
-    git clone --depth 1 --branch "${BRANCH}" "${REPO_URL}" "${TMP_DIR}" >/dev/null 2>&1 || \
-    git clone --depth 1 "${REPO_URL}" "${TMP_DIR}"
+    git clone --depth 1 --branch "${BRANCH}" "${REPO_URL}" "${TMP_DIR}/kat-src" >/dev/null 2>&1 || \
+    git clone --depth 1 "${REPO_URL}" "${TMP_DIR}/kat-src"
 
     echo "==> Running KAT installer..."
-    "${TMP_DIR}/install.sh" "$@"
+    "${TMP_DIR}/kat-src/install.sh" "$@"
     exit $?
 fi
 
