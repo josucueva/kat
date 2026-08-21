@@ -28,6 +28,7 @@ fn main() -> Result<(), Error> {
     generate_to(Shell::Bash, &mut cmd_for_comp, "kat", comp_dir)?;
     generate_to(Shell::Zsh, &mut cmd_for_comp, "kat", comp_dir)?;
     generate_to(Shell::Fish, &mut cmd_for_comp, "kat", comp_dir)?;
+    generate_to(Shell::PowerShell, &mut cmd_for_comp, "kat", comp_dir)?;
 
     println!("Asset generation completed successfully!");
     Ok(())

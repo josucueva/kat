@@ -22,23 +22,32 @@ KAT treats the specification — intent, requirements, constraints, design decis
 
 ### Fast Setup
 
-To install KAT (including the `kat` binary, UNIX man pages, and shell completions for Bash, Zsh, and Fish) in one command without cloning the repository:
-
+**Linux & macOS:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/josucueva/kat/main/install.sh | bash
 ```
 
-> **Note**: Downloads pre-built binaries automatically for Linux and macOS. (Fallback build from source requires [Rust](https://rustup.rs)).
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/josucueva/kat/main/install.ps1 | iex
+```
+
+> **Note**: Automatically downloads pre-built release binaries for your operating system. (Fallback build from source requires [Rust](https://rustup.rs)).
 
 ### Build & Install from Source
 
 If you have cloned the repository locally:
 
-```bash
-./install.sh     # Install binary, man pages, and completions
-```
+- **Linux / macOS**:
+  ```bash
+  ./install.sh     # Install binary, man pages, and completions
+  ```
+- **Windows (PowerShell)**:
+  ```powershell
+  .\install.ps1    # Install binary and update user PATH
+  ```
 
-This installs `kat` to `~/.local/bin`, man pages to `~/.local/share/man/man1/`, and completions to your user shell completion directory.
+This installs `kat` to `~/.local/bin` (and man pages/completions on UNIX).
 
 See [`docs/user-guide/install.md`](docs/user-guide/install.md) for full installation details, uninstallation, custom prefixes, and alternative options.
 

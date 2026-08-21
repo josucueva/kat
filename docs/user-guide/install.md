@@ -9,20 +9,28 @@ The `kat` CLI is a single Rust binary that builds on **Linux** and **Windows**.
 
 ## Quick One-Line Install (Recommended)
 
-You can install KAT (including binary, UNIX man pages, and shell completions) directly in a single command without cloning the repository:
+You can install KAT directly in a single command without cloning the repository.
 
+### Linux & macOS
 ```bash
 curl -fsSL https://raw.githubusercontent.com/josucueva/kat/main/install.sh | bash
 ```
 
 To install system-wide with a custom prefix:
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/josucueva/kat/main/install.sh | bash -s -- --prefix /usr/local
 ```
 
+### Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/josucueva/kat/main/install.ps1 | iex
+```
+
+---
+
 ## Build & Install from Source (From Cloned Repository)
 
+### Linux & macOS
 From the repository root:
 
 ```bash
@@ -38,13 +46,23 @@ This automates:
 
 Ensure `~/.local/bin` is on your `PATH`.
 
-### System-Wide Installation
-
-To install system-wide (requires write permissions to `/usr/local`):
-
+To install system-wide:
 ```bash
 sudo ./install.sh --prefix /usr/local
 ```
+
+### Windows
+From PowerShell in the repository root:
+
+```powershell
+.\install.ps1
+```
+
+This automates:
+1. Building `kat.exe` in release mode (`cargo build --release`).
+2. Generating completion scripts (`cargo run --bin generate_assets`).
+3. Installing `kat.exe` to `$HOME\.local\bin\kat.exe`.
+4. Updating your user `PATH` environment variable if needed.
 
 ### Uninstallation
 
