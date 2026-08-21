@@ -20,7 +20,7 @@ KAT treats the specification — intent, requirements, constraints, design decis
 
 ## Installation & Quick Start
 
-### One-Line Install (Recommended)
+### Fast Setup
 
 To install KAT (including the `kat` binary, UNIX man pages, and shell completions for Bash, Zsh, and Fish) in one command without cloning the repository:
 
