@@ -108,6 +108,47 @@ detect_target() {
     echo "${target_arch}-${target_os}"
 }
 
+# Helper to ensure BIN_DIR is in PATH and shell profile is updated
+check_and_update_path() {
+    local in_path=false
+    case ":${PATH}:" in
+        *":${BIN_DIR}:"*) in_path=true ;;
+    esac
+
+    if [[ "${in_path}" == "false" ]]; then
+        local rc_files=()
+        [[ -f "${HOME}/.bashrc" ]] && rc_files+=("${HOME}/.bashrc")
+        [[ -f "${HOME}/.zshrc" ]] && rc_files+=("${HOME}/.zshrc")
+        if [[ ${#rc_files[@]} -eq 0 && -f "${HOME}/.profile" ]]; then
+            rc_files+=("${HOME}/.profile")
+        fi
+
+        local updated=false
+        local export_line="export PATH=\"${BIN_DIR}:\$PATH\""
+
+        for rc in "${rc_files[@]}"; do
+            if ! grep -qs "${BIN_DIR}" "${rc}" 2>/dev/null && ! grep -qs '\.local/bin' "${rc}" 2>/dev/null; then
+                echo "" >> "${rc}"
+                echo "# Added by KAT installer" >> "${rc}"
+                echo "${export_line}" >> "${rc}"
+                updated=true
+            fi
+        done
+
+        echo ""
+        echo "=================================================="
+        echo "Notice: ${BIN_DIR} is not in your current PATH."
+        echo ""
+        echo "To use 'kat' immediately in this terminal, run:"
+        echo "    export PATH=\"${BIN_DIR}:\$PATH\""
+        echo ""
+        if [[ "${updated}" == "true" ]]; then
+            echo "Your shell configuration has been updated for new sessions."
+        fi
+        echo "=================================================="
+    fi
+}
+
 # If executed remotely (e.g. via `curl | bash`), try prebuilt release first, fallback to source build
 if [[ "${IS_IN_REPO}" != "true" ]]; then
     TMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t 'kat-install')
@@ -161,8 +202,8 @@ if [[ "${IS_IN_REPO}" != "true" ]]; then
             echo "Binary:      ${BIN_DIR}/kat"
             echo "Man Pages:   ${MAN_DIR}/"
             echo "Completions: Bash, Zsh, Fish"
-            echo ""
-            echo "Ensure ${BIN_DIR} is on your PATH."
+
+            check_and_update_path
             exit 0
         fi
     fi
@@ -228,5 +269,5 @@ echo "Installation complete!"
 echo "Binary:      ${BIN_DIR}/kat"
 echo "Man Pages:   ${MAN_DIR}/"
 echo "Completions: Bash, Zsh, Fish"
-echo ""
-echo "Ensure ${BIN_DIR} is on your PATH."
+
+check_and_update_path
