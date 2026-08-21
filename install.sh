@@ -4,6 +4,19 @@ set -euo pipefail
 # Default prefix to ~/.local for user-level installation without sudo
 PREFIX="${PREFIX:-$HOME/.local}"
 UNINSTALL=false
+REPO_URL="${KAT_REPO_URL:-https://github.com/josucueva/kat.git}"
+BRANCH="${KAT_BRANCH:-main}"
+
+# Check if running inside a KAT source tree
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
+IS_IN_REPO=false
+
+if [[ -n "${SCRIPT_DIR}" && -f "${SCRIPT_DIR}/Cargo.toml" ]] && grep -q 'name = "kat"' "${SCRIPT_DIR}/Cargo.toml" 2>/dev/null; then
+    IS_IN_REPO=true
+    cd "${SCRIPT_DIR}"
+elif [[ -f "Cargo.toml" ]] && grep -q 'name = "kat"' "Cargo.toml" 2>/dev/null; then
+    IS_IN_REPO=true
+fi
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -24,6 +37,9 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: ./install.sh [--prefix PATH] [--uninstall]"
             echo "Installs or uninstalls KAT binary, UNIX man pages, and shell completions."
             echo "Default prefix: $HOME/.local"
+            echo ""
+            echo "One-command install:"
+            echo "  curl -fsSL https://raw.githubusercontent.com/josucueva/kat/main/install.sh | bash"
             exit 0
             ;;
         *)
@@ -70,6 +86,33 @@ if [[ "${UNINSTALL}" == "true" ]]; then
     echo ""
     echo "Uninstallation complete!"
     exit 0
+fi
+
+# If executed remotely (e.g. via `curl | bash`), clone to a temporary directory and execute installer
+if [[ "${IS_IN_REPO}" != "true" ]]; then
+    if ! command -v git >/dev/null 2>&1; then
+        echo "Error: 'git' is required to fetch KAT repository." >&2
+        exit 1
+    fi
+    if ! command -v cargo >/dev/null 2>&1; then
+        echo "Error: 'cargo' (Rust toolchain) is required to build KAT from source." >&2
+        echo "Please install Rust first via https://rustup.rs" >&2
+        exit 1
+    fi
+
+    TMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t 'kat-install')
+    cleanup() {
+        rm -rf "${TMP_DIR}"
+    }
+    trap cleanup EXIT INT TERM
+
+    echo "==> Fetching KAT from ${REPO_URL} (${BRANCH})..."
+    git clone --depth 1 --branch "${BRANCH}" "${REPO_URL}" "${TMP_DIR}" >/dev/null 2>&1 || \
+    git clone --depth 1 "${REPO_URL}" "${TMP_DIR}"
+
+    echo "==> Running KAT installer..."
+    "${TMP_DIR}/install.sh" "$@"
+    exit $?
 fi
 
 echo "Installing KAT to ${PREFIX}..."

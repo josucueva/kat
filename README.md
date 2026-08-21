@@ -20,18 +20,27 @@ KAT treats the specification — intent, requirements, constraints, design decis
 
 ## Installation & Quick Start
 
-### Build & Install
+### One-Line Install (Recommended)
 
-The recommended way to install KAT (including binary, UNIX man pages, and shell completions for Bash, Zsh, and Fish) is:
+To install KAT (including the `kat` binary, UNIX man pages, and shell completions for Bash, Zsh, and Fish) in one command without cloning the repository:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/josucueva/kat/main/install.sh | bash
+```
+
+> **Prerequisites**: Requires `git` and [Rust / Cargo](https://rustup.rs).
+
+### Build & Install from Source
+
+If you have cloned the repository locally:
 
 ```bash
 ./install.sh     # Install binary, man pages, and completions
-./uninstall.sh   # Remove installed binary and assets
 ```
 
 This installs `kat` to `~/.local/bin`, man pages to `~/.local/share/man/man1/`, and completions to your user shell completion directory.
 
-See [`docs/install.md`](docs/install.md) for full installation details, uninstallation, and alternative options.
+See [`docs/user-guide/install.md`](docs/user-guide/install.md) for full installation details, uninstallation, custom prefixes, and alternative options.
 
 ### CLI Help and Generated Assets
 
@@ -56,7 +65,7 @@ generated/man/
 generated/completions/
 ```
 
-See [`docs/install.md`](docs/install.md) for installation instructions.
+See [`docs/user-guide/install.md`](docs/user-guide/install.md) for installation instructions.
 
 ### Quick Walkthrough Example
 

@@ -3,11 +3,25 @@
 The `kat` CLI is a single Rust binary that builds on **Linux** and **Windows**.
 
 ## Prerequisites
-
+ 
 - [Rust](https://rustup.rs) (stable, via `rustup`)
-- Git (to clone the repository)
+- Git
 
-## Standard Installation (Recommended)
+## Quick One-Line Install (Recommended)
+
+You can install KAT (including binary, UNIX man pages, and shell completions) directly in a single command without cloning the repository:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/josucueva/kat/main/install.sh | bash
+```
+
+To install system-wide with a custom prefix:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/josucueva/kat/main/install.sh | bash -s -- --prefix /usr/local
+```
+
+## Build & Install from Source (From Cloned Repository)
 
 From the repository root:
 
@@ -17,7 +31,7 @@ From the repository root:
 
 This automates:
 1. Building `kat` in release mode (`cargo build --release`).
-2. Generating UNIX man pages and shell completion scripts.
+2. Generating UNIX man pages and shell completion scripts (`cargo run --bin generate_assets`).
 3. Installing the binary to `~/.local/bin/kat`.
 4. Installing man pages to `~/.local/share/man/man1/`.
 5. Installing shell completions for Bash, Zsh, and Fish.
