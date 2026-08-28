@@ -9,31 +9,17 @@ use std::process::ExitCode;
 use std::str::FromStr;
 
 use kat::domain::element::Lifecycle;
-use kat::domain::identity::{ChangeId, ElementId, ObjectId, RelationshipId};
+use kat::domain::identity::{ElementId, ObjectId, RelationshipId};
 use kat::domain::ontology::OntologyVersion;
 use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
 use kat::encoding::decode_canonical;
 use kat::encoding::object::CanonicalPayload;
 use kat::repository::change::{
-    ChangeContext, ChangeError, CreateElementInput, DeprecateElementInput, LinkElementInput,
-    PublishedChange, PublishedDeprecateChange, PublishedSupersedeChange, PublishedUpdateChange,
-    SupersedeElementInput, UnlinkElementInput, UpdateElementInput, apply_create_element,
-    apply_deprecate_element, apply_link_element, apply_supersede_element, apply_unlink_element,
-    apply_update_element, persist_prepared_change, persist_prepared_deprecate_change,
-    persist_prepared_link_change, persist_prepared_supersede_change,
-    persist_prepared_unlink_change, persist_prepared_update_change, prepare_change,
-    prepare_change_revision, prepare_deprecate_change_revision, prepare_link_change_revision,
-    prepare_supersede_change_revision, prepare_unlink_change_revision,
-    prepare_update_change_revision, publish_persisted_change, publish_persisted_deprecate_change,
-    publish_persisted_link_change, publish_persisted_supersede_change,
-    publish_persisted_unlink_change, publish_persisted_update_change,
-    validate_create_element_invariants, validate_create_element_ontology,
-    validate_deprecate_element_invariants, validate_deprecate_element_ontology,
-    validate_link_element_invariants, validate_link_element_ontology,
-    validate_supersede_element_invariants, validate_supersede_element_ontology,
-    validate_unlink_element_invariants, validate_update_element_invariants,
-    validate_update_element_ontology,
+    AccountArtifactInput, ChangeError, CreateElementInput, DeprecateElementInput, LinkElementInput,
+    PublishedChange, StagedOperationInput, SupersedeElementInput, UnlinkElementInput,
+    UpdateElementInput, commit_draft_session, prepare_change, publish_single_operation,
+    stage_operation_into_session,
 };
 use kat::repository::init::init_repository;
 use kat::repository::object_store::ObjectStore;
@@ -51,10 +37,6 @@ use kat::repository::resolve::{
 };
 use kat::repository::validation::repository::{ValidationReport, validate_repository};
 
-use kat::repository::change::{
-    AccountArtifactInput, StagedOperationInput, account_artifact, commit_draft_session,
-    stage_operation_into_session,
-};
 use kat::repository::session::{
     abort_draft_session, begin_draft_session, has_draft_session, read_draft_session,
 };
@@ -623,13 +605,6 @@ fn print_repository_status(status: &RepositoryStatus) {
     println!("  unaccounted:  {}", status.accountability.unaccounted);
 }
 
-/// Parsed `kat create` arguments.
-struct CreateArgs {
-    type_arg: String,
-    title: String,
-    description: Option<String>,
-}
-
 /// Maps a CLI type argument to a canonical element type ID.
 ///
 /// Fully-qualified IDs (containing `/`) pass through and are validated by the
@@ -673,19 +648,71 @@ fn resolve_relationship_type(ontology: &OntologyVersion, arg: &str) -> Result<St
 }
 
 /// `kat create <type> --title "..." [--description "..."]` — run a
-/// `CreateElement` change end to end through the Change Engine and publish it
-/// (thin dispatch; all semantics live in the library).
-///
-/// Identity (ElementId, ChangeId) is generated here; the engine stays
-/// deterministic. The resulting stable identifiers are printed for the
-/// caller (and for `kat show`/`kat history`).
-fn run_create(type_arg: String, title: String, description: Option<String>) -> ExitCode {
-    let parsed = CreateArgs {
-        type_arg,
-        title,
-        description,
-    };
+fn fail_mutation(cmd: &str, error: ChangeError) -> ExitCode {
+    match error {
+        ChangeError::Conflict => {
+            let verb = match cmd {
+                "create" => "creating",
+                "update" => "updating",
+                "deprecate" => "deprecating",
+                "supersede" => "superseding",
+                "link" => "linking",
+                "unlink" => "unlinking",
+                "account" => "accounting",
+                _ => "modifying",
+            };
+            eprintln!(
+                "kat {cmd}: the accepted repository state changed while {verb}; nothing was published. Re-run kat {cmd}."
+            );
+        }
+        ChangeError::Precondition(
+            kat::repository::change::PreconditionError::ElementNotActive(id),
+        ) => {
+            eprintln!("kat {cmd}: element {id} is not active in the base state");
+        }
+        ChangeError::Precondition(
+            kat::repository::change::PreconditionError::RelationshipNotFound(id),
+        ) if cmd == "unlink" => {
+            eprintln!("kat unlink: relationship {id} not found in the accepted state");
+        }
+        other => eprintln!("kat {cmd}: {other}"),
+    }
+    ExitCode::FAILURE
+}
 
+fn execute_mutation(
+    repository: &Repository,
+    input: StagedOperationInput,
+    description: Option<String>,
+    cmd_name: &'static str,
+    print_staged: impl FnOnce(&Operation, usize),
+    print_published: impl FnOnce(&Operation, &PublishedChange),
+) -> ExitCode {
+    if has_draft_session(repository.root_dir()) {
+        let mut session = match read_draft_session(repository.root_dir()) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("kat {cmd_name}: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let op = match stage_operation_into_session(repository, &mut session, input) {
+            Ok(op) => op,
+            Err(err) => return fail_mutation(cmd_name, err),
+        };
+        print_staged(&op, session.operations.len());
+        ExitCode::SUCCESS
+    } else {
+        let (op, published) = match publish_single_operation(repository, input, description) {
+            Ok(res) => res,
+            Err(err) => return fail_mutation(cmd_name, err),
+        };
+        print_published(&op, &published);
+        ExitCode::SUCCESS
+    }
+}
+
+fn run_create(type_arg: String, title: String, description: Option<String>) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -693,131 +720,53 @@ fn run_create(type_arg: String, title: String, description: Option<String>) -> E
             return ExitCode::FAILURE;
         }
     };
-
-    // Prepare first so the base ontology is available to resolve the type
-    // argument against (short name -> canonical ID).
     let context = match prepare_change(&repository) {
         Ok(context) => context,
-        Err(error) => return fail_create(error),
+        Err(error) => return fail_mutation("create", error),
     };
-    let type_id = match resolve_element_type(&context.ontology, &parsed.type_arg) {
+    let type_id = match resolve_element_type(&context.ontology, &type_arg) {
         Ok(type_id) => type_id,
         Err(message) => {
             eprintln!("kat create: {message}");
             return ExitCode::FAILURE;
         }
     };
-
-    if has_draft_session(repository.root_dir()) {
-        let mut session = match read_draft_session(repository.root_dir()) {
-            Ok(s) => s,
-            Err(err) => {
-                eprintln!("kat create: {err}");
-                return ExitCode::FAILURE;
-            }
-        };
-
-        let element_id = ElementId::new();
-        let mut properties = Vec::new();
-        properties.push(("title".to_string(), PropertyValue::Text(parsed.title)));
-        if let Some(desc) = parsed.description {
-            properties.push(("description".to_string(), PropertyValue::Text(desc)));
-        }
-        let input = CreateElementInput {
-            element_id,
-            type_id,
-            properties,
-        };
-
-        let op = match stage_operation_into_session(
-            &repository,
-            &mut session,
-            StagedOperationInput::CreateElement(input),
-        ) {
-            Ok(op) => op,
-            Err(err) => return fail_create(err),
-        };
-
-        println!("staged create element");
-        println!("  element_id:        {element_id}");
-        if let Operation::CreateElement { new_version } = op {
-            println!("  version_id:        {new_version}");
-        }
-        println!("  change operations: {}", session.operations.len());
-        return ExitCode::SUCCESS;
+    let element_id = ElementId::new();
+    let mut properties = vec![("title".to_string(), PropertyValue::Text(title))];
+    if let Some(desc) = description {
+        properties.push(("description".to_string(), PropertyValue::Text(desc)));
     }
-
-    let published = match create_pipeline(&repository, context, type_id, &parsed) {
-        Ok(published) => published,
-        Err(error) => return fail_create(error),
-    };
-
-    let prepared = &published.persisted.prepared;
-    println!("element_id: {}", prepared.creation.element.element_id);
-    println!("version_id: {}", prepared.creation.element_version_id);
-    println!("state_id: {}", prepared.state_id);
-    println!("change_id: {}", prepared.change.change_id);
-    println!("change_revision_id: {}", prepared.change_revision_id);
-    ExitCode::SUCCESS
-}
-
-/// Prints a change-engine failure and returns the failure exit code. A CAS
-/// conflict is reported explicitly and never retried automatically.
-fn fail_create(error: ChangeError) -> ExitCode {
-    match error {
-        ChangeError::Conflict => {
-            eprintln!(
-                "kat create: the accepted repository state changed while creating; nothing was published. Re-run kat create."
-            );
-        }
-        other => eprintln!("kat create: {other}"),
-    }
-    ExitCode::FAILURE
-}
-
-/// Runs a prepared `CreateElement` through the full engine pipeline and
-/// publishes it: apply -> ontology -> invariants -> revision -> persist ->
-/// publish. `--title`/`--description` become text element properties; the
-/// engine owns canonical normalization.
-fn create_pipeline(
-    repository: &Repository,
-    context: ChangeContext,
-    type_id: String,
-    parsed: &CreateArgs,
-) -> Result<PublishedChange, ChangeError> {
-    let mut properties = vec![(
-        "title".to_string(),
-        PropertyValue::Text(parsed.title.clone()),
-    )];
-    if let Some(description) = &parsed.description {
-        properties.push((
-            "description".to_string(),
-            PropertyValue::Text(description.clone()),
-        ));
-    }
-    let input = CreateElementInput {
-        element_id: ElementId::new(),
+    let input = StagedOperationInput::CreateElement(CreateElementInput {
+        element_id,
         type_id,
         properties,
-    };
-    let prepared = apply_create_element(context, input)?;
-    let validated = validate_create_element_ontology(prepared)?;
-    let validated = validate_create_element_invariants(validated)?;
-    let revision = prepare_change_revision(validated, ChangeId::new(), None)?;
-    let persisted = persist_prepared_change(repository, revision)?;
-    publish_persisted_change(repository, persisted)
+    });
+    execute_mutation(
+        &repository,
+        input,
+        None,
+        "create",
+        |op, count| {
+            println!("staged create element");
+            println!("  element_id:        {element_id}");
+            if let Operation::CreateElement { new_version } = op {
+                println!("  version_id:        {new_version}");
+            }
+            println!("  change operations: {count}");
+        },
+        |op, published| {
+            let prepared = &published.persisted.prepared;
+            println!("element_id: {element_id}");
+            if let Operation::CreateElement { new_version } = op {
+                println!("version_id: {new_version}");
+            }
+            println!("state_id: {}", prepared.state_id);
+            println!("change_id: {}", prepared.change.change_id);
+            println!("change_revision_id: {}", prepared.change_revision_id);
+        },
+    )
 }
 
-/// Parsed `kat update` arguments.
-struct UpdateArgs {
-    element_id: ElementId,
-    title: Option<String>,
-    description: Option<String>,
-}
-
-/// `kat update <element-id> [--title "..."] [--description "..."]` — run an
-/// `UpdateElement` change end to end through the Change Engine and publish it
-/// (thin dispatch; all semantics live in the library).
 fn run_update(
     element_id_str: String,
     title: Option<String>,
@@ -829,7 +778,6 @@ fn run_update(
         );
         return ExitCode::FAILURE;
     }
-
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -837,179 +785,91 @@ fn run_update(
             return ExitCode::FAILURE;
         }
     };
-
     let element_id = match resolve_cli_element_id(&repository, &element_id_str, "update") {
         Ok(id) => id,
         Err(code) => return code,
     };
 
-    let parsed = UpdateArgs {
-        element_id,
-        title,
-        description,
-    };
-
-    let repository = match open_repository(Path::new(".")) {
-        Ok(repository) => repository,
-        Err(error) => {
-            eprintln!("kat update: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if has_draft_session(repository.root_dir()) {
-        let mut session = match read_draft_session(repository.root_dir()) {
+    let previous_version_id = if has_draft_session(repository.root_dir()) {
+        let session = match read_draft_session(repository.root_dir()) {
             Ok(s) => s,
             Err(err) => {
                 eprintln!("kat update: {err}");
                 return ExitCode::FAILURE;
             }
         };
-
-        let previous_version_id = match session
+        match session
             .working_state
             .elements
             .iter()
-            .find(|e| e.element_id == parsed.element_id)
+            .find(|e| e.element_id == element_id)
         {
             Some(entry) => entry.version,
             None => {
-                eprintln!(
-                    "kat update: element {} not found in base state",
-                    parsed.element_id
-                );
+                eprintln!("kat update: element {element_id} not found in base state");
                 return ExitCode::FAILURE;
             }
-        };
-
-        let mut properties = Vec::new();
-        if let Some(title) = &parsed.title {
-            properties.push(("title".to_string(), PropertyValue::Text(title.clone())));
         }
-        if let Some(description) = &parsed.description {
-            properties.push((
-                "description".to_string(),
-                PropertyValue::Text(description.clone()),
-            ));
-        }
-
-        let input = UpdateElementInput {
-            element_id: parsed.element_id,
-            expected_version: previous_version_id,
-            properties,
+    } else {
+        let context = match prepare_change(&repository) {
+            Ok(c) => c,
+            Err(err) => return fail_mutation("update", err),
         };
-
-        let op = match stage_operation_into_session(
-            &repository,
-            &mut session,
-            StagedOperationInput::UpdateElement(input),
-        ) {
-            Ok(op) => op,
-            Err(err) => return fail_update(err),
-        };
-
-        println!("staged update element");
-        println!("  element_id:        {}", parsed.element_id);
-        if let Operation::UpdateElement { new_version, .. } = op {
-            println!("  version_id:        {new_version}");
-        }
-        println!("  change operations: {}", session.operations.len());
-        return ExitCode::SUCCESS;
-    }
-
-    let context = match prepare_change(&repository) {
-        Ok(context) => context,
-        Err(error) => return fail_update(error),
-    };
-
-    let previous_version_id = match context
-        .base_state
-        .elements
-        .iter()
-        .find(|e| e.element_id == parsed.element_id)
-    {
-        Some(entry) => entry.version,
-        None => {
-            eprintln!(
-                "kat update: element {} not found in the base state",
-                parsed.element_id
-            );
-            return ExitCode::FAILURE;
+        match context
+            .base_state
+            .elements
+            .iter()
+            .find(|e| e.element_id == element_id)
+        {
+            Some(entry) => entry.version,
+            None => {
+                eprintln!("kat update: element {element_id} not found in the base state");
+                return ExitCode::FAILURE;
+            }
         }
     };
 
-    let published = match update_pipeline(&repository, context, previous_version_id, &parsed) {
-        Ok(published) => published,
-        Err(error) => return fail_update(error),
-    };
-
-    let prepared = &published.persisted.prepared;
-    println!("element_id: {}", prepared.update.element.element_id);
-    println!(
-        "previous_version_id: {}",
-        prepared.update.previous_version_id
-    );
-    println!("version_id: {}", prepared.update.element_version_id);
-    println!("state_id: {}", prepared.state_id);
-    println!("change_id: {}", prepared.change.change_id);
-    println!("change_revision_id: {}", prepared.change_revision_id);
-    ExitCode::SUCCESS
-}
-
-fn fail_update(error: ChangeError) -> ExitCode {
-    match error {
-        ChangeError::Precondition(
-            kat::repository::change::PreconditionError::ElementNotActive(id),
-        ) => {
-            eprintln!("kat update: element {id} is not active in the base state");
-        }
-        ChangeError::Conflict => {
-            eprintln!(
-                "kat update: the accepted repository state changed while updating; nothing was published. Re-run kat update."
-            );
-        }
-        other => eprintln!("kat update: {other}"),
-    }
-    ExitCode::FAILURE
-}
-
-fn update_pipeline(
-    repository: &Repository,
-    context: ChangeContext,
-    expected_version: ObjectId,
-    parsed: &UpdateArgs,
-) -> Result<PublishedUpdateChange, ChangeError> {
     let mut properties = Vec::new();
-    if let Some(title) = &parsed.title {
-        properties.push(("title".to_string(), PropertyValue::Text(title.clone())));
+    if let Some(t) = title {
+        properties.push(("title".to_string(), PropertyValue::Text(t)));
     }
-    if let Some(description) = &parsed.description {
-        properties.push((
-            "description".to_string(),
-            PropertyValue::Text(description.clone()),
-        ));
+    if let Some(d) = description {
+        properties.push(("description".to_string(), PropertyValue::Text(d)));
     }
-    let input = UpdateElementInput {
-        element_id: parsed.element_id,
-        expected_version,
+
+    let input = StagedOperationInput::UpdateElement(UpdateElementInput {
+        element_id,
+        expected_version: previous_version_id,
         properties,
-    };
-    let prepared = apply_update_element(repository, context, input)?;
-    let validated = validate_update_element_ontology(prepared)?;
-    let validated = validate_update_element_invariants(validated)?;
-    let revision = prepare_update_change_revision(validated, ChangeId::new(), None)?;
-    let persisted = persist_prepared_update_change(repository, revision)?;
-    publish_persisted_update_change(repository, persisted)
+    });
+
+    execute_mutation(
+        &repository,
+        input,
+        None,
+        "update",
+        |op, count| {
+            println!("staged update element");
+            println!("  element_id:        {element_id}");
+            if let Operation::UpdateElement { new_version, .. } = op {
+                println!("  version_id:        {new_version}");
+            }
+            println!("  change operations: {count}");
+        },
+        |op, published| {
+            let prepared = &published.persisted.prepared;
+            println!("element_id: {element_id}");
+            println!("previous_version_id: {previous_version_id}");
+            if let Operation::UpdateElement { new_version, .. } = op {
+                println!("version_id: {new_version}");
+            }
+            println!("state_id: {}", prepared.state_id);
+            println!("change_id: {}", prepared.change.change_id);
+            println!("change_revision_id: {}", prepared.change_revision_id);
+        },
+    )
 }
 
-/// Parsed `kat deprecate` arguments.
-struct DeprecateArgs {
-    element_id: ElementId,
-}
-
-/// `kat deprecate <element-id>` — run a `DeprecateElement` change end to end
-/// through the Change Engine and publish it (thin dispatch; all semantics live
-/// in the library).
 fn run_deprecate(element_id_str: String) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
@@ -1018,146 +878,82 @@ fn run_deprecate(element_id_str: String) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-
     let element_id = match resolve_cli_element_id(&repository, &element_id_str, "deprecate") {
         Ok(id) => id,
         Err(code) => return code,
     };
 
-    let parsed = DeprecateArgs { element_id };
-
-    if has_draft_session(repository.root_dir()) {
-        let mut session = match read_draft_session(repository.root_dir()) {
+    let expected_version = if has_draft_session(repository.root_dir()) {
+        let session = match read_draft_session(repository.root_dir()) {
             Ok(s) => s,
             Err(err) => {
                 eprintln!("kat deprecate: {err}");
                 return ExitCode::FAILURE;
             }
         };
-
-        let expected_version = match session
+        match session
             .working_state
             .elements
             .iter()
-            .find(|e| e.element_id == parsed.element_id)
+            .find(|e| e.element_id == element_id)
         {
             Some(entry) => entry.version,
             None => {
-                eprintln!(
-                    "kat deprecate: element {} not found in base state",
-                    parsed.element_id
-                );
+                eprintln!("kat deprecate: element {element_id} not found in base state");
                 return ExitCode::FAILURE;
             }
-        };
-
-        let input = DeprecateElementInput {
-            element_id: parsed.element_id,
-            expected_version,
-        };
-
-        let op = match stage_operation_into_session(
-            &repository,
-            &mut session,
-            StagedOperationInput::DeprecateElement(input),
-        ) {
-            Ok(op) => op,
-            Err(err) => return fail_deprecate(err),
-        };
-
-        println!("staged deprecate element");
-        println!("  element_id:        {}", parsed.element_id);
-        if let Operation::DeprecateElement { new_version, .. } = op {
-            println!("  version_id:        {new_version}");
         }
-        println!("  change operations: {}", session.operations.len());
-        return ExitCode::SUCCESS;
-    }
-
-    let context = match prepare_change(&repository) {
-        Ok(context) => context,
-        Err(error) => return fail_deprecate(error),
-    };
-
-    let expected_version = match context
-        .base_state
-        .elements
-        .iter()
-        .find(|e| e.element_id == parsed.element_id)
-    {
-        Some(entry) => entry.version,
-        None => {
-            eprintln!(
-                "kat deprecate: element {} not found in the base state",
-                parsed.element_id
-            );
-            return ExitCode::FAILURE;
+    } else {
+        let context = match prepare_change(&repository) {
+            Ok(c) => c,
+            Err(err) => return fail_mutation("deprecate", err),
+        };
+        match context
+            .base_state
+            .elements
+            .iter()
+            .find(|e| e.element_id == element_id)
+        {
+            Some(entry) => entry.version,
+            None => {
+                eprintln!("kat deprecate: element {element_id} not found in the base state");
+                return ExitCode::FAILURE;
+            }
         }
     };
 
-    let published = match deprecate_pipeline(&repository, context, expected_version, &parsed) {
-        Ok(published) => published,
-        Err(error) => return fail_deprecate(error),
-    };
-
-    let prepared = &published.persisted.prepared;
-    println!("element_id: {}", prepared.deprecation.element.element_id);
-    println!(
-        "previous_version_id: {}",
-        prepared.deprecation.previous_version_id
-    );
-    println!("version_id: {}", prepared.deprecation.element_version_id);
-    println!("state_id: {}", prepared.state_id);
-    println!("change_id: {}", prepared.change.change_id);
-    println!("change_revision_id: {}", prepared.change_revision_id);
-    ExitCode::SUCCESS
-}
-
-fn fail_deprecate(error: ChangeError) -> ExitCode {
-    match error {
-        ChangeError::Precondition(
-            kat::repository::change::PreconditionError::ElementNotActive(id),
-        ) => {
-            eprintln!("kat deprecate: element {id} is not active in the base state");
-        }
-        ChangeError::Conflict => {
-            eprintln!(
-                "kat deprecate: the accepted repository state changed while deprecating; nothing was published. Re-run kat deprecate."
-            );
-        }
-        other => eprintln!("kat deprecate: {other}"),
-    }
-    ExitCode::FAILURE
-}
-
-fn deprecate_pipeline(
-    repository: &Repository,
-    context: ChangeContext,
-    expected_version: ObjectId,
-    parsed: &DeprecateArgs,
-) -> Result<PublishedDeprecateChange, ChangeError> {
-    let input = DeprecateElementInput {
-        element_id: parsed.element_id,
+    let input = StagedOperationInput::DeprecateElement(DeprecateElementInput {
+        element_id,
         expected_version,
-    };
-    let prepared = apply_deprecate_element(repository, context, input)?;
-    let validated = validate_deprecate_element_ontology(prepared)?;
-    let validated = validate_deprecate_element_invariants(validated)?;
-    let revision = prepare_deprecate_change_revision(validated, ChangeId::new(), None)?;
-    let persisted = persist_prepared_deprecate_change(repository, revision)?;
-    publish_persisted_deprecate_change(repository, persisted)
+    });
+
+    execute_mutation(
+        &repository,
+        input,
+        None,
+        "deprecate",
+        |op, count| {
+            println!("staged deprecate element");
+            println!("  element_id:        {element_id}");
+            if let Operation::DeprecateElement { new_version, .. } = op {
+                println!("  version_id:        {new_version}");
+            }
+            println!("  change operations: {count}");
+        },
+        |op, published| {
+            let prepared = &published.persisted.prepared;
+            println!("element_id: {element_id}");
+            println!("previous_version_id: {expected_version}");
+            if let Operation::DeprecateElement { new_version, .. } = op {
+                println!("version_id: {new_version}");
+            }
+            println!("state_id: {}", prepared.state_id);
+            println!("change_id: {}", prepared.change.change_id);
+            println!("change_revision_id: {}", prepared.change_revision_id);
+        },
+    )
 }
 
-/// Parsed `kat supersede` arguments.
-struct SupersedeArgs {
-    existing_element_id: ElementId,
-    replacement_type_arg: String,
-    title: String,
-    description: Option<String>,
-}
-
-/// `kat supersede <existing-id> <replacement-type> --title "..." [--description "..."]` — run a
-/// `SupersedeElement` change end to end through the Change Engine and publish it.
 fn run_supersede(
     existing_id_str: String,
     replacement_type: String,
@@ -1171,226 +967,127 @@ fn run_supersede(
             return ExitCode::FAILURE;
         }
     };
-
     let existing_element_id =
         match resolve_cli_element_id(&repository, &existing_id_str, "supersede") {
             Ok(id) => id,
             Err(code) => return code,
         };
-
-    let parsed = SupersedeArgs {
-        existing_element_id,
-        replacement_type_arg: replacement_type,
-        title,
-        description,
-    };
-
-    let repository = match open_repository(Path::new(".")) {
-        Ok(repository) => repository,
-        Err(error) => {
-            eprintln!("kat supersede: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-
     let context = match prepare_change(&repository) {
         Ok(context) => context,
-        Err(error) => return fail_supersede(error),
+        Err(error) => return fail_mutation("supersede", error),
     };
-
-    let previous_version_id = match context
-        .base_state
-        .elements
-        .iter()
-        .find(|e| e.element_id == parsed.existing_element_id)
-    {
-        Some(entry) => entry.version,
-        None => {
-            eprintln!(
-                "kat supersede: element {} not found in the base state",
-                parsed.existing_element_id
-            );
+    let replacement_type_id = match resolve_element_type(&context.ontology, &replacement_type) {
+        Ok(id) => id,
+        Err(message) => {
+            eprintln!("kat supersede: {message}");
             return ExitCode::FAILURE;
         }
     };
 
-    let replacement_type_id =
-        match resolve_element_type(&context.ontology, &parsed.replacement_type_arg) {
-            Ok(type_id) => type_id,
-            Err(message) => {
-                eprintln!("kat supersede: {message}");
-                return ExitCode::FAILURE;
-            }
-        };
-
-    if has_draft_session(repository.root_dir()) {
-        let mut session = match read_draft_session(repository.root_dir()) {
+    let expected_existing_version = if has_draft_session(repository.root_dir()) {
+        let session = match read_draft_session(repository.root_dir()) {
             Ok(s) => s,
             Err(err) => {
                 eprintln!("kat supersede: {err}");
                 return ExitCode::FAILURE;
             }
         };
-
-        let expected_existing_version = match session
+        match session
             .working_state
             .elements
             .iter()
-            .find(|e| e.element_id == parsed.existing_element_id)
+            .find(|e| e.element_id == existing_element_id)
+        {
+            Some(entry) => entry.version,
+            None => {
+                eprintln!("kat supersede: element {existing_element_id} not found in base state");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        match context
+            .base_state
+            .elements
+            .iter()
+            .find(|e| e.element_id == existing_element_id)
         {
             Some(entry) => entry.version,
             None => {
                 eprintln!(
-                    "kat supersede: element {} not found in candidate working state",
-                    parsed.existing_element_id
+                    "kat supersede: element {existing_element_id} not found in the base state"
                 );
                 return ExitCode::FAILURE;
             }
-        };
-
-        let replacement_element_id = ElementId::new();
-        let relationship_id = RelationshipId::new();
-        let mut replacement_properties = Vec::new();
-        replacement_properties.push(("title".to_string(), PropertyValue::Text(parsed.title)));
-        if let Some(desc) = parsed.description {
-            replacement_properties.push(("description".to_string(), PropertyValue::Text(desc)));
         }
-
-        let input = SupersedeElementInput {
-            existing_element_id: parsed.existing_element_id,
-            expected_existing_version,
-            replacement_element_id,
-            replacement_type_id,
-            replacement_properties,
-            relationship_id,
-        };
-
-        let _op = match stage_operation_into_session(
-            &repository,
-            &mut session,
-            StagedOperationInput::SupersedeElement(input),
-        ) {
-            Ok(op) => op,
-            Err(err) => return fail_supersede(err),
-        };
-
-        println!("staged supersede element");
-        println!("  existing_element_id:    {}", parsed.existing_element_id);
-        println!("  replacement_element_id: {replacement_element_id}");
-        println!("  change operations:      {}", session.operations.len());
-        return ExitCode::SUCCESS;
-    }
-
-    let published = match supersede_pipeline(
-        &repository,
-        context,
-        previous_version_id,
-        replacement_type_id,
-        &parsed,
-    ) {
-        Ok(published) => published,
-        Err(error) => return fail_supersede(error),
     };
 
-    let prepared = &published.persisted.prepared;
-    println!(
-        "existing_element_id: {}",
-        prepared.supersede.existing_element_id
-    );
-    println!(
-        "previous_version_id: {}",
-        prepared.supersede.previous_existing_version_id
-    );
-    println!(
-        "superseded_version_id: {}",
-        prepared.supersede.new_existing_version_id
-    );
-    println!();
-    println!(
-        "replacement_element_id: {}",
-        prepared.supersede.replacement_element_id
-    );
-    println!(
-        "replacement_version_id: {}",
-        prepared.supersede.replacement_version_id
-    );
-    println!();
-    println!("relationship_id: {}", prepared.supersede.relationship_id);
-    println!(
-        "relationship_version_id: {}",
-        prepared.supersede.relationship_version_id
-    );
-    println!();
-    println!("state_id: {}", prepared.state_id);
-    println!("change_id: {}", prepared.change.change_id);
-    println!("change_revision_id: {}", prepared.change_revision_id);
-    ExitCode::SUCCESS
-}
-
-fn fail_supersede(error: ChangeError) -> ExitCode {
-    match error {
-        ChangeError::Precondition(
-            kat::repository::change::PreconditionError::ElementNotActive(id),
-        ) => {
-            eprintln!("kat supersede: element {id} is not active in the base state");
-        }
-        ChangeError::Conflict => {
-            eprintln!(
-                "kat supersede: the accepted repository state changed while superseding; nothing was published. Re-run kat supersede."
-            );
-        }
-        other => eprintln!("kat supersede: {other}"),
+    let replacement_element_id = ElementId::new();
+    let relationship_id = RelationshipId::new();
+    let mut replacement_properties = vec![("title".to_string(), PropertyValue::Text(title))];
+    if let Some(desc) = description {
+        replacement_properties.push(("description".to_string(), PropertyValue::Text(desc)));
     }
-    ExitCode::FAILURE
-}
 
-fn supersede_pipeline(
-    repository: &Repository,
-    context: ChangeContext,
-    expected_existing_version: ObjectId,
-    replacement_type_id: String,
-    parsed: &SupersedeArgs,
-) -> Result<PublishedSupersedeChange, ChangeError> {
-    let mut replacement_properties = vec![(
-        "title".to_string(),
-        PropertyValue::Text(parsed.title.clone()),
-    )];
-    if let Some(description) = &parsed.description {
-        replacement_properties.push((
-            "description".to_string(),
-            PropertyValue::Text(description.clone()),
-        ));
-    }
-    let input = SupersedeElementInput {
-        existing_element_id: parsed.existing_element_id,
+    let input = StagedOperationInput::SupersedeElement(SupersedeElementInput {
+        existing_element_id,
         expected_existing_version,
-        replacement_element_id: ElementId::new(),
+        replacement_element_id,
         replacement_type_id,
         replacement_properties,
-        relationship_id: RelationshipId::new(),
-    };
-    let prepared = apply_supersede_element(repository, context, input)?;
-    let validated = validate_supersede_element_ontology(prepared)?;
-    let validated = validate_supersede_element_invariants(validated)?;
-    let revision = prepare_supersede_change_revision(validated, ChangeId::new(), None)?;
-    let persisted = persist_prepared_supersede_change(repository, revision)?;
-    publish_persisted_supersede_change(repository, persisted)
+        relationship_id,
+    });
+
+    execute_mutation(
+        &repository,
+        input,
+        None,
+        "supersede",
+        |_op, count| {
+            println!("staged supersede element");
+            println!("  existing_element_id:    {existing_element_id}");
+            println!("  replacement_element_id: {replacement_element_id}");
+            println!("  change operations:      {count}");
+        },
+        |op, published| {
+            let prepared = &published.persisted.prepared;
+            if let Operation::Supersede {
+                existing_element,
+                expected_existing_version,
+                replacement_element,
+                replacement_version,
+                superseding_relationship,
+            } = op
+            {
+                let superseded_version = prepared
+                    .creation
+                    .candidate_state
+                    .elements
+                    .iter()
+                    .find(|e| e.element_id == *existing_element)
+                    .map(|e| e.version)
+                    .unwrap_or(*expected_existing_version);
+                println!("existing_element_id: {existing_element}");
+                println!("previous_version_id: {expected_existing_version}");
+                println!("superseded_version_id: {superseded_version}");
+                println!();
+                println!("replacement_element_id: {replacement_element}");
+                println!("replacement_version_id: {replacement_version}");
+                println!();
+                println!("relationship_id: {relationship_id}");
+                println!("relationship_version_id: {superseding_relationship}");
+                println!();
+            }
+            println!("state_id: {}", prepared.state_id);
+            println!("change_id: {}", prepared.change.change_id);
+            println!("change_revision_id: {}", prepared.change_revision_id);
+        },
+    )
 }
 
-/// Parsed `kat link` arguments.
-struct LinkArgs {
-    relationship_type_arg: String,
-    source_element_id: ElementId,
-    target_element_id: ElementId,
-    description: Option<String>,
-}
-
-/// `kat link <relationship-type> <source-element-id> <target-element-id> [--description "..."]` —
-/// run a `LinkElement` change end to end through the Change Engine and publish it.
 fn run_link(
-    type_str: String,
-    source_str: String,
-    target_str: String,
+    relationship_type_arg: String,
+    source_element_id_str: String,
+    target_element_id_str: String,
     description: Option<String>,
 ) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
@@ -1400,163 +1097,64 @@ fn run_link(
             return ExitCode::FAILURE;
         }
     };
-
-    let source_element_id = match resolve_cli_element_id(&repository, &source_str, "link") {
-        Ok(id) => id,
-        Err(code) => return code,
-    };
-
-    let target_element_id = match resolve_cli_element_id(&repository, &target_str, "link") {
-        Ok(id) => id,
-        Err(code) => return code,
-    };
-
-    let parsed = LinkArgs {
-        relationship_type_arg: type_str,
-        source_element_id,
-        target_element_id,
-        description,
-    };
-
-    let repository = match open_repository(Path::new(".")) {
-        Ok(repository) => repository,
-        Err(error) => {
-            eprintln!("kat link: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-
+    let source_element_id =
+        match resolve_cli_element_id(&repository, &source_element_id_str, "link") {
+            Ok(id) => id,
+            Err(code) => return code,
+        };
+    let target_element_id =
+        match resolve_cli_element_id(&repository, &target_element_id_str, "link") {
+            Ok(id) => id,
+            Err(code) => return code,
+        };
     let context = match prepare_change(&repository) {
         Ok(context) => context,
-        Err(error) => return fail_link(error),
+        Err(error) => return fail_mutation("link", error),
     };
-
     let relationship_type_id =
-        match resolve_relationship_type(&context.ontology, &parsed.relationship_type_arg) {
-            Ok(type_id) => type_id,
+        match resolve_relationship_type(&context.ontology, &relationship_type_arg) {
+            Ok(id) => id,
             Err(message) => {
                 eprintln!("kat link: {message}");
                 return ExitCode::FAILURE;
             }
         };
 
-    if has_draft_session(repository.root_dir()) {
-        let mut session = match read_draft_session(repository.root_dir()) {
-            Ok(s) => s,
-            Err(err) => {
-                eprintln!("kat link: {err}");
-                return ExitCode::FAILURE;
-            }
-        };
-
-        let relationship_id = RelationshipId::new();
-        let input = LinkElementInput {
-            relationship_id,
-            relationship_type_id,
-            source_element_id: parsed.source_element_id,
-            target_element_id: parsed.target_element_id,
-            properties: vec![],
-        };
-
-        let _op = match stage_operation_into_session(
-            &repository,
-            &mut session,
-            StagedOperationInput::LinkElement(input),
-        ) {
-            Ok(op) => op,
-            Err(err) => return fail_link(err),
-        };
-
-        println!("staged link");
-        println!("  relationship_id:   {relationship_id}");
-        println!("  change operations: {}", session.operations.len());
-        return ExitCode::SUCCESS;
-    }
-
     let relationship_id = RelationshipId::new();
-    let change_id = ChangeId::new();
+    let input = StagedOperationInput::LinkElement(LinkElementInput {
+        relationship_id,
+        relationship_type_id,
+        source_element_id,
+        target_element_id,
+        properties: vec![],
+    });
 
-    let prepared = match apply_link_element(
+    execute_mutation(
         &repository,
-        context,
-        LinkElementInput {
-            relationship_id,
-            relationship_type_id,
-            source_element_id: parsed.source_element_id,
-            target_element_id: parsed.target_element_id,
-            properties: vec![],
+        input,
+        description,
+        "link",
+        |_op, count| {
+            println!("staged link");
+            println!("  relationship_id:   {relationship_id}");
+            println!("  change operations: {count}");
         },
-    ) {
-        Ok(prepared) => prepared,
-        Err(error) => return fail_link(error),
-    };
-
-    let ont_validated = match validate_link_element_ontology(prepared) {
-        Ok(validated) => validated,
-        Err(error) => return fail_link(error),
-    };
-
-    let inv_validated = match validate_link_element_invariants(ont_validated) {
-        Ok(validated) => validated,
-        Err(error) => return fail_link(error),
-    };
-
-    let prepared_revision =
-        match prepare_link_change_revision(inv_validated, change_id, parsed.description) {
-            Ok(revision) => revision,
-            Err(error) => return fail_link(error),
-        };
-
-    let persisted = match persist_prepared_link_change(&repository, prepared_revision) {
-        Ok(persisted) => persisted,
-        Err(error) => return fail_link(error),
-    };
-
-    let published = match publish_persisted_link_change(&repository, persisted) {
-        Ok(published) => published,
-        Err(error) => return fail_link(error),
-    };
-
-    let prepared = &published.persisted.prepared;
-    println!("relationship_id: {}", prepared.link.relationship_id);
-    println!(
-        "relationship_version_id: {}",
-        prepared.link.relationship_version_id
-    );
-    println!(
-        "source_element_id: {}",
-        prepared.link.relationship.source_element_id
-    );
-    println!(
-        "target_element_id: {}",
-        prepared.link.relationship.target_element_id
-    );
-    println!("state_id: {}", prepared.state_id);
-    println!("change_id: {}", prepared.change.change_id);
-    println!("change_revision_id: {}", prepared.change_revision_id);
-    ExitCode::SUCCESS
-}
-
-fn fail_link(error: ChangeError) -> ExitCode {
-    match error {
-        ChangeError::Precondition(
-            kat::repository::change::PreconditionError::ElementNotActive(id),
-        ) => {
-            eprintln!("kat link: element {id} is not active in the base state");
-        }
-        ChangeError::Conflict => {
-            eprintln!(
-                "kat link: the accepted repository state changed while linking; nothing was published. Re-run kat link."
-            );
-        }
-        other => eprintln!("kat link: {other}"),
-    }
-    ExitCode::FAILURE
-}
-
-struct UnlinkArgs {
-    relationship_id: RelationshipId,
-    description: Option<String>,
+        |op, published| {
+            let prepared = &published.persisted.prepared;
+            println!("relationship_id: {relationship_id}");
+            if let Operation::Link {
+                new_relationship_version,
+            } = op
+            {
+                println!("relationship_version_id: {new_relationship_version}");
+            }
+            println!("source_element_id: {source_element_id}");
+            println!("target_element_id: {target_element_id}");
+            println!("state_id: {}", prepared.state_id);
+            println!("change_id: {}", prepared.change.change_id);
+            println!("change_revision_id: {}", prepared.change_revision_id);
+        },
+    )
 }
 
 fn run_unlink(relationship_id_str: String, description: Option<String>) -> ExitCode {
@@ -1567,146 +1165,78 @@ fn run_unlink(relationship_id_str: String, description: Option<String>) -> ExitC
             return ExitCode::FAILURE;
         }
     };
-
     let relationship_id =
         match resolve_cli_relationship_id(&repository, &relationship_id_str, "unlink") {
             Ok(id) => id,
             Err(code) => return code,
         };
 
-    let parsed = UnlinkArgs {
-        relationship_id,
-        description,
-    };
-
-    if has_draft_session(repository.root_dir()) {
-        let mut session = match read_draft_session(repository.root_dir()) {
+    let expected_version = if has_draft_session(repository.root_dir()) {
+        let session = match read_draft_session(repository.root_dir()) {
             Ok(s) => s,
             Err(err) => {
                 eprintln!("kat unlink: {err}");
                 return ExitCode::FAILURE;
             }
         };
-
-        let expected_version = match session
+        match session
             .working_state
             .relationships
             .iter()
-            .find(|r| r.relationship_id == parsed.relationship_id)
+            .find(|r| r.relationship_id == relationship_id)
+        {
+            Some(entry) => entry.version,
+            None => {
+                eprintln!("kat unlink: relationship {relationship_id} not found in base state");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        let context = match prepare_change(&repository) {
+            Ok(context) => context,
+            Err(error) => return fail_mutation("unlink", error),
+        };
+        match context
+            .base_state
+            .relationships
+            .iter()
+            .find(|r| r.relationship_id == relationship_id)
         {
             Some(entry) => entry.version,
             None => {
                 eprintln!(
-                    "kat unlink: relationship {} not found in base state",
-                    parsed.relationship_id
+                    "kat unlink: relationship {relationship_id} not found in the accepted state"
                 );
                 return ExitCode::FAILURE;
             }
-        };
-
-        let input = UnlinkElementInput {
-            relationship_id: parsed.relationship_id,
-            expected_version,
-        };
-
-        let _op = match stage_operation_into_session(
-            &repository,
-            &mut session,
-            StagedOperationInput::UnlinkElement(input),
-        ) {
-            Ok(op) => op,
-            Err(err) => return fail_unlink(err),
-        };
-
-        println!("staged unlink");
-        println!("  relationship_id:   {}", parsed.relationship_id);
-        println!("  change operations: {}", session.operations.len());
-        return ExitCode::SUCCESS;
-    }
-
-    let context = match prepare_change(&repository) {
-        Ok(context) => context,
-        Err(error) => return fail_unlink(error),
-    };
-
-    let expected_version = match context
-        .base_state
-        .relationships
-        .iter()
-        .find(|r| r.relationship_id == parsed.relationship_id)
-    {
-        Some(entry) => entry.version,
-        None => {
-            eprintln!(
-                "kat unlink: relationship {} not found in the accepted state",
-                parsed.relationship_id
-            );
-            return ExitCode::FAILURE;
         }
     };
 
-    let change_id = ChangeId::new();
+    let input = StagedOperationInput::UnlinkElement(UnlinkElementInput {
+        relationship_id,
+        expected_version,
+    });
 
-    let prepared = match apply_unlink_element(
+    execute_mutation(
         &repository,
-        context,
-        UnlinkElementInput {
-            relationship_id: parsed.relationship_id,
-            expected_version,
+        input,
+        description,
+        "unlink",
+        |_op, count| {
+            println!("staged unlink");
+            println!("  relationship_id:   {relationship_id}");
+            println!("  change operations: {count}");
         },
-    ) {
-        Ok(prepared) => prepared,
-        Err(error) => return fail_unlink(error),
-    };
-
-    let validated = match validate_unlink_element_invariants(prepared) {
-        Ok(validated) => validated,
-        Err(error) => return fail_unlink(error),
-    };
-
-    let prepared_revision =
-        match prepare_unlink_change_revision(validated, change_id, parsed.description) {
-            Ok(revision) => revision,
-            Err(error) => return fail_unlink(error),
-        };
-
-    let persisted = match persist_prepared_unlink_change(&repository, prepared_revision) {
-        Ok(persisted) => persisted,
-        Err(error) => return fail_unlink(error),
-    };
-
-    let published = match publish_persisted_unlink_change(&repository, persisted) {
-        Ok(published) => published,
-        Err(error) => return fail_unlink(error),
-    };
-
-    let prepared = &published.persisted.prepared;
-    println!("relationship_id: {}", prepared.unlink.relationship_id);
-    println!("state_id: {}", prepared.state_id);
-    println!("change_id: {}", prepared.change.change_id);
-    println!("change_revision_id: {}", prepared.change_revision_id);
-    ExitCode::SUCCESS
+        |_op, published| {
+            let prepared = &published.persisted.prepared;
+            println!("relationship_id: {relationship_id}");
+            println!("state_id: {}", prepared.state_id);
+            println!("change_id: {}", prepared.change.change_id);
+            println!("change_revision_id: {}", prepared.change_revision_id);
+        },
+    )
 }
 
-fn fail_unlink(error: ChangeError) -> ExitCode {
-    match error {
-        ChangeError::Precondition(
-            kat::repository::change::PreconditionError::RelationshipNotFound(id),
-        ) => {
-            eprintln!("kat unlink: relationship {id} not found in the accepted state");
-        }
-        ChangeError::Conflict => {
-            eprintln!(
-                "kat unlink: the accepted repository state changed while unlinking; nothing was published. Re-run kat unlink."
-            );
-        }
-        other => eprintln!("kat unlink: {other}"),
-    }
-    ExitCode::FAILURE
-}
-
-/// `kat account <artifact-id> [--description "..."]` —
-/// re-baselines direct accountability relationships of an artifact.
 fn run_account(artifact_id_str: String, description: Option<String>) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
@@ -1715,63 +1245,42 @@ fn run_account(artifact_id_str: String, description: Option<String>) -> ExitCode
             return ExitCode::FAILURE;
         }
     };
-
     let artifact_id = match resolve_cli_element_id(&repository, &artifact_id_str, "account") {
         Ok(id) => id,
         Err(code) => return code,
     };
+    let input = StagedOperationInput::AccountArtifact(AccountArtifactInput { artifact_id });
 
-    let root = repository.root_dir();
-    if has_draft_session(root) {
-        let mut session = match read_draft_session(root) {
-            Ok(s) => s,
-            Err(err) => {
-                eprintln!("kat account: {err}");
-                return ExitCode::FAILURE;
+    execute_mutation(
+        &repository,
+        input,
+        description,
+        "account",
+        |op, count| {
+            println!("staged account artifact");
+            println!("  artifact_id:       {artifact_id}");
+            if let Operation::AccountArtifact {
+                reconciliations, ..
+            } = op
+            {
+                println!("  reconciliations:   {}", reconciliations.len());
             }
-        };
-
-        let input = AccountArtifactInput { artifact_id };
-        let op = match stage_operation_into_session(
-            &repository,
-            &mut session,
-            StagedOperationInput::AccountArtifact(input),
-        ) {
-            Ok(op) => op,
-            Err(err) => {
-                eprintln!("kat account: {err}");
-                return ExitCode::FAILURE;
+            println!("  change operations: {count}");
+        },
+        |op, published| {
+            let prepared = &published.persisted.prepared;
+            println!("artifact_id: {artifact_id}");
+            if let Operation::AccountArtifact {
+                reconciliations, ..
+            } = op
+            {
+                println!("reconciliations: {}", reconciliations.len());
             }
-        };
-
-        println!("staged account artifact");
-        println!("  artifact_id:       {artifact_id}");
-        if let Operation::AccountArtifact {
-            reconciliations, ..
-        } = op
-        {
-            println!("  reconciliations:   {}", reconciliations.len());
-        }
-        println!("  change operations: {}", session.operations.len());
-        return ExitCode::SUCCESS;
-    }
-
-    let input = AccountArtifactInput { artifact_id };
-    match account_artifact(&repository, input, description) {
-        Ok(published) => {
-            let prep = &published.persisted.prepared;
-            println!("artifact_id: {}", prep.account.artifact_id);
-            println!("reconciliations: {}", prep.account.reconciliations.len());
-            println!("state_id: {}", prep.state_id);
-            println!("change_id: {}", prep.change.change_id);
-            println!("change_revision_id: {}", prep.change_revision_id);
-            ExitCode::SUCCESS
-        }
-        Err(err) => {
-            eprintln!("kat account: {err}");
-            ExitCode::FAILURE
-        }
-    }
+            println!("state_id: {}", prepared.state_id);
+            println!("change_id: {}", prepared.change.change_id);
+            println!("change_revision_id: {}", prepared.change_revision_id);
+        },
+    )
 }
 
 fn run_show(element_id_str: String, compact: bool, json: bool) -> ExitCode {

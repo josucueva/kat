@@ -56,7 +56,22 @@ physical project content.
 
 ---
 
-## COLL-06: Work has an explicit base
+## COLL-06: Artifact accountability spans semantic and physical state
+
+Artifact accountability MUST distinguish semantic alignment from physical
+materialization alignment.
+
+An Artifact may remain aligned with the semantic versions against which
+it was accounted while its represented physical content has changed.
+
+Likewise, its physical content may remain unchanged while an accounted
+semantic dependency has advanced.
+
+Neither condition may be silently interpreted as the other.
+
+---
+
+## COLL-07: Work has an explicit base
 
 Every collaborative workspace and Change is based on an explicit
 `RepositoryRevision`.
@@ -66,7 +81,7 @@ which the work was produced.
 
 ---
 
-## COLL-07: Divergence is valid
+## COLL-08: Divergence is valid
 
 Multiple descendant `RepositoryRevision`s may coexist from the same
 base revision.
@@ -75,7 +90,7 @@ Divergence is not itself a conflict.
 
 ---
 
-## COLL-08: Reconciliation preserves history
+## COLL-09: Reconciliation preserves history
 
 Reconciliation of divergent revisions MUST preserve every input history.
 
@@ -85,7 +100,7 @@ No concurrent history or semantic alternative may be silently discarded.
 
 ---
 
-## COLL-09: Reconciliation is semantic and physical
+## COLL-10: Reconciliation is semantic and physical
 
 Semantic reconciliation and physical/materialization reconciliation are
 distinct processes.
@@ -97,7 +112,7 @@ semantic and physical results.
 
 ---
 
-## COLL-10: Conflict means incompatible concurrent effects
+## COLL-11: Conflict means incompatible concurrent effects
 
 A conflict exists only when concurrent effects cannot both be preserved
 in one valid resulting repository revision without explicit resolution.
@@ -112,7 +127,7 @@ KAT MUST distinguish at least:
 
 ---
 
-## COLL-11: No silent conflict resolution
+## COLL-12: No silent conflict resolution
 
 KAT MUST NOT resolve conflicts through implicit last-writer-wins or
 silent replacement.
@@ -124,7 +139,7 @@ Conflict resolution itself becomes explicit repository evolution.
 
 ---
 
-## COLL-12: Conflict is distinct from consequence
+## COLL-13: Conflict is distinct from consequence
 
 A reconciliation may be mechanically valid while producing consequences
 such as:
@@ -140,7 +155,7 @@ unless the concurrent effects themselves cannot coexist.
 
 ---
 
-## COLL-13: Physical backend is subordinate to KAT
+## COLL-14: Physical backend is subordinate to KAT
 
 A physical version-control backend such as Git may store, transfer,
 materialize, diff, and merge physical workspace snapshots.
@@ -152,7 +167,7 @@ KAT binds repository revisions to immutable physical snapshots.
 
 ---
 
-## COLL-14: Collaboration never silently loses knowledge
+## COLL-15: Collaboration never silently loses knowledge
 
 Accepted semantic versions, competing alternatives, Changes, and
 reconciliation decisions remain historically reachable according to

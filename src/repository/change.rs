@@ -2180,61 +2180,113 @@ pub struct PersistedChange {
 /// rejected. Step 1.6 does **not** publish: `refs/accepted` is left exactly as
 /// it was. No rollback/GC — objects persisted before a failure remain as
 /// unreachable immutable objects (harmless; reclaimable by a future GC).
+fn persist_single_change_objects(
+    store: &ObjectStore,
+    elements: &[&KnowledgeElementVersion],
+    relationships: &[&RelationshipVersion],
+    state: &SemanticState,
+    state_id: ObjectId,
+    change: &ChangeRevision,
+    change_revision_id: ObjectId,
+) -> Result<(), ChangeError> {
+    for ev in elements {
+        let bytes = canonical_bytes(&CanonicalObject {
+            payload: CanonicalPayload::KnowledgeElementVersion((*ev).clone()),
+        })?;
+        let id = store.put(&bytes)?;
+        let expected = canonical_object_id(&CanonicalObject {
+            payload: CanonicalPayload::KnowledgeElementVersion((*ev).clone()),
+        })?;
+        if id != expected {
+            return Err(identity_mismatch(
+                ObjectKind::KnowledgeElementVersion,
+                expected,
+                id,
+            ));
+        }
+    }
+    for rv in relationships {
+        let bytes = canonical_bytes(&CanonicalObject {
+            payload: CanonicalPayload::RelationshipVersion((*rv).clone()),
+        })?;
+        let id = store.put(&bytes)?;
+        let expected = canonical_object_id(&CanonicalObject {
+            payload: CanonicalPayload::RelationshipVersion((*rv).clone()),
+        })?;
+        if id != expected {
+            return Err(identity_mismatch(
+                ObjectKind::RelationshipVersion,
+                expected,
+                id,
+            ));
+        }
+    }
+    let s_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::SemanticState(state.clone()),
+    })?;
+    let s_id = store.put(&s_bytes)?;
+    if s_id != state_id {
+        return Err(identity_mismatch(ObjectKind::SemanticState, state_id, s_id));
+    }
+    let c_bytes = canonical_bytes(&CanonicalObject {
+        payload: CanonicalPayload::ChangeRevision(change.clone()),
+    })?;
+    let c_id = store.put(&c_bytes)?;
+    if c_id != change_revision_id {
+        return Err(identity_mismatch(
+            ObjectKind::ChangeRevision,
+            change_revision_id,
+            c_id,
+        ));
+    }
+    Ok(())
+}
+
+fn publish_persisted_cas_internal(
+    repository: &Repository,
+    expected: &AcceptedRef,
+    state_id: ObjectId,
+    change_revision_id: ObjectId,
+    change_result_state: ObjectId,
+) -> Result<AcceptedRef, ChangeError> {
+    if change_result_state != state_id {
+        return Err(ChangeError::PublicationStateMismatch {
+            expected: state_id,
+            actual: change_result_state,
+        });
+    }
+    let new = AcceptedRef {
+        state: state_id,
+        change: Some(change_revision_id),
+    };
+    match repository
+        .ref_store()
+        .compare_and_swap_accepted(expected, &new)
+    {
+        Ok(()) => Ok(new),
+        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
+        Err(err) => Err(ChangeError::RefStore(err)),
+    }
+}
+
 pub fn persist_prepared_change(
     repository: &Repository,
     prepared: PreparedChangeRevision,
 ) -> Result<PersistedChange, ChangeError> {
-    let store = repository.object_store();
-
-    // V1
-    let v1_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::KnowledgeElementVersion(prepared.creation.element.clone()),
-    })?;
-    let v1_id = store.put(&v1_bytes)?;
-    if v1_id != prepared.creation.element_version_id {
-        return Err(identity_mismatch(
-            ObjectKind::KnowledgeElementVersion,
-            prepared.creation.element_version_id,
-            v1_id,
-        ));
-    }
-
-    // S1
-    let s1_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::SemanticState(prepared.creation.candidate_state.clone()),
-    })?;
-    let s1_id = store.put(&s1_bytes)?;
-    if s1_id != prepared.state_id {
-        return Err(identity_mismatch(
-            ObjectKind::SemanticState,
-            prepared.state_id,
-            s1_id,
-        ));
-    }
-
-    // C1
-    let c1_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
-    })?;
-    let c1_id = store.put(&c1_bytes)?;
-    if c1_id != prepared.change_revision_id {
-        return Err(identity_mismatch(
-            ObjectKind::ChangeRevision,
-            prepared.change_revision_id,
-            c1_id,
-        ));
-    }
-
+    persist_single_change_objects(
+        repository.object_store(),
+        &[&prepared.creation.element],
+        &[],
+        &prepared.creation.candidate_state,
+        prepared.state_id,
+        &prepared.change,
+        prepared.change_revision_id,
+    )?;
     Ok(PersistedChange { prepared })
 }
 
 /// A prepared update change whose immutable objects have been materialized into
 /// the ObjectStore (Vn+1, Sn+1, Cn+1), but which has **not** been published.
-///
-/// The accepted ref is untouched — the new objects are unreferenced (an
-/// intentionally-valid, harmless state). Step 2.6 publication will require
-/// this type so an Update Change cannot be published before its objects are
-/// persisted.
 #[derive(Debug)]
 pub struct PersistedUpdateChange {
     /// The prepared update change whose objects were just persisted.
@@ -2242,63 +2294,20 @@ pub struct PersistedUpdateChange {
 }
 
 /// Materializes a prepared, validated update change's immutable objects into
-/// the ObjectStore in reference order — `Vn+1`, `Sn+1`, then `Cn+1`:
-///
-/// ```text
-/// Cn+1 -> Sn+1 -> Vn+1
-/// ```
-///
-/// Each `ObjectStore::put` returns the content-derived ObjectId (the store
-/// hashes the bytes itself), which is verified against the identity derived at
-/// preparation time. A mismatch is an integrity/programming failure and is
-/// rejected. Step 2.5 does **not** publish: `refs/accepted` is left exactly as
-/// it was. No rollback/GC — objects persisted before a failure remain as
-/// unreachable immutable objects (harmless; reclaimable by a future GC).
+/// the ObjectStore in reference order — `Vn+1`, `Sn+1`, then `Cn+1`.
 pub fn persist_prepared_update_change(
     repository: &Repository,
     prepared: PreparedUpdateChangeRevision,
 ) -> Result<PersistedUpdateChange, ChangeError> {
-    let store = repository.object_store();
-
-    // Vn+1
-    let v_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::KnowledgeElementVersion(prepared.update.element.clone()),
-    })?;
-    let v_next_id = store.put(&v_next_bytes)?;
-    if v_next_id != prepared.update.element_version_id {
-        return Err(identity_mismatch(
-            ObjectKind::KnowledgeElementVersion,
-            prepared.update.element_version_id,
-            v_next_id,
-        ));
-    }
-
-    // Sn+1
-    let s_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::SemanticState(prepared.update.candidate_state.clone()),
-    })?;
-    let s_next_id = store.put(&s_next_bytes)?;
-    if s_next_id != prepared.state_id {
-        return Err(identity_mismatch(
-            ObjectKind::SemanticState,
-            prepared.state_id,
-            s_next_id,
-        ));
-    }
-
-    // Cn+1
-    let c_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
-    })?;
-    let c_next_id = store.put(&c_next_bytes)?;
-    if c_next_id != prepared.change_revision_id {
-        return Err(identity_mismatch(
-            ObjectKind::ChangeRevision,
-            prepared.change_revision_id,
-            c_next_id,
-        ));
-    }
-
+    persist_single_change_objects(
+        repository.object_store(),
+        &[&prepared.update.element],
+        &[],
+        &prepared.update.candidate_state,
+        prepared.state_id,
+        &prepared.change,
+        prepared.change_revision_id,
+    )?;
     Ok(PersistedUpdateChange { prepared })
 }
 
@@ -2312,53 +2321,19 @@ pub struct PersistedDeprecateChange {
 
 /// Materializes a prepared, validated deprecate change's immutable objects into
 /// the ObjectStore in reference order: `Vn+1`, `Sn+1`, then `Cn+1`.
-///
-/// Leaves `refs/accepted` untouched.
 pub fn persist_prepared_deprecate_change(
     repository: &Repository,
     prepared: PreparedDeprecateChangeRevision,
 ) -> Result<PersistedDeprecateChange, ChangeError> {
-    let store = repository.object_store();
-
-    // Vn+1
-    let v_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::KnowledgeElementVersion(prepared.deprecation.element.clone()),
-    })?;
-    let v_next_id = store.put(&v_next_bytes)?;
-    if v_next_id != prepared.deprecation.element_version_id {
-        return Err(identity_mismatch(
-            ObjectKind::KnowledgeElementVersion,
-            prepared.deprecation.element_version_id,
-            v_next_id,
-        ));
-    }
-
-    // Sn+1
-    let s_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::SemanticState(prepared.deprecation.candidate_state.clone()),
-    })?;
-    let s_next_id = store.put(&s_next_bytes)?;
-    if s_next_id != prepared.state_id {
-        return Err(identity_mismatch(
-            ObjectKind::SemanticState,
-            prepared.state_id,
-            s_next_id,
-        ));
-    }
-
-    // Cn+1
-    let c_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
-    })?;
-    let c_next_id = store.put(&c_next_bytes)?;
-    if c_next_id != prepared.change_revision_id {
-        return Err(identity_mismatch(
-            ObjectKind::ChangeRevision,
-            prepared.change_revision_id,
-            c_next_id,
-        ));
-    }
-
+    persist_single_change_objects(
+        repository.object_store(),
+        &[&prepared.deprecation.element],
+        &[],
+        &prepared.deprecation.candidate_state,
+        prepared.state_id,
+        &prepared.change,
+        prepared.change_revision_id,
+    )?;
     Ok(PersistedDeprecateChange { prepared })
 }
 
@@ -2374,83 +2349,22 @@ pub struct PersistedSupersedeChange {
 /// Materializes a prepared, validated supersede change's immutable objects into
 /// the ObjectStore in reference dependency order:
 /// `V1_next` -> `V2_initial` -> `R1_initial` -> `Sn+1` -> `Cn+1`.
-///
-/// Leaves `refs/accepted` untouched.
 pub fn persist_prepared_supersede_change(
     repository: &Repository,
     prepared: PreparedSupersedeChangeRevision,
 ) -> Result<PersistedSupersedeChange, ChangeError> {
-    let store = repository.object_store();
-
-    // 1. V1_next (superseded existing element version)
-    let v1_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::KnowledgeElementVersion(
-            prepared.supersede.existing_element.clone(),
-        ),
-    })?;
-    let v1_next_id = store.put(&v1_next_bytes)?;
-    if v1_next_id != prepared.supersede.new_existing_version_id {
-        return Err(identity_mismatch(
-            ObjectKind::KnowledgeElementVersion,
-            prepared.supersede.new_existing_version_id,
-            v1_next_id,
-        ));
-    }
-
-    // 2. V2_initial (replacement element version)
-    let v2_initial_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::KnowledgeElementVersion(
-            prepared.supersede.replacement_element.clone(),
-        ),
-    })?;
-    let v2_initial_id = store.put(&v2_initial_bytes)?;
-    if v2_initial_id != prepared.supersede.replacement_version_id {
-        return Err(identity_mismatch(
-            ObjectKind::KnowledgeElementVersion,
-            prepared.supersede.replacement_version_id,
-            v2_initial_id,
-        ));
-    }
-
-    // 3. R1_initial (superseding relationship version)
-    let r1_initial_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::RelationshipVersion(prepared.supersede.relationship.clone()),
-    })?;
-    let r1_initial_id = store.put(&r1_initial_bytes)?;
-    if r1_initial_id != prepared.supersede.relationship_version_id {
-        return Err(identity_mismatch(
-            ObjectKind::RelationshipVersion,
-            prepared.supersede.relationship_version_id,
-            r1_initial_id,
-        ));
-    }
-
-    // 4. Sn+1 (candidate SemanticState)
-    let s_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::SemanticState(prepared.supersede.candidate_state.clone()),
-    })?;
-    let s_next_id = store.put(&s_next_bytes)?;
-    if s_next_id != prepared.state_id {
-        return Err(identity_mismatch(
-            ObjectKind::SemanticState,
-            prepared.state_id,
-            s_next_id,
-        ));
-    }
-
-    // 5. Cn+1 (ChangeRevision)
-    let c_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
-    })?;
-    let c_next_id = store.put(&c_next_bytes)?;
-    if c_next_id != prepared.change_revision_id {
-        return Err(identity_mismatch(
-            ObjectKind::ChangeRevision,
-            prepared.change_revision_id,
-            c_next_id,
-        ));
-    }
-
+    persist_single_change_objects(
+        repository.object_store(),
+        &[
+            &prepared.supersede.existing_element,
+            &prepared.supersede.replacement_element,
+        ],
+        &[&prepared.supersede.relationship],
+        &prepared.supersede.candidate_state,
+        prepared.state_id,
+        &prepared.change,
+        prepared.change_revision_id,
+    )?;
     Ok(PersistedSupersedeChange { prepared })
 }
 
@@ -2465,53 +2379,19 @@ pub struct PersistedLinkChange {
 /// Materializes a prepared, validated link change's immutable objects into
 /// the ObjectStore in reference dependency order:
 /// `R1_initial` -> `Sn+1` -> `Cn+1`.
-///
-/// Leaves `refs/accepted` untouched.
 pub fn persist_prepared_link_change(
     repository: &Repository,
     prepared: PreparedLinkChangeRevision,
 ) -> Result<PersistedLinkChange, ChangeError> {
-    let store = repository.object_store();
-
-    // 1. R1_initial (relationship version)
-    let r1_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::RelationshipVersion(prepared.link.relationship.clone()),
-    })?;
-    let r1_id = store.put(&r1_bytes)?;
-    if r1_id != prepared.link.relationship_version_id {
-        return Err(identity_mismatch(
-            ObjectKind::RelationshipVersion,
-            prepared.link.relationship_version_id,
-            r1_id,
-        ));
-    }
-
-    // 2. Sn+1 (candidate semantic state)
-    let s_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::SemanticState(prepared.link.candidate_state.clone()),
-    })?;
-    let s_next_id = store.put(&s_next_bytes)?;
-    if s_next_id != prepared.state_id {
-        return Err(identity_mismatch(
-            ObjectKind::SemanticState,
-            prepared.state_id,
-            s_next_id,
-        ));
-    }
-
-    // 3. Cn+1 (change revision)
-    let c_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
-    })?;
-    let c_next_id = store.put(&c_next_bytes)?;
-    if c_next_id != prepared.change_revision_id {
-        return Err(identity_mismatch(
-            ObjectKind::ChangeRevision,
-            prepared.change_revision_id,
-            c_next_id,
-        ));
-    }
-
+    persist_single_change_objects(
+        repository.object_store(),
+        &[],
+        &[&prepared.link.relationship],
+        &prepared.link.candidate_state,
+        prepared.state_id,
+        &prepared.change,
+        prepared.change_revision_id,
+    )?;
     Ok(PersistedLinkChange { prepared })
 }
 
@@ -2526,42 +2406,19 @@ pub struct PersistedUnlinkChange {
 /// Materializes a prepared, validated unlink change's immutable objects into
 /// the ObjectStore in reference dependency order:
 /// `Sn+1` -> `Cn+1`.
-///
-/// Materializes exactly 2 objects into ObjectStore ($S_{n+1}, C_{n+1}$).
-/// Zero element or relationship version objects written.
-/// Leaves `refs/accepted` untouched.
 pub fn persist_prepared_unlink_change(
     repository: &Repository,
     prepared: PreparedUnlinkChangeRevision,
 ) -> Result<PersistedUnlinkChange, ChangeError> {
-    let store = repository.object_store();
-
-    // 1. Sn+1 (candidate semantic state)
-    let s_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::SemanticState(prepared.unlink.candidate_state.clone()),
-    })?;
-    let s_next_id = store.put(&s_next_bytes)?;
-    if s_next_id != prepared.state_id {
-        return Err(identity_mismatch(
-            ObjectKind::SemanticState,
-            prepared.state_id,
-            s_next_id,
-        ));
-    }
-
-    // 2. Cn+1 (change revision)
-    let c_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
-    })?;
-    let c_next_id = store.put(&c_next_bytes)?;
-    if c_next_id != prepared.change_revision_id {
-        return Err(identity_mismatch(
-            ObjectKind::ChangeRevision,
-            prepared.change_revision_id,
-            c_next_id,
-        ));
-    }
-
+    persist_single_change_objects(
+        repository.object_store(),
+        &[],
+        &[],
+        &prepared.unlink.candidate_state,
+        prepared.state_id,
+        &prepared.change,
+        prepared.change_revision_id,
+    )?;
     Ok(PersistedUnlinkChange { prepared })
 }
 
@@ -2576,34 +2433,15 @@ pub fn persist_prepared_account_change(
     repository: &Repository,
     prepared: PreparedAccountChangeRevision,
 ) -> Result<PersistedAccountChange, ChangeError> {
-    let store = repository.object_store();
-
-    // 1. Sn+1
-    let s_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::SemanticState(prepared.account.candidate_state.clone()),
-    })?;
-    let s_next_id = store.put(&s_next_bytes)?;
-    if s_next_id != prepared.state_id {
-        return Err(identity_mismatch(
-            ObjectKind::SemanticState,
-            prepared.state_id,
-            s_next_id,
-        ));
-    }
-
-    // 2. Cn+1
-    let c_next_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::ChangeRevision(prepared.change.clone()),
-    })?;
-    let c_next_id = store.put(&c_next_bytes)?;
-    if c_next_id != prepared.change_revision_id {
-        return Err(identity_mismatch(
-            ObjectKind::ChangeRevision,
-            prepared.change_revision_id,
-            c_next_id,
-        ));
-    }
-
+    persist_single_change_objects(
+        repository.object_store(),
+        &[],
+        &[],
+        &prepared.account.candidate_state,
+        prepared.state_id,
+        &prepared.change,
+        prepared.change_revision_id,
+    )?;
     Ok(PersistedAccountChange { prepared })
 }
 
@@ -2619,32 +2457,17 @@ pub fn publish_persisted_account_change(
     repository: &Repository,
     persisted: PersistedAccountChange,
 ) -> Result<PublishedAccountChange, ChangeError> {
-    let prepared = &persisted.prepared;
-
-    if prepared.change.result_state != prepared.state_id {
-        return Err(ChangeError::PublicationStateMismatch {
-            expected: prepared.state_id,
-            actual: prepared.change.result_state,
-        });
-    }
-
-    let expected = &prepared.account.context.accepted;
-    let new = AcceptedRef {
-        state: prepared.state_id,
-        change: Some(prepared.change_revision_id),
-    };
-
-    match repository
-        .ref_store()
-        .compare_and_swap_accepted(expected, &new)
-    {
-        Ok(()) => Ok(PublishedAccountChange {
-            persisted,
-            accepted: new,
-        }),
-        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
-        Err(err) => Err(ChangeError::RefStore(err)),
-    }
+    let accepted = publish_persisted_cas_internal(
+        repository,
+        &persisted.prepared.account.context.accepted,
+        persisted.prepared.state_id,
+        persisted.prepared.change_revision_id,
+        persisted.prepared.change.result_state,
+    )?;
+    Ok(PublishedAccountChange {
+        persisted,
+        accepted,
+    })
 }
 
 /// Single-operation pipeline: re-baselines artifact accountability relationships directly into accepted head.
@@ -2665,10 +2488,6 @@ pub fn account_artifact(
 
 /// A persisted update change that has been atomically published as the
 /// repository's accepted head (step 2.6).
-///
-/// Publication only moves `refs/accepted`; the immutable objects were already
-/// materialized by persistence (step 2.5). `accepted` is the new head
-/// `{ state: Sn+1, change: Some(Cn+1) }`, with `Cn+1.result_state == Sn+1`.
 #[derive(Debug)]
 pub struct PublishedUpdateChange {
     /// The persisted update change that was just published.
@@ -2678,69 +2497,22 @@ pub struct PublishedUpdateChange {
 }
 
 /// Publishes an already-persisted update change by atomically advancing the
-/// accepted State and Change head — **and only if** the repository is still at
-/// the accepted ref the change was prepared against.
-///
-/// The core is a single compare-and-swap:
-///
-/// ```text
-/// expected = persisted.prepared.update.context.accepted
-/// new      = { state: Sn+1, change: Some(Cn+1) }
-/// compare_and_swap_accepted(expected, new)
-/// ```
-///
-/// All semantic preparation, validation, encoding, hashing, and persistence
-/// already happened before this step, so publication is intentionally trivial.
-/// The API requires a [`PersistedUpdateChange`] — a raw `PreparedUpdateChangeRevision`
-/// cannot reach it, so a change cannot be published before its immutable
-/// objects exist in the ObjectStore (a compile-time pipeline guarantee).
-///
-/// Before the CAS, the publication-boundary invariant
-/// `prepared.change.result_state == prepared.state_id` is verified fail-fast
-/// (construction in 2.4 already guarantees it; this is a defensive check at
-/// the point where the Change becomes authoritative).
-///
-/// On a CAS conflict the accepted ref is left as the concurrent winner and
-/// this change's objects remain stored but unreferenced — that is the intended
-/// concurrency outcome, not corruption, and nothing is rolled back.
+/// accepted State and Change head.
 pub fn publish_persisted_update_change(
     repository: &Repository,
     persisted: PersistedUpdateChange,
 ) -> Result<PublishedUpdateChange, ChangeError> {
-    let prepared = &persisted.prepared;
-
-    // Critical publication-boundary invariant: the ChangeRevision's result
-    // state must be exactly the prepared SemanticState Sn+1. Construction (2.4)
-    // and persistence (2.5) guarantee this by construction; this cheap check
-    // runs at the point where the repository is about to make the Change
-    // authoritative.
-    if prepared.change.result_state != prepared.state_id {
-        return Err(ChangeError::PublicationStateMismatch {
-            expected: prepared.state_id,
-            actual: prepared.change.result_state,
-        });
-    }
-
-    // expected: the accepted ref the update was prepared against.
-    // new: Sn+1 + Cn+1, built from the prepared identities, so by construction
-    // new.state == Cn+1.result_state and new.change == Cn+1 ObjectId.
-    let expected = &prepared.update.context.accepted;
-    let new = AcceptedRef {
-        state: prepared.state_id,
-        change: Some(prepared.change_revision_id),
-    };
-
-    match repository
-        .ref_store()
-        .compare_and_swap_accepted(expected, &new)
-    {
-        Ok(()) => Ok(PublishedUpdateChange {
-            persisted,
-            accepted: new,
-        }),
-        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
-        Err(err) => Err(ChangeError::RefStore(err)),
-    }
+    let accepted = publish_persisted_cas_internal(
+        repository,
+        &persisted.prepared.update.context.accepted,
+        persisted.prepared.state_id,
+        persisted.prepared.change_revision_id,
+        persisted.prepared.change.result_state,
+    )?;
+    Ok(PublishedUpdateChange {
+        persisted,
+        accepted,
+    })
 }
 
 /// A persisted deprecate change that has been atomically published as the
@@ -2759,32 +2531,17 @@ pub fn publish_persisted_deprecate_change(
     repository: &Repository,
     persisted: PersistedDeprecateChange,
 ) -> Result<PublishedDeprecateChange, ChangeError> {
-    let prepared = &persisted.prepared;
-
-    if prepared.change.result_state != prepared.state_id {
-        return Err(ChangeError::PublicationStateMismatch {
-            expected: prepared.state_id,
-            actual: prepared.change.result_state,
-        });
-    }
-
-    let expected = &prepared.deprecation.context.accepted;
-    let new = AcceptedRef {
-        state: prepared.state_id,
-        change: Some(prepared.change_revision_id),
-    };
-
-    match repository
-        .ref_store()
-        .compare_and_swap_accepted(expected, &new)
-    {
-        Ok(()) => Ok(PublishedDeprecateChange {
-            persisted,
-            accepted: new,
-        }),
-        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
-        Err(err) => Err(ChangeError::RefStore(err)),
-    }
+    let accepted = publish_persisted_cas_internal(
+        repository,
+        &persisted.prepared.deprecation.context.accepted,
+        persisted.prepared.state_id,
+        persisted.prepared.change_revision_id,
+        persisted.prepared.change.result_state,
+    )?;
+    Ok(PublishedDeprecateChange {
+        persisted,
+        accepted,
+    })
 }
 
 /// A persisted supersede change that has been atomically published as the
@@ -2803,32 +2560,17 @@ pub fn publish_persisted_supersede_change(
     repository: &Repository,
     persisted: PersistedSupersedeChange,
 ) -> Result<PublishedSupersedeChange, ChangeError> {
-    let prepared = &persisted.prepared;
-
-    if prepared.change.result_state != prepared.state_id {
-        return Err(ChangeError::PublicationStateMismatch {
-            expected: prepared.state_id,
-            actual: prepared.change.result_state,
-        });
-    }
-
-    let expected = &prepared.supersede.context.accepted;
-    let new = AcceptedRef {
-        state: prepared.state_id,
-        change: Some(prepared.change_revision_id),
-    };
-
-    match repository
-        .ref_store()
-        .compare_and_swap_accepted(expected, &new)
-    {
-        Ok(()) => Ok(PublishedSupersedeChange {
-            persisted,
-            accepted: new,
-        }),
-        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
-        Err(err) => Err(ChangeError::RefStore(err)),
-    }
+    let accepted = publish_persisted_cas_internal(
+        repository,
+        &persisted.prepared.supersede.context.accepted,
+        persisted.prepared.state_id,
+        persisted.prepared.change_revision_id,
+        persisted.prepared.change.result_state,
+    )?;
+    Ok(PublishedSupersedeChange {
+        persisted,
+        accepted,
+    })
 }
 
 /// A persisted link change that has been atomically published as the
@@ -2847,32 +2589,17 @@ pub fn publish_persisted_link_change(
     repository: &Repository,
     persisted: PersistedLinkChange,
 ) -> Result<PublishedLinkChange, ChangeError> {
-    let prepared = &persisted.prepared;
-
-    if prepared.change.result_state != prepared.state_id {
-        return Err(ChangeError::PublicationStateMismatch {
-            expected: prepared.state_id,
-            actual: prepared.change.result_state,
-        });
-    }
-
-    let expected = &prepared.link.context.accepted;
-    let new = AcceptedRef {
-        state: prepared.state_id,
-        change: Some(prepared.change_revision_id),
-    };
-
-    match repository
-        .ref_store()
-        .compare_and_swap_accepted(expected, &new)
-    {
-        Ok(()) => Ok(PublishedLinkChange {
-            persisted,
-            accepted: new,
-        }),
-        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
-        Err(err) => Err(ChangeError::RefStore(err)),
-    }
+    let accepted = publish_persisted_cas_internal(
+        repository,
+        &persisted.prepared.link.context.accepted,
+        persisted.prepared.state_id,
+        persisted.prepared.change_revision_id,
+        persisted.prepared.change.result_state,
+    )?;
+    Ok(PublishedLinkChange {
+        persisted,
+        accepted,
+    })
 }
 
 /// A persisted unlink change that has been atomically published as the
@@ -2891,32 +2618,17 @@ pub fn publish_persisted_unlink_change(
     repository: &Repository,
     persisted: PersistedUnlinkChange,
 ) -> Result<PublishedUnlinkChange, ChangeError> {
-    let prepared = &persisted.prepared;
-
-    if prepared.change.result_state != prepared.state_id {
-        return Err(ChangeError::PublicationStateMismatch {
-            expected: prepared.state_id,
-            actual: prepared.change.result_state,
-        });
-    }
-
-    let expected = &prepared.unlink.context.accepted;
-    let new = AcceptedRef {
-        state: prepared.state_id,
-        change: Some(prepared.change_revision_id),
-    };
-
-    match repository
-        .ref_store()
-        .compare_and_swap_accepted(expected, &new)
-    {
-        Ok(()) => Ok(PublishedUnlinkChange {
-            persisted,
-            accepted: new,
-        }),
-        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
-        Err(err) => Err(ChangeError::RefStore(err)),
-    }
+    let accepted = publish_persisted_cas_internal(
+        repository,
+        &persisted.prepared.unlink.context.accepted,
+        persisted.prepared.state_id,
+        persisted.prepared.change_revision_id,
+        persisted.prepared.change.result_state,
+    )?;
+    Ok(PublishedUnlinkChange {
+        persisted,
+        accepted,
+    })
 }
 
 /// An ephemeral interaction-layer mapping from a draft workflow reference (e.g. `@req-auth`)
@@ -3301,13 +3013,11 @@ pub fn stage_batch_operations_into_session(
     Ok((staged_ops, working_session))
 }
 
-/// Commits an open draft change session, performing whole-candidate validation,
-/// materializing canonical objects, and publishing via atomic CAS.
-pub fn commit_draft_session(repository: &Repository) -> Result<CommitOutcome, ChangeError> {
-    let root = repository.root_dir();
-    let session = read_draft_session(root)
-        .map_err(|_| ChangeError::Precondition(PreconditionError::DraftNotFound))?;
-
+/// Commits an in-memory session directly to the repository via atomic CAS without touching disk draft files.
+pub fn commit_session_direct(
+    repository: &Repository,
+    session: &DraftSession,
+) -> Result<CommitOutcome, ChangeError> {
     if session.status == DraftSessionState::Stale {
         return Err(ChangeError::Conflict);
     }
@@ -3318,7 +3028,6 @@ pub fn commit_draft_session(repository: &Repository) -> Result<CommitOutcome, Ch
         .map_err(ChangeError::RefStore)?;
 
     if current_accepted.state != session.base_state_id {
-        let _ = mark_draft_session_stale(root);
         return Err(ChangeError::Conflict);
     }
 
@@ -3343,7 +3052,7 @@ pub fn commit_draft_session(repository: &Repository) -> Result<CommitOutcome, Ch
         ));
     }
 
-    // Derive publication workflow reference resolutions before draft cleanup
+    // Derive publication workflow reference resolutions
     let mut workflow_reference_resolutions = Vec::new();
     for binding in &session.workflow_references {
         let reference = crate::repository::resolve::shortest_unique_element_prefix(
@@ -3411,8 +3120,6 @@ pub fn commit_draft_session(repository: &Repository) -> Result<CommitOutcome, Ch
         .compare_and_swap_accepted(&current_accepted, &new_accepted)
     {
         Ok(()) => {
-            let _ = abort_draft_session(root);
-
             let ontology_bytes = store.get(session.working_state.ontology_version)?;
             let ontology_canonical = decode_canonical(&ontology_bytes)?;
             let ontology = match ontology_canonical.payload {
@@ -3436,7 +3143,7 @@ pub fn commit_draft_session(repository: &Repository) -> Result<CommitOutcome, Ch
                     properties: vec![],
                 },
                 element_version_id: result_state_id,
-                candidate_state: session.working_state,
+                candidate_state: session.working_state.clone(),
             };
 
             let prepared = PreparedChangeRevision {
@@ -3458,12 +3165,54 @@ pub fn commit_draft_session(repository: &Repository) -> Result<CommitOutcome, Ch
                 workflow_reference_resolutions,
             })
         }
-        Err(RefStoreError::Conflict) => {
+        Err(RefStoreError::Conflict) => Err(ChangeError::Conflict),
+        Err(e) => Err(ChangeError::RefStore(e)),
+    }
+}
+
+/// Commits an open draft change session, performing whole-candidate validation,
+/// materializing canonical objects, and publishing via atomic CAS.
+pub fn commit_draft_session(repository: &Repository) -> Result<CommitOutcome, ChangeError> {
+    let root = repository.root_dir();
+    let session = read_draft_session(root)
+        .map_err(|_| ChangeError::Precondition(PreconditionError::DraftNotFound))?;
+
+    match commit_session_direct(repository, &session) {
+        Ok(outcome) => {
+            let _ = abort_draft_session(root);
+            Ok(outcome)
+        }
+        Err(ChangeError::Conflict) => {
             let _ = mark_draft_session_stale(root);
             Err(ChangeError::Conflict)
         }
-        Err(e) => Err(ChangeError::RefStore(e)),
+        Err(e) => Err(e),
     }
+}
+
+/// Publishes a single operation directly as a standalone ChangeRevision without disk draft session files.
+pub fn publish_single_operation(
+    repository: &Repository,
+    input: StagedOperationInput,
+    description: Option<String>,
+) -> Result<(Operation, PublishedChange), ChangeError> {
+    let context = prepare_change(repository)?;
+    let mut session = DraftSession {
+        schema_version: crate::repository::session::DRAFT_SESSION_VERSION,
+        status: crate::repository::session::DraftSessionState::Open,
+        base_state_id: context.base_state_id,
+        base_change_id: context.accepted.change,
+        created_at: String::new(),
+        description,
+        operations: Vec::new(),
+        staged_element_versions: Vec::new(),
+        staged_relationship_versions: Vec::new(),
+        working_state: context.base_state,
+        workflow_references: Vec::new(),
+    };
+    let op = stage_operation_in_memory(repository, &mut session, input)?;
+    let outcome = commit_session_direct(repository, &session)?;
+    Ok((op, outcome.published_change))
 }
 
 #[cfg(test)]
