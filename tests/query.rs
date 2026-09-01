@@ -44,7 +44,7 @@ use kat::repository::query::{
     analyze_artifact_accountability, analyze_impact, history, list_elements, repository_status,
     show_element, trace_origin,
 };
-use kat::repository::ref_store::{AcceptedRef, RefStore};
+use kat::repository::ref_store::AcceptedRef;
 use kat::repository::validation::repository::{ValidationViolationKind, validate_repository};
 use uuid::Uuid;
 

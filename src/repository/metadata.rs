@@ -77,17 +77,14 @@ impl HashAlgorithm {
 }
 
 /// Error produced while reading or writing repository metadata.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum MetadataError {
     /// An underlying filesystem failure.
-    #[error("repository metadata I/O error: {0}")]
-    Io(#[from] std::io::Error),
+        Io(std::io::Error),
     /// The file is not valid TOML.
-    #[error("repository metadata is not valid TOML: {0}")]
-    Parse(#[from] toml::de::Error),
+        Parse(toml::de::Error),
     /// The file is valid TOML but violates the metadata contract.
-    #[error("invalid repository metadata: {0}")]
-    Invalid(String),
+        Invalid(String),
 }
 
 impl RepositoryMetadata {
@@ -263,5 +260,36 @@ mod tests {
         );
         let err = RepositoryMetadata::read(&path).unwrap_err();
         assert!(matches!(err, MetadataError::Invalid(_)));
+    }
+}
+
+impl std::fmt::Display for MetadataError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(_0) => write!(f, "repository metadata I/O error: {_0}"),
+            Self::Parse(_0) => write!(f, "repository metadata is not valid TOML: {_0}"),
+            Self::Invalid(_0) => write!(f, "invalid repository metadata: {_0}"),
+        }
+    }
+}
+
+impl std::error::Error for MetadataError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            Self::Parse(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for MetadataError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+impl From<toml::de::Error> for MetadataError {
+    fn from(err: toml::de::Error) -> Self {
+        Self::Parse(err)
     }
 }

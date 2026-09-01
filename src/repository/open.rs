@@ -26,7 +26,7 @@ use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use crate::repository::error::RepositoryError;
 use crate::repository::metadata::RepositoryMetadata;
 use crate::repository::object_store::ObjectStore;
-use crate::repository::ref_store::{AcceptedRef, FileRefStore, RefStore};
+use crate::repository::ref_store::{AcceptedRef, FileRefStore};
 
 /// An opened KAT repository.
 #[derive(Debug)]

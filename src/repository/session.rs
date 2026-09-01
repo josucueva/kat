@@ -25,7 +25,6 @@ use crate::encoding::cbor::canonical_bytes;
 use crate::encoding::decode::decode_canonical;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload};
 use crate::repository::open::Repository;
-use crate::repository::ref_store::RefStore;
 
 /// Supported draft session file format version (v2).
 pub const DRAFT_SESSION_VERSION: u32 = 2;
@@ -66,25 +65,18 @@ impl DraftSessionState {
 }
 
 /// Errors produced during draft session operations.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum DraftSessionError {
     /// A draft session is already open in the repository.
-    #[error("a draft change transaction is already open at .kat/work/change/session.json")]
-    AlreadyExists,
+        AlreadyExists,
     /// No open draft session exists.
-    #[error("no open draft change transaction found at .kat/work/change/session.json")]
-    NotFound,
+        NotFound,
     /// Attempted to modify or commit a stale session.
-    #[error(
-        "draft session is stale because accepted head moved since begin; use 'kat change abort' to clear"
-    )]
-    StaleSession,
+        StaleSession,
     /// An underlying filesystem failure.
-    #[error("draft session I/O error: {0}")]
-    Io(#[from] std::io::Error),
+        Io(std::io::Error),
     /// Draft session file format or decoding error.
-    #[error("invalid draft session file: {0}")]
-    Invalid(String),
+        Invalid(String),
 }
 
 /// An open draft change transaction session.
@@ -270,7 +262,7 @@ fn format_draft_session_json(session: &DraftSession) -> Result<String, DraftSess
         };
         let bytes = canonical_bytes(&obj)
             .map_err(|e| DraftSessionError::Invalid(format!("failed to encode operation: {e}")))?;
-        ops_hex.push(format!("\"{}\"", hex::encode(bytes)));
+        ops_hex.push(format!("\"{}\"", encode_hex(&bytes)));
     }
 
     let mut elem_versions_hex = Vec::new();
@@ -281,7 +273,7 @@ fn format_draft_session_json(session: &DraftSession) -> Result<String, DraftSess
         let bytes = canonical_bytes(&obj).map_err(|e| {
             DraftSessionError::Invalid(format!("failed to encode element version: {e}"))
         })?;
-        elem_versions_hex.push(format!("\"{}\"", hex::encode(bytes)));
+        elem_versions_hex.push(format!("\"{}\"", encode_hex(&bytes)));
     }
 
     let mut rel_versions_hex = Vec::new();
@@ -292,7 +284,7 @@ fn format_draft_session_json(session: &DraftSession) -> Result<String, DraftSess
         let bytes = canonical_bytes(&obj).map_err(|e| {
             DraftSessionError::Invalid(format!("failed to encode relationship version: {e}"))
         })?;
-        rel_versions_hex.push(format!("\"{}\"", hex::encode(bytes)));
+        rel_versions_hex.push(format!("\"{}\"", encode_hex(&bytes)));
     }
 
     let obj = CanonicalObject {
@@ -300,7 +292,7 @@ fn format_draft_session_json(session: &DraftSession) -> Result<String, DraftSess
     };
     let state_bytes = canonical_bytes(&obj)
         .map_err(|e| DraftSessionError::Invalid(format!("failed to encode working state: {e}")))?;
-    let state_hex = hex::encode(state_bytes);
+    let state_hex = encode_hex(&state_bytes);
 
     let refs_json = serde_json::to_string(&session.workflow_references).map_err(|e| {
         DraftSessionError::Invalid(format!("failed to encode workflow_references: {e}"))
@@ -376,7 +368,7 @@ fn parse_draft_session_json(json: &str) -> Result<DraftSession, DraftSessionErro
     let ops_hex = extract_json_string_array(json, "operations")?;
     let mut operations = Vec::new();
     for op_h in ops_hex {
-        let bytes = hex::decode(&op_h)
+        let bytes = decode_hex(&op_h)
             .map_err(|_| DraftSessionError::Invalid("malformed operation hex".to_string()))?;
         let canonical = decode_canonical(&bytes)
             .map_err(|e| DraftSessionError::Invalid(format!("failed to decode operation: {e}")))?;
@@ -397,7 +389,7 @@ fn parse_draft_session_json(json: &str) -> Result<DraftSession, DraftSessionErro
     let elem_hex = extract_json_string_array(json, "staged_element_versions")?;
     let mut staged_element_versions = Vec::new();
     for ev_h in elem_hex {
-        let bytes = hex::decode(&ev_h)
+        let bytes = decode_hex(&ev_h)
             .map_err(|_| DraftSessionError::Invalid("malformed element version hex".to_string()))?;
         let canonical = decode_canonical(&bytes).map_err(|e| {
             DraftSessionError::Invalid(format!("failed to decode element version: {e}"))
@@ -415,7 +407,7 @@ fn parse_draft_session_json(json: &str) -> Result<DraftSession, DraftSessionErro
     let rel_hex = extract_json_string_array(json, "staged_relationship_versions")?;
     let mut staged_relationship_versions = Vec::new();
     for rv_h in rel_hex {
-        let bytes = hex::decode(&rv_h).map_err(|_| {
+        let bytes = decode_hex(&rv_h).map_err(|_| {
             DraftSessionError::Invalid("malformed relationship version hex".to_string())
         })?;
         let canonical = decode_canonical(&bytes).map_err(|e| {
@@ -432,7 +424,7 @@ fn parse_draft_session_json(json: &str) -> Result<DraftSession, DraftSessionErro
     }
 
     let state_hex = extract_json_string(json, "working_state")?;
-    let state_bytes = hex::decode(&state_hex)
+    let state_bytes = decode_hex(&state_hex)
         .map_err(|_| DraftSessionError::Invalid("malformed working_state hex".to_string()))?;
     let canonical_state = decode_canonical(&state_bytes)
         .map_err(|e| DraftSessionError::Invalid(format!("failed to decode working state: {e}")))?;
@@ -571,6 +563,26 @@ fn extract_json_string_array(json: &str, key: &str) -> Result<Vec<String>, Draft
     Ok(result)
 }
 
+
+fn encode_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        write!(&mut s, "{:02x}", b).unwrap();
+    }
+    s
+}
+
+fn decode_hex(s: &str) -> Result<Vec<u8>, ()> {
+    if s.len() % 2 != 0 {
+        return Err(());
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,5 +618,32 @@ mod tests {
         let json = format_draft_session_json(&session).unwrap();
         let parsed = parse_draft_session_json(&json).unwrap();
         assert_eq!(session, parsed);
+    }
+}
+
+impl std::fmt::Display for DraftSessionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyExists => write!(f, "a draft change transaction is already open at .kat/work/change/session.json"),
+            Self::NotFound => write!(f, "no open draft change transaction found at .kat/work/change/session.json"),
+            Self::StaleSession => write!(f, "draft session is stale because accepted head moved since begin; use 'kat change abort' to clear"),
+            Self::Io(_0) => write!(f, "draft session I/O error: {_0}"),
+            Self::Invalid(_0) => write!(f, "invalid draft session file: {_0}"),
+        }
+    }
+}
+
+impl std::error::Error for DraftSessionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for DraftSessionError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
     }
 }

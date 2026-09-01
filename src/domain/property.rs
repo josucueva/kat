@@ -45,7 +45,13 @@ impl fmt::Display for PropertyValue {
             PropertyValue::Bool(b) => write!(f, "{b}"),
             PropertyValue::Integer(i) => write!(f, "{i}"),
             PropertyValue::Text(t) => f.write_str(t),
-            PropertyValue::Bytes(b) => write!(f, "0x{}", hex::encode(b)),
+            PropertyValue::Bytes(b) => {
+                f.write_str("0x")?;
+                for byte in b {
+                    write!(f, "{:02x}", byte)?;
+                }
+                Ok(())
+            }
             PropertyValue::Uuid(u) => write!(f, "{u}"),
             PropertyValue::List(items) => {
                 f.write_str("[")?;

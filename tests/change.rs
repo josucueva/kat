@@ -50,7 +50,7 @@ use kat::repository::change::{
 use kat::repository::init::init_repository;
 use kat::repository::open::{Repository, open_repository};
 use kat::repository::query::show_element;
-use kat::repository::ref_store::{AcceptedRef, RefStore};
+use kat::repository::ref_store::AcceptedRef;
 use kat::repository::validation::invariant::InvariantError;
 use kat::repository::validation::invariant::validate_update_element_invariants as validate_update_candidate_invariants;
 use kat::repository::validation::ontology::{OntologyError, validate_relationship};

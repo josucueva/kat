@@ -34,56 +34,44 @@ use crate::repository::change::{
 };
 
 /// Error reported when a candidate semantic change violates an invariant.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvariantError {
     /// The created element's lifecycle is not the expected `Active`.
-    #[error("the created element is not in the Active lifecycle")]
-    CreatedElementNotActive,
+        CreatedElementNotActive,
     /// The candidate's V1 ObjectId no longer matches the element's re-derived
     /// content identity (encode-then-hash).
-    #[error("V1 content identity mismatch: expected {expected}, actual {actual}")]
-    ElementVersionIdentityMismatch {
+        ElementVersionIdentityMismatch {
         /// The correctly re-derived ObjectId of the element version.
         expected: ObjectId,
         /// The ObjectId carried on the prepared creation.
         actual: ObjectId,
     },
     /// The candidate state does not map the created element to its new version.
-    #[error("candidate state does not reference the created element version")]
-    CandidateElementReferenceMismatch,
+        CandidateElementReferenceMismatch,
     /// The candidate changed the base ontology reference.
-    #[error("candidate changed the base ontology reference")]
-    OntologyVersionChanged,
+        OntologyVersionChanged,
     /// The candidate altered unrelated element content (removed, replaced, or
     /// added an entry beyond exactly `E1 -> V1`).
-    #[error("candidate mutated unrelated element content")]
-    UnexpectedElementMutation,
+        UnexpectedElementMutation,
     /// The candidate altered the base relationships.
-    #[error("candidate mutated the base relationships")]
-    UnexpectedRelationshipMutation,
+        UnexpectedRelationshipMutation,
     /// The candidate state is not structurally canonical.
-    #[error("candidate state is not canonically structured: {0}")]
-    InvalidCanonicalStructure(#[from] CanonicalStructureError),
+        InvalidCanonicalStructure(CanonicalStructureError),
     /// The update changed the element's stable identity.
-    #[error("the update changed the element identity")]
-    UpdateIdentityChanged,
+        UpdateIdentityChanged,
     /// The update changed the element's type (`UpdateElement` must not become
     /// an implicit Retype).
-    #[error("the update changed the element type")]
-    UpdateTypeChanged,
+        UpdateTypeChanged,
     /// A lifecycle involved in the update is not `Active` (updates apply only
     /// to active elements and must not change the lifecycle).
-    #[error("the update lifecycle is not Active (previous or new)")]
-    UpdateLifecycleChanged,
+        UpdateLifecycleChanged,
     /// The base state no longer maps the element to the prepared previous
     /// version (`previous_version_id == expected_version == base.elements[E]`
     /// no longer holds).
-    #[error("the base state no longer maps the element to the prepared previous version")]
-    UpdateBaseVersionMismatch,
+        UpdateBaseVersionMismatch,
     /// The candidate's Vn+1 ObjectId no longer matches the element's re-derived
     /// content identity (encode-then-hash).
-    #[error("Vn+1 content identity mismatch: expected {expected}, actual {actual}")]
-    UpdateVersionIdentityMismatch {
+        UpdateVersionIdentityMismatch {
         /// The correctly re-derived ObjectId of the new version.
         expected: ObjectId,
         /// The ObjectId carried on the prepared update.
@@ -92,110 +80,72 @@ pub enum InvariantError {
     /// The prepared update's new version is identical to the previous version
     /// (defensive invariant breach — the operation-level no-op is rejected at
     /// step 2.1 as `NoEffectiveChange`).
-    #[error("the update's new version is identical to the previous version")]
-    UpdateVersionUnchanged,
+        UpdateVersionUnchanged,
     /// The candidate state does not map the updated element to its new version.
-    #[error("candidate state does not reference the updated element version")]
-    UpdateCandidateReferenceMismatch,
+        UpdateCandidateReferenceMismatch,
     /// The deprecation changed element properties.
-    #[error("the deprecation changed element properties")]
-    DeprecationPropertiesChanged,
+        DeprecationPropertiesChanged,
     /// The deprecation lifecycle transition is invalid.
-    #[error(
-        "the deprecation lifecycle transition is invalid (previous must be Active, new must be Deprecated)"
-    )]
-    DeprecationLifecycleInvalid,
+        DeprecationLifecycleInvalid,
     /// The candidate state does not map the deprecated element to its new version.
-    #[error("candidate state does not reference the deprecated element version")]
-    DeprecationCandidateReferenceMismatch,
+        DeprecationCandidateReferenceMismatch,
     /// Superseding changed the existing element's properties.
-    #[error("superseding changed the existing element properties")]
-    SupersedePropertiesChanged,
+        SupersedePropertiesChanged,
     /// The superseding lifecycle transition for E1 is invalid (previous must be Active, new must be Superseded).
-    #[error(
-        "superseding lifecycle transition for E1 is invalid (previous must be Active, new must be Superseded)"
-    )]
-    SupersedeLifecycleInvalid,
+        SupersedeLifecycleInvalid,
     /// The replacement element identity does not match prepared identity.
-    #[error("replacement element identity does not match prepared identity")]
-    SupersedeReplacementIdentityMismatch,
+        SupersedeReplacementIdentityMismatch,
     /// The replacement element is not in the Active lifecycle.
-    #[error("replacement element is not in the Active lifecycle")]
-    SupersedeReplacementNotActive,
+        SupersedeReplacementNotActive,
     /// The replacement element version content identity mismatch.
-    #[error(
-        "replacement element version content identity mismatch: expected {expected}, actual {actual}"
-    )]
-    SupersedeReplacementVersionIdentityMismatch {
+        SupersedeReplacementVersionIdentityMismatch {
         /// Re-derived ObjectId.
         expected: ObjectId,
         /// Prepared ObjectId.
         actual: ObjectId,
     },
     /// The replacement element ID equals the superseded element ID.
-    #[error("replacement element ID equals the superseded element ID")]
-    SupersedeReplacementAliased,
+        SupersedeReplacementAliased,
     /// The superseding relationship identity does not match prepared identity.
-    #[error("superseding relationship identity does not match prepared identity")]
-    SupersedeRelationshipIdentityMismatch,
+        SupersedeRelationshipIdentityMismatch,
     /// The superseding relationship type is invalid.
-    #[error("superseding relationship type is invalid (must be kat.core/supersedes)")]
-    SupersedeRelationshipTypeInvalid,
+        SupersedeRelationshipTypeInvalid,
     /// The superseding relationship source element ID does not match replacement element ID.
-    #[error("superseding relationship source element ID does not match replacement element ID")]
-    SupersedeRelationshipSourceMismatch,
+        SupersedeRelationshipSourceMismatch,
     /// The superseding relationship target element ID does not match existing element ID.
-    #[error("superseding relationship target element ID does not match existing element ID")]
-    SupersedeRelationshipTargetMismatch,
+        SupersedeRelationshipTargetMismatch,
     /// The superseding relationship version content identity mismatch.
-    #[error(
-        "superseding relationship version content identity mismatch: expected {expected}, actual {actual}"
-    )]
-    SupersedeRelationshipVersionIdentityMismatch {
+        SupersedeRelationshipVersionIdentityMismatch {
         /// Re-derived ObjectId.
         expected: ObjectId,
         /// Prepared ObjectId.
         actual: ObjectId,
     },
     /// Candidate state does not reference the superseded element version.
-    #[error("candidate state does not reference the superseded element version")]
-    SupersedeExistingReferenceMismatch,
+        SupersedeExistingReferenceMismatch,
     /// Candidate state does not reference the replacement element version.
-    #[error("candidate state does not reference the replacement element version")]
-    SupersedeReplacementReferenceMismatch,
+        SupersedeReplacementReferenceMismatch,
     /// Candidate state does not reference the superseding relationship version.
-    #[error("candidate state does not reference the superseding relationship version")]
-    SupersedeRelationshipReferenceMismatch,
+        SupersedeRelationshipReferenceMismatch,
     /// The link relationship identity does not match prepared relationship ID.
-    #[error("link relationship identity does not match prepared relationship ID")]
-    LinkRelationshipIdentityMismatch,
+        LinkRelationshipIdentityMismatch,
     /// The link relationship source element ID does not match prepared source element ID.
-    #[error("link relationship source element ID does not match prepared source element ID")]
-    LinkSourceMismatch,
+        LinkSourceMismatch,
     /// The link relationship target element ID does not match prepared target element ID.
-    #[error("link relationship target element ID does not match prepared target element ID")]
-    LinkTargetMismatch,
+        LinkTargetMismatch,
     /// The link relationship version content identity mismatch.
-    #[error(
-        "link relationship version content identity mismatch: expected {expected}, actual {actual}"
-    )]
-    LinkRelationshipVersionIdentityMismatch {
+        LinkRelationshipVersionIdentityMismatch {
         /// Re-derived ObjectId.
         expected: ObjectId,
         /// Prepared ObjectId.
         actual: ObjectId,
     },
     /// Candidate state does not reference the linked relationship version.
-    #[error("candidate state does not reference the linked relationship version")]
-    LinkCandidateReferenceMismatch,
+        LinkCandidateReferenceMismatch,
     /// Unlinking did not remove the relationship from candidate state.
-    #[error("unlinking did not remove relationship {0} from candidate state")]
-    UnlinkRelationshipNotRemoved(RelationshipId),
+        UnlinkRelationshipNotRemoved(RelationshipId),
     /// The previous relationship version content identity mismatch.
-    #[error(
-        "previous relationship version content identity mismatch: expected {expected}, actual {actual}"
-    )]
-    UnlinkRelationshipVersionIdentityMismatch {
+        UnlinkRelationshipVersionIdentityMismatch {
         /// Re-derived ObjectId.
         expected: ObjectId,
         /// Prepared ObjectId.
@@ -1083,5 +1033,65 @@ mod tests {
             validate_create_element_invariants(&p),
             Err(InvariantError::InvalidCanonicalStructure(_))
         ));
+    }
+}
+
+impl std::fmt::Display for InvariantError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CreatedElementNotActive => write!(f, "the created element is not in the Active lifecycle"),
+            Self::ElementVersionIdentityMismatch { expected, actual, .. } => write!(f, "V1 content identity mismatch: expected {expected}, actual {actual}"),
+            Self::CandidateElementReferenceMismatch => write!(f, "candidate state does not reference the created element version"),
+            Self::OntologyVersionChanged => write!(f, "candidate changed the base ontology reference"),
+            Self::UnexpectedElementMutation => write!(f, "candidate mutated unrelated element content"),
+            Self::UnexpectedRelationshipMutation => write!(f, "candidate mutated the base relationships"),
+            Self::InvalidCanonicalStructure(_0) => write!(f, "candidate state is not canonically structured: {_0}"),
+            Self::UpdateIdentityChanged => write!(f, "the update changed the element identity"),
+            Self::UpdateTypeChanged => write!(f, "the update changed the element type"),
+            Self::UpdateLifecycleChanged => write!(f, "the update lifecycle is not Active (previous or new)"),
+            Self::UpdateBaseVersionMismatch => write!(f, "the base state no longer maps the element to the prepared previous version"),
+            Self::UpdateVersionIdentityMismatch { expected, actual, .. } => write!(f, "Vn+1 content identity mismatch: expected {expected}, actual {actual}"),
+            Self::UpdateVersionUnchanged => write!(f, "the update's new version is identical to the previous version"),
+            Self::UpdateCandidateReferenceMismatch => write!(f, "candidate state does not reference the updated element version"),
+            Self::DeprecationPropertiesChanged => write!(f, "the deprecation changed element properties"),
+            Self::DeprecationLifecycleInvalid => write!(f, "the deprecation lifecycle transition is invalid (previous must be Active, new must be Deprecated)"),
+            Self::DeprecationCandidateReferenceMismatch => write!(f, "candidate state does not reference the deprecated element version"),
+            Self::SupersedePropertiesChanged => write!(f, "superseding changed the existing element properties"),
+            Self::SupersedeLifecycleInvalid => write!(f, "superseding lifecycle transition for E1 is invalid (previous must be Active, new must be Superseded)"),
+            Self::SupersedeReplacementIdentityMismatch => write!(f, "replacement element identity does not match prepared identity"),
+            Self::SupersedeReplacementNotActive => write!(f, "replacement element is not in the Active lifecycle"),
+            Self::SupersedeReplacementVersionIdentityMismatch { expected, actual, .. } => write!(f, "replacement element version content identity mismatch: expected {expected}, actual {actual}"),
+            Self::SupersedeReplacementAliased => write!(f, "replacement element ID equals the superseded element ID"),
+            Self::SupersedeRelationshipIdentityMismatch => write!(f, "superseding relationship identity does not match prepared identity"),
+            Self::SupersedeRelationshipTypeInvalid => write!(f, "superseding relationship type is invalid (must be kat.core/supersedes)"),
+            Self::SupersedeRelationshipSourceMismatch => write!(f, "superseding relationship source element ID does not match replacement element ID"),
+            Self::SupersedeRelationshipTargetMismatch => write!(f, "superseding relationship target element ID does not match existing element ID"),
+            Self::SupersedeRelationshipVersionIdentityMismatch { expected, actual, .. } => write!(f, "superseding relationship version content identity mismatch: expected {expected}, actual {actual}"),
+            Self::SupersedeExistingReferenceMismatch => write!(f, "candidate state does not reference the superseded element version"),
+            Self::SupersedeReplacementReferenceMismatch => write!(f, "candidate state does not reference the replacement element version"),
+            Self::SupersedeRelationshipReferenceMismatch => write!(f, "candidate state does not reference the superseding relationship version"),
+            Self::LinkRelationshipIdentityMismatch => write!(f, "link relationship identity does not match prepared relationship ID"),
+            Self::LinkSourceMismatch => write!(f, "link relationship source element ID does not match prepared source element ID"),
+            Self::LinkTargetMismatch => write!(f, "link relationship target element ID does not match prepared target element ID"),
+            Self::LinkRelationshipVersionIdentityMismatch { expected, actual, .. } => write!(f, "link relationship version content identity mismatch: expected {expected}, actual {actual}"),
+            Self::LinkCandidateReferenceMismatch => write!(f, "candidate state does not reference the linked relationship version"),
+            Self::UnlinkRelationshipNotRemoved(_0) => write!(f, "unlinking did not remove relationship {_0} from candidate state"),
+            Self::UnlinkRelationshipVersionIdentityMismatch { expected, actual, .. } => write!(f, "previous relationship version content identity mismatch: expected {expected}, actual {actual}"),
+        }
+    }
+}
+
+impl std::error::Error for InvariantError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidCanonicalStructure(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<CanonicalStructureError> for InvariantError {
+    fn from(err: CanonicalStructureError) -> Self {
+        Self::InvalidCanonicalStructure(err)
     }
 }

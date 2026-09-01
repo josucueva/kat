@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 
 use crate::domain::identity::ObjectId;
 use crate::encoding::cbor::canonical_bytes;
-use crate::encoding::error::EncodingError;
+use crate::encoding::validate::CanonicalStructureError;
 use crate::encoding::object::CanonicalObject;
 
 /// Computes the ObjectId (SHA-256) of exact canonical bytes.
@@ -30,7 +30,7 @@ pub fn object_id(bytes: &[u8]) -> ObjectId {
 /// Kept as the composition of [`canonical_bytes`] and [`object_id`] so the
 /// primitives stay separable (the object store will hash already-encoded
 /// bytes without going through an object).
-pub fn canonical_object_id(object: &CanonicalObject) -> Result<ObjectId, EncodingError> {
+pub fn canonical_object_id(object: &CanonicalObject) -> Result<ObjectId, CanonicalStructureError> {
     canonical_bytes(object).map(|bytes| object_id(&bytes))
 }
 

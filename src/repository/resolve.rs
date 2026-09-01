@@ -5,36 +5,30 @@
 //! (`ElementId` or `RelationshipId`) against the current accepted repository state.
 
 use std::str::FromStr;
-use thiserror::Error;
+
 
 use crate::domain::identity::{ElementId, RelationshipId};
 use crate::encoding::decode_canonical;
 use crate::encoding::object::CanonicalPayload;
 use crate::repository::open::Repository;
-use crate::repository::ref_store::RefStore;
 
 /// Errors returned by ID prefix resolution.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
-    #[error("invalid identifier '{input}'")]
-    InvalidIdentifier { input: String },
+        InvalidIdentifier { input: String },
 
-    #[error("identifier prefix '{input}' is too short (minimum 8 hex digits required)")]
-    PrefixTooShort { input: String },
+        PrefixTooShort { input: String },
 
-    #[error("identifier '{input}' not found in current accepted state")]
-    NotFound { input: String },
+        NotFound { input: String },
 
-    #[error("identifier prefix '{input}' is ambiguous ({count} matches: {candidates_joined})")]
-    Ambiguous {
+        Ambiguous {
         input: String,
         count: usize,
         candidates: Vec<String>,
         candidates_joined: String,
     },
 
-    #[error("repository error: {0}")]
-    Repository(String),
+        Repository(String),
 }
 
 /// Counts the number of hexadecimal digits (`0-9`, `a-f`, `A-F`) in `input`,
@@ -334,4 +328,19 @@ mod tests {
             elem_id
         );
     }
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidIdentifier { input, .. } => write!(f, "invalid identifier '{input}'"),
+            Self::PrefixTooShort { input, .. } => write!(f, "identifier prefix '{input}' is too short (minimum 8 hex digits required)"),
+            Self::NotFound { input, .. } => write!(f, "identifier '{input}' not found in current accepted state"),
+            Self::Ambiguous { input, count, candidates: _candidates, candidates_joined, .. } => write!(f, "identifier prefix '{input}' is ambiguous ({count} matches: {candidates_joined})"),
+            Self::Repository(_0) => write!(f, "repository error: {_0}"),
+        }
+    }
+}
+
+impl std::error::Error for ResolveError {
 }

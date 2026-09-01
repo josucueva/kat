@@ -22,7 +22,7 @@ use crate::repository::metadata::{
     HashAlgorithm, ObjectEncoding, RepositoryMetadata, SUPPORTED_FORMAT_VERSION,
 };
 use crate::repository::object_store::ObjectStore;
-use crate::repository::ref_store::{AcceptedRef, FileRefStore, RefStore};
+use crate::repository::ref_store::{AcceptedRef, FileRefStore};
 
 /// Process-global counter for unique temporary metadata file names.
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);

@@ -56,7 +56,7 @@ fn valid_vectors_encode_to_exact_canonical_bytes() {
         let bytes = canonical_bytes(&object)
             .unwrap_or_else(|e| panic!("{name}: canonical_bytes failed: {e}"));
         assert_eq!(
-            hex::encode(&bytes),
+            encode_hex(&bytes),
             fixture["cbor_hex"].as_str().unwrap(),
             "cbor bytes mismatch for {name}"
         );
@@ -126,7 +126,7 @@ fn property_value(v: &Value) -> PropertyValue {
                         .as_str()
                         .unwrap_or_else(|| panic!("$bytes must be a hex string: {v}"));
                     return PropertyValue::Bytes(
-                        hex::decode(hex).unwrap_or_else(|e| panic!("bad $bytes hex {hex}: {e}")),
+                        decode_hex(hex).unwrap_or_else(|_| panic!("bad $bytes hex {hex}")),
                     );
                 }
             }
@@ -304,12 +304,30 @@ fn valid_vectors_decode_and_round_trip() {
     for path in paths {
         let fixture = read_fixture(&path);
         let name = fixture["name"].as_str().unwrap().to_string();
-        let bytes = hex::decode(fixture["cbor_hex"].as_str().unwrap())
-            .unwrap_or_else(|e| panic!("{name}: bad cbor_hex: {e}"));
+        let bytes = decode_hex(fixture["cbor_hex"].as_str().unwrap())
+            .unwrap_or_else(|_| panic!("{name}: bad cbor_hex"));
         let decoded = kat::encoding::decode_canonical(&bytes)
             .unwrap_or_else(|e| panic!("{name}: decode failed: {e}"));
         let reencoded =
             canonical_bytes(&decoded).unwrap_or_else(|e| panic!("{name}: re-encode failed: {e}"));
         assert_eq!(reencoded, bytes, "round-trip mismatch for {name}");
     }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
+fn decode_hex(s: &str) -> Result<Vec<u8>, ()> {
+    if s.len() % 2 != 0 {
+        return Err(());
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
+        .collect()
 }

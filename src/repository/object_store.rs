@@ -30,22 +30,19 @@ use crate::encoding::hash::object_id;
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Error produced by the object store.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ObjectStoreError {
     /// The requested object is absent from the store.
-    #[error("object not found: {0}")]
-    NotFound(ObjectId),
+        NotFound(ObjectId),
     /// An object's bytes do not hash to the ObjectId they are stored under.
-    #[error("object integrity mismatch: expected {expected}, actual {actual}")]
-    Integrity {
+        Integrity {
         /// The ObjectId the object was expected to have.
         expected: ObjectId,
         /// The ObjectId its actual bytes hash to.
         actual: ObjectId,
     },
     /// An underlying filesystem failure.
-    #[error("object store I/O error: {0}")]
-    Io(#[from] std::io::Error),
+        Io(std::io::Error),
 }
 
 /// Immutable content-addressed object store rooted at a `.kat` directory.
@@ -291,5 +288,30 @@ mod tests {
             Err(ObjectStoreError::NotFound(found)) => assert_eq!(found, id),
             other => panic!("expected NotFound, got {other:?}"),
         }
+    }
+}
+
+impl std::fmt::Display for ObjectStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(_0) => write!(f, "object not found: {_0}"),
+            Self::Integrity { expected, actual, .. } => write!(f, "object integrity mismatch: expected {expected}, actual {actual}"),
+            Self::Io(_0) => write!(f, "object store I/O error: {_0}"),
+        }
+    }
+}
+
+impl std::error::Error for ObjectStoreError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ObjectStoreError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
     }
 }

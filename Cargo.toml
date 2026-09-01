@@ -6,7 +6,6 @@ description = "KAT (Knowledge Abstraction Tracker) - a semantic software reposit
 
 [dependencies]
 uuid = { version = "1", features = ["v4", "serde"] }
-hex = "0.4"
 thiserror = "2"
 sha2 = "0.10"
 toml = "0.8"

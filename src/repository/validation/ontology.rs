@@ -20,19 +20,14 @@
 use crate::domain::ontology::OntologyVersion;
 
 /// Error reported when a knowledge object does not conform to the ontology.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OntologyError {
     /// The element type is not defined in the ontology.
-    #[error("unknown element type: {0}")]
-    UnknownElementType(String),
+        UnknownElementType(String),
     /// The relationship type is not defined in the ontology.
-    #[error("unknown relationship type: {0}")]
-    UnknownRelationshipType(String),
+        UnknownRelationshipType(String),
     /// The relationship's source element type is not allowed for this relationship type.
-    #[error(
-        "relationship type '{relationship_type}' does not allow source element type '{source_type}' (requires source in {allowed_sources:?}, target in {allowed_targets:?})"
-    )]
-    RelationshipSourceTypeNotAllowed {
+        RelationshipSourceTypeNotAllowed {
         /// The relationship type being validated.
         relationship_type: String,
         /// The source element type.
@@ -43,10 +38,7 @@ pub enum OntologyError {
         allowed_targets: Vec<String>,
     },
     /// The relationship's target element type is not allowed for this relationship type.
-    #[error(
-        "relationship type '{relationship_type}' does not allow target element type '{target_type}' (requires source in {allowed_sources:?}, target in {allowed_targets:?})"
-    )]
-    RelationshipTargetTypeNotAllowed {
+        RelationshipTargetTypeNotAllowed {
         /// The relationship type being validated.
         relationship_type: String,
         /// The target element type.
@@ -220,4 +212,18 @@ mod tests {
             })
         );
     }
+}
+
+impl std::fmt::Display for OntologyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownElementType(_0) => write!(f, "unknown element type: {_0}"),
+            Self::UnknownRelationshipType(_0) => write!(f, "unknown relationship type: {_0}"),
+            Self::RelationshipSourceTypeNotAllowed { relationship_type, source_type, allowed_sources, allowed_targets, .. } => write!(f, "relationship type '{relationship_type}' does not allow source element type '{source_type}' (requires source in {allowed_sources:?}, target in {allowed_targets:?})"),
+            Self::RelationshipTargetTypeNotAllowed { relationship_type, target_type, allowed_sources, allowed_targets, .. } => write!(f, "relationship type '{relationship_type}' does not allow target element type '{target_type}' (requires source in {allowed_sources:?}, target in {allowed_targets:?})"),
+        }
+    }
+}
+
+impl std::error::Error for OntologyError {
 }

@@ -35,7 +35,7 @@ use crate::domain::operation::Operation;
 use crate::domain::property::PropertyValue;
 use crate::domain::relationship::RelationshipVersion;
 use crate::domain::state::{ElementStateEntry, RelationshipStateEntry, SemanticState};
-use crate::encoding::error::EncodingError;
+
 use crate::encoding::object::{
     CanonicalObject, CanonicalPayload, ENVELOPE_VERSION, ObjectKind, SCHEMA_VERSION,
 };
@@ -46,10 +46,8 @@ use crate::encoding::validate::{CanonicalStructureError, CanonicalValidate};
 /// Refuses to encode objects that are not structurally canonical: validation
 /// runs first, so unsorted or duplicate collections can never be smuggled
 /// past the encoder.
-pub fn canonical_bytes(object: &CanonicalObject) -> Result<Vec<u8>, EncodingError> {
-    object
-        .validate_canonical_structure()
-        .map_err(EncodingError::InvalidCanonicalStructure)?;
+pub fn canonical_bytes(object: &CanonicalObject) -> Result<Vec<u8>, CanonicalStructureError> {
+    object.validate_canonical_structure()?;
     let mut writer = CborWriter::new();
     encode_canonical_object(&mut writer, object)?;
     Ok(writer.into_vec())
@@ -189,7 +187,7 @@ fn write_object_id(writer: &mut CborWriter, id: &ObjectId) {
 fn encode_canonical_object(
     writer: &mut CborWriter,
     object: &CanonicalObject,
-) -> Result<(), EncodingError> {
+) -> Result<(), CanonicalStructureError> {
     writer.write_map_header(4);
     writer.write_uint(0);
     writer.write_uint(ENVELOPE_VERSION);
@@ -216,7 +214,7 @@ fn object_kind_number(kind: ObjectKind) -> u64 {
 fn encode_payload(
     writer: &mut CborWriter,
     payload: &CanonicalPayload,
-) -> Result<(), EncodingError> {
+) -> Result<(), CanonicalStructureError> {
     match payload {
         CanonicalPayload::KnowledgeElementVersion(v) => encode_knowledge_element_version(writer, v),
         CanonicalPayload::RelationshipVersion(v) => encode_relationship_version(writer, v),
@@ -239,7 +237,7 @@ fn lifecycle_number(lifecycle: Lifecycle) -> u64 {
 fn write_property_map(
     writer: &mut CborWriter,
     entries: &[(String, PropertyValue)],
-) -> Result<(), EncodingError> {
+) -> Result<(), CanonicalStructureError> {
     // Re-verify canonical key order by encoded bytes. `canonical_bytes`
     // validates structure first, so this is defense in depth; if it ever
     // fires, validation and encoding disagreed and we fail closed.
@@ -249,9 +247,7 @@ fn write_property_map(
         if let Some(previous) = &previous
             && previous >= &key_bytes
         {
-            return Err(EncodingError::InvalidCanonicalStructure(
-                CanonicalStructureError::PropertyKeysUnordered,
-            ));
+            return Err(CanonicalStructureError::PropertyKeysUnordered);
         }
         previous = Some(key_bytes);
     }
@@ -268,7 +264,7 @@ fn write_property_map(
 fn write_property_value(
     writer: &mut CborWriter,
     value: &PropertyValue,
-) -> Result<(), EncodingError> {
+) -> Result<(), CanonicalStructureError> {
     match value {
         PropertyValue::Null => {
             writer.write_null();
@@ -313,7 +309,7 @@ fn write_property_value(
 fn encode_knowledge_element_version(
     writer: &mut CborWriter,
     v: &KnowledgeElementVersion,
-) -> Result<(), EncodingError> {
+) -> Result<(), CanonicalStructureError> {
     writer.write_map_header(4);
     writer.write_uint(0);
     write_uuid(writer, &v.element_id.as_uuid());
@@ -329,7 +325,7 @@ fn encode_knowledge_element_version(
 fn encode_relationship_version(
     writer: &mut CborWriter,
     v: &RelationshipVersion,
-) -> Result<(), EncodingError> {
+) -> Result<(), CanonicalStructureError> {
     writer.write_map_header(5);
     writer.write_uint(0);
     write_uuid(writer, &v.relationship_id.as_uuid());
@@ -347,7 +343,7 @@ fn encode_relationship_version(
 fn encode_ontology_version(
     writer: &mut CborWriter,
     o: &OntologyVersion,
-) -> Result<(), EncodingError> {
+) -> Result<(), CanonicalStructureError> {
     writer.write_map_header(3);
     writer.write_uint(0);
     write_uuid(writer, &o.ontology_id.as_uuid());
@@ -401,7 +397,7 @@ fn write_text_array(writer: &mut CborWriter, items: &[String]) {
 fn encode_semantic_state(
     writer: &mut CborWriter,
     state: &SemanticState,
-) -> Result<(), EncodingError> {
+) -> Result<(), CanonicalStructureError> {
     writer.write_map_header(3);
     writer.write_uint(0);
     write_object_id(writer, &state.ontology_version);
@@ -436,7 +432,7 @@ fn write_relationship_state_entry(writer: &mut CborWriter, entry: &RelationshipS
 fn encode_change_revision(
     writer: &mut CborWriter,
     change: &ChangeRevision,
-) -> Result<(), EncodingError> {
+) -> Result<(), CanonicalStructureError> {
     writer.write_map_header(if change.description.is_some() { 6 } else { 5 });
     writer.write_uint(0);
     write_uuid(writer, &change.change_id.as_uuid());
@@ -467,7 +463,7 @@ fn write_object_id_array(writer: &mut CborWriter, ids: &[ObjectId]) {
 }
 
 /// Encodes one semantic operation as its canonical tagged array.
-fn encode_operation(writer: &mut CborWriter, operation: &Operation) -> Result<(), EncodingError> {
+fn encode_operation(writer: &mut CborWriter, operation: &Operation) -> Result<(), CanonicalStructureError> {
     match operation {
         Operation::CreateElement { new_version } => {
             writer.write_array_header(2);
@@ -580,31 +576,31 @@ mod tests {
 
     #[test]
     fn uint_uses_shortest_encoding() {
-        assert_eq!(write_with(|w| w.write_uint(0)), hex::decode("00").unwrap());
-        assert_eq!(write_with(|w| w.write_uint(23)), hex::decode("17").unwrap());
+        assert_eq!(write_with(|w| w.write_uint(0)), decode_hex("00").unwrap());
+        assert_eq!(write_with(|w| w.write_uint(23)), decode_hex("17").unwrap());
         assert_eq!(
             write_with(|w| w.write_uint(24)),
-            hex::decode("1818").unwrap()
+            decode_hex("1818").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_uint(255)),
-            hex::decode("18ff").unwrap()
+            decode_hex("18ff").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_uint(256)),
-            hex::decode("190100").unwrap()
+            decode_hex("190100").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_uint(65535)),
-            hex::decode("19ffff").unwrap()
+            decode_hex("19ffff").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_uint(65536)),
-            hex::decode("1a00010000").unwrap()
+            decode_hex("1a00010000").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_uint(u64::MAX)),
-            hex::decode("1bffffffffffffffff").unwrap()
+            decode_hex("1bffffffffffffffff").unwrap()
         );
     }
 
@@ -613,38 +609,38 @@ mod tests {
         // magnitude n encodes -1 - n.
         assert_eq!(
             write_with(|w| w.write_neg_int(0)),
-            hex::decode("20").unwrap()
+            decode_hex("20").unwrap()
         ); // -1
         assert_eq!(
             write_with(|w| w.write_neg_int(23)),
-            hex::decode("37").unwrap()
+            decode_hex("37").unwrap()
         ); // -24
         assert_eq!(
             write_with(|w| w.write_neg_int(24)),
-            hex::decode("3818").unwrap()
+            decode_hex("3818").unwrap()
         ); // -25
         assert_eq!(
             write_with(|w| w.write_neg_int(255)),
-            hex::decode("38ff").unwrap()
+            decode_hex("38ff").unwrap()
         ); // -256
         assert_eq!(
             write_with(|w| w.write_neg_int(256)),
-            hex::decode("390100").unwrap()
+            decode_hex("390100").unwrap()
         ); // -257
     }
 
     #[test]
     fn signed_integer_encoding() {
-        assert_eq!(write_with(|w| w.write_int(0)), hex::decode("00").unwrap());
-        assert_eq!(write_with(|w| w.write_int(-1)), hex::decode("20").unwrap());
-        assert_eq!(write_with(|w| w.write_int(-24)), hex::decode("37").unwrap());
+        assert_eq!(write_with(|w| w.write_int(0)), decode_hex("00").unwrap());
+        assert_eq!(write_with(|w| w.write_int(-1)), decode_hex("20").unwrap());
+        assert_eq!(write_with(|w| w.write_int(-24)), decode_hex("37").unwrap());
         assert_eq!(
             write_with(|w| w.write_int(-25)),
-            hex::decode("3818").unwrap()
+            decode_hex("3818").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_int(i64::MIN)),
-            hex::decode("3b7fffffffffffffff").unwrap()
+            decode_hex("3b7fffffffffffffff").unwrap()
         );
     }
 
@@ -652,31 +648,31 @@ mod tests {
     fn byte_string_encoding() {
         assert_eq!(
             write_with(|w| w.write_byte_string(&[])),
-            hex::decode("40").unwrap()
+            decode_hex("40").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_byte_string(b"ABC")),
-            hex::decode("43414243").unwrap()
+            decode_hex("43414243").unwrap()
         );
         let long = vec![0u8; 24];
-        let mut expected = hex::decode("5818").unwrap();
+        let mut expected = decode_hex("5818").unwrap();
         expected.extend_from_slice(&long);
         assert_eq!(write_with(|w| w.write_byte_string(&long)), expected);
     }
 
     #[test]
     fn text_string_encoding() {
-        assert_eq!(write_with(|w| w.write_text("")), hex::decode("60").unwrap());
+        assert_eq!(write_with(|w| w.write_text("")), decode_hex("60").unwrap());
         assert_eq!(
             write_with(|w| w.write_text("a")),
-            hex::decode("6161").unwrap()
+            decode_hex("6161").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_text("IETF")),
-            hex::decode("6449455446").unwrap()
+            decode_hex("6449455446").unwrap()
         );
         let long = "x".repeat(24);
-        let mut expected = hex::decode("7818").unwrap();
+        let mut expected = decode_hex("7818").unwrap();
         expected.extend_from_slice(long.as_bytes());
         assert_eq!(write_with(|w| w.write_text(&long)), expected);
     }
@@ -685,36 +681,36 @@ mod tests {
     fn collection_headers() {
         assert_eq!(
             write_with(|w| w.write_array_header(0)),
-            hex::decode("80").unwrap()
+            decode_hex("80").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_array_header(2)),
-            hex::decode("82").unwrap()
+            decode_hex("82").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_array_header(24)),
-            hex::decode("9818").unwrap()
+            decode_hex("9818").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_map_header(0)),
-            hex::decode("a0").unwrap()
+            decode_hex("a0").unwrap()
         );
         assert_eq!(
             write_with(|w| w.write_map_header(25)),
-            hex::decode("b819").unwrap()
+            decode_hex("b819").unwrap()
         );
     }
 
     #[test]
     fn tag_bool_and_null() {
-        assert_eq!(write_with(|w| w.write_tag(0)), hex::decode("c0").unwrap());
+        assert_eq!(write_with(|w| w.write_tag(0)), decode_hex("c0").unwrap());
         assert_eq!(
             write_with(|w| w.write_tag(37)),
-            hex::decode("d825").unwrap()
+            decode_hex("d825").unwrap()
         );
-        assert_eq!(write_with(|w| w.write_true()), hex::decode("f5").unwrap());
-        assert_eq!(write_with(|w| w.write_false()), hex::decode("f4").unwrap());
-        assert_eq!(write_with(|w| w.write_null()), hex::decode("f6").unwrap());
+        assert_eq!(write_with(|w| w.write_true()), decode_hex("f5").unwrap());
+        assert_eq!(write_with(|w| w.write_false()), decode_hex("f4").unwrap());
+        assert_eq!(write_with(|w| w.write_null()), decode_hex("f6").unwrap());
     }
 
     #[test]
@@ -722,7 +718,7 @@ mod tests {
         let uuid = Uuid::from_u128(0x0102_0304_0506_0708_090a_0b0c_0d0e_0f10);
         assert_eq!(
             write_with(|w| write_uuid(w, &uuid)),
-            hex::decode("d825500102030405060708090a0b0c0d0e0f10").unwrap()
+            decode_hex("d825500102030405060708090a0b0c0d0e0f10").unwrap()
         );
     }
 
@@ -731,7 +727,7 @@ mod tests {
         let expected = format!("5820{}", hex_object_id(0xab));
         assert_eq!(
             write_with(|w| write_object_id(w, &object_id(0xab))),
-            hex::decode(expected).unwrap()
+            decode_hex(&expected).unwrap()
         );
     }
 
@@ -753,7 +749,7 @@ mod tests {
                 properties: vec![],
             }),
         };
-        let expected = hex::decode(
+        let expected = decode_hex(
             "a400010101020103a400d825507c8e0c81b9fc4c319974b9db8fa72e510174\
              6b61742e636f72652f726571756972656d656e74020003a0",
         )
@@ -801,7 +797,7 @@ mod tests {
         );
         assert_eq!(
             canonical_bytes(&object).unwrap(),
-            hex::decode(expected).unwrap()
+            decode_hex(&expected).unwrap()
         );
     }
 
@@ -829,7 +825,7 @@ mod tests {
         );
         assert_eq!(
             canonical_bytes(&object).unwrap(),
-            hex::decode(expected).unwrap()
+            decode_hex(&expected).unwrap()
         );
     }
 
@@ -860,7 +856,7 @@ mod tests {
         );
         assert_eq!(
             canonical_bytes(&object).unwrap(),
-            hex::decode(expected).unwrap()
+            decode_hex(&expected).unwrap()
         );
     }
 
@@ -892,7 +888,7 @@ mod tests {
         );
         assert_eq!(
             canonical_bytes(&object).unwrap(),
-            hex::decode(expected).unwrap()
+            decode_hex(&expected).unwrap()
         );
     }
 
@@ -924,7 +920,7 @@ mod tests {
         );
         assert_eq!(
             canonical_bytes(&object).unwrap(),
-            hex::decode(expected).unwrap()
+            decode_hex(&expected).unwrap()
         );
     }
 
@@ -952,9 +948,14 @@ mod tests {
         };
         assert_eq!(
             canonical_bytes(&object),
-            Err(EncodingError::InvalidCanonicalStructure(
-                CanonicalStructureError::SemanticElementsUnordered
-            ))
+            Err(CanonicalStructureError::SemanticElementsUnordered)
         );
     }
+}
+
+fn decode_hex(s: &str) -> Result<Vec<u8>, ()> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
+        .collect()
 }

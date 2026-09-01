@@ -17,7 +17,7 @@ use kat::repository::error::RepositoryError;
 use kat::repository::init::init_repository;
 use kat::repository::metadata::RepositoryMetadata;
 use kat::repository::object_store::ObjectStore;
-use kat::repository::ref_store::{AcceptedRef, FileRefStore, RefStore};
+use kat::repository::ref_store::{AcceptedRef, FileRefStore};
 
 fn kat_dir(root: &Path) -> std::path::PathBuf {
     root.join(".kat")

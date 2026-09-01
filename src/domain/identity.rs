@@ -149,10 +149,10 @@ impl ObjectId {
 impl fmt::Display for ObjectId {
     /// Always writes exactly 64 lowercase hexadecimal characters.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut buf = [0u8; OBJECT_ID_TEXT_LEN];
-        hex::encode_to_slice(self.0, &mut buf)
-            .expect("32 bytes always encode to exactly 64 hex characters");
-        f.write_str(std::str::from_utf8(&buf).expect("hex output is ASCII"))
+        for byte in self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
     }
 }
 
@@ -176,15 +176,13 @@ impl<'de> serde::Deserialize<'de> for ObjectId {
 }
 
 /// Error returned when parsing a textual [`ObjectId`].
-#[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ObjectIdParseError {
     /// The text was not exactly 64 characters long.
-    #[error("object ID must contain exactly 64 hexadecimal characters")]
-    InvalidLength,
+        InvalidLength,
 
     /// A character was not a lowercase hexadecimal digit (`0-9`, `a-f`).
-    #[error("object ID must use lowercase hexadecimal characters")]
-    InvalidCharacter,
+        InvalidCharacter,
 }
 
 impl FromStr for ObjectId {
@@ -339,4 +337,16 @@ mod tests {
         let err = ObjectId::from_str(&"A".repeat(64)).unwrap_err();
         assert_eq!(err, ObjectIdParseError::InvalidCharacter);
     }
+}
+
+impl std::fmt::Display for ObjectIdParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidLength => write!(f, "object ID must contain exactly 64 hexadecimal characters"),
+            Self::InvalidCharacter => write!(f, "object ID must use lowercase hexadecimal characters"),
+        }
+    }
+}
+
+impl std::error::Error for ObjectIdParseError {
 }

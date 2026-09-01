@@ -11,7 +11,6 @@ use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use crate::repository::object_store::ObjectStore;
 use crate::repository::open::Repository;
 use crate::repository::query::QueryError;
-use crate::repository::ref_store::RefStore;
 
 /// Category/kind of a mechanically decidable validation violation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

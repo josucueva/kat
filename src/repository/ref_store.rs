@@ -78,40 +78,19 @@ fn parse_object_id(value: &str, field: &str) -> Result<ObjectId, String> {
 }
 
 /// Error produced by the ref store.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum RefStoreError {
     /// The ref is absent (not yet initialized).
-    #[error("repository ref not found")]
-    NotFound,
+        NotFound,
     /// An underlying filesystem failure.
-    #[error("repository ref I/O error: {0}")]
-    Io(#[from] std::io::Error),
+        Io(std::io::Error),
     /// The ref file is not in the expected format.
-    #[error("malformed repository ref: {0}")]
-    Parse(String),
+        Parse(String),
     /// A compare-and-swap could not publish because the ref state did not
     /// match expectations (or another publication is in progress).
-    #[error("accepted ref changed concurrently (compare-and-swap failed)")]
-    Conflict,
+        Conflict,
 }
 
-/// Persistence for mutable repository refs.
-pub trait RefStore {
-    /// Reads the current `accepted` ref.
-    fn read_accepted(&self) -> Result<AcceptedRef, RefStoreError>;
-
-    /// Creates the initial `accepted` ref, failing if it already exists.
-    fn init_accepted(&self, initial: &AcceptedRef) -> Result<(), RefStoreError>;
-
-    /// Publishes `new` only when the current ref equals `expected`
-    /// (compare-and-swap). On any other current value the ref is untouched
-    /// and `Conflict` is returned.
-    fn compare_and_swap_accepted(
-        &self,
-        expected: &AcceptedRef,
-        new: &AcceptedRef,
-    ) -> Result<(), RefStoreError>;
-}
 
 /// Filesystem ref store rooted at a `.kat` directory.
 #[derive(Debug)]
@@ -165,8 +144,9 @@ impl Drop for LockGuard {
     }
 }
 
-impl RefStore for FileRefStore {
-    fn read_accepted(&self) -> Result<AcceptedRef, RefStoreError> {
+impl FileRefStore {
+    /// Reads the current `accepted` ref.
+    pub fn read_accepted(&self) -> Result<AcceptedRef, RefStoreError> {
         let text = match fs::read_to_string(self.accepted_path()) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -177,7 +157,8 @@ impl RefStore for FileRefStore {
         AcceptedRef::parse(&text).map_err(RefStoreError::Parse)
     }
 
-    fn init_accepted(&self, initial: &AcceptedRef) -> Result<(), RefStoreError> {
+    /// Creates the initial `accepted` ref, failing if it already exists.
+    pub fn init_accepted(&self, initial: &AcceptedRef) -> Result<(), RefStoreError> {
         fs::create_dir_all(self.refs_dir())?;
         let path = self.accepted_path();
         match fs::OpenOptions::new()
@@ -195,7 +176,10 @@ impl RefStore for FileRefStore {
         }
     }
 
-    fn compare_and_swap_accepted(
+    /// Publishes `new` only when the current ref equals `expected`
+    /// (compare-and-swap). On any other current value the ref is untouched
+    /// and `Conflict` is returned.
+    pub fn compare_and_swap_accepted(
         &self,
         expected: &AcceptedRef,
         new: &AcceptedRef,
@@ -387,5 +371,31 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
         assert_eq!(names, vec!["accepted".to_string()]);
+    }
+}
+
+impl std::fmt::Display for RefStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "repository ref not found"),
+            Self::Io(_0) => write!(f, "repository ref I/O error: {_0}"),
+            Self::Parse(_0) => write!(f, "malformed repository ref: {_0}"),
+            Self::Conflict => write!(f, "accepted ref changed concurrently (compare-and-swap failed)"),
+        }
+    }
+}
+
+impl std::error::Error for RefStoreError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for RefStoreError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
     }
 }

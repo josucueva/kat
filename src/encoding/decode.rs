@@ -40,50 +40,37 @@ use crate::encoding::object::{
 use crate::encoding::validate::{CanonicalStructureError, CanonicalValidate};
 
 /// Error produced while decoding canonical objects. Distinct from
-/// [`crate::encoding::error::EncodingError`]: encoding and decoding are
+/// [`crate::encoding::validate::CanonicalStructureError`]: encoding and decoding are
 /// separate failure domains and stay separate.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodingError {
     /// Input ended in the middle of a value.
-    #[error("unexpected end of CBOR input")]
-    UnexpectedEof,
+        UnexpectedEof,
     /// Bytes remain after the top-level canonical object.
-    #[error("trailing data after canonical object")]
-    TrailingData,
+        TrailingData,
     /// Malformed CBOR (reserved additional info, invalid UTF-8, ...).
-    #[error("invalid CBOR data")]
-    InvalidCbor,
+        InvalidCbor,
     /// Well-formed CBOR that is not in the canonical deterministic form.
-    #[error("non-canonical CBOR encoding")]
-    NonCanonicalEncoding,
+        NonCanonicalEncoding,
     /// A CBOR map contains a duplicate key.
-    #[error("duplicate CBOR map key")]
-    DuplicateMapKey,
+        DuplicateMapKey,
     /// The envelope version is not supported.
-    #[error("unsupported envelope version: {0}")]
-    UnsupportedEnvelopeVersion(u64),
+        UnsupportedEnvelopeVersion(u64),
     /// The object schema version is not supported.
-    #[error("unsupported schema version: {0}")]
-    UnsupportedSchemaVersion(u64),
+        UnsupportedSchemaVersion(u64),
     /// The object kind is not a known protocol identifier.
-    #[error("unknown object kind: {0}")]
-    UnknownObjectKind(u64),
+        UnknownObjectKind(u64),
     /// The value does not match its required protocol shape (kind/payload
     /// mismatch, wrong field set, wrong tuple length, wrong value type).
-    #[error("invalid object shape")]
-    InvalidObjectShape,
+        InvalidObjectShape,
     /// A UUID is not tag 37 containing exactly 16 bytes.
-    #[error("invalid UUID encoding")]
-    InvalidUuid,
+        InvalidUuid,
     /// An ObjectId is not a byte string of exactly 32 bytes.
-    #[error("invalid ObjectId encoding")]
-    InvalidObjectId,
+        InvalidObjectId,
     /// An operation is not a known identifier or has the wrong shape.
-    #[error("invalid operation")]
-    InvalidOperation,
+        InvalidOperation,
     /// The decoded object is structurally non-canonical.
-    #[error("cannot decode structurally non-canonical object: {0}")]
-    InvalidCanonicalStructure(CanonicalStructureError),
+        InvalidCanonicalStructure(CanonicalStructureError),
 }
 
 /// Decodes raw bytes into a typed [`CanonicalObject`].
@@ -810,7 +797,7 @@ mod tests {
     #[test]
     fn decode_rejects_unknown_object_kind() {
         // Envelope {0:1, 1:9, 2:1, 3:{}} with unknown kind 9.
-        let bytes = hex::decode("a400010109020103a0").unwrap();
+        let bytes = decode_hex("a400010109020103a0").unwrap();
         assert_eq!(
             decode_canonical(&bytes),
             Err(DecodingError::UnknownObjectKind(9))
@@ -867,4 +854,34 @@ mod tests {
             ))
         );
     }
+}
+
+fn decode_hex(s: &str) -> Result<Vec<u8>, ()> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
+        .collect()
+}
+
+impl std::fmt::Display for DecodingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnexpectedEof => write!(f, "unexpected end of CBOR input"),
+            Self::TrailingData => write!(f, "trailing data after canonical object"),
+            Self::InvalidCbor => write!(f, "invalid CBOR data"),
+            Self::NonCanonicalEncoding => write!(f, "non-canonical CBOR encoding"),
+            Self::DuplicateMapKey => write!(f, "duplicate CBOR map key"),
+            Self::UnsupportedEnvelopeVersion(_0) => write!(f, "unsupported envelope version: {_0}"),
+            Self::UnsupportedSchemaVersion(_0) => write!(f, "unsupported schema version: {_0}"),
+            Self::UnknownObjectKind(_0) => write!(f, "unknown object kind: {_0}"),
+            Self::InvalidObjectShape => write!(f, "invalid object shape"),
+            Self::InvalidUuid => write!(f, "invalid UUID encoding"),
+            Self::InvalidObjectId => write!(f, "invalid ObjectId encoding"),
+            Self::InvalidOperation => write!(f, "invalid operation"),
+            Self::InvalidCanonicalStructure(_0) => write!(f, "cannot decode structurally non-canonical object: {_0}"),
+        }
+    }
+}
+
+impl std::error::Error for DecodingError {
 }

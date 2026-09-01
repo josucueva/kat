@@ -27,71 +27,50 @@ use crate::domain::state::SemanticState;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload};
 
 /// Error reported when a canonical object violates a canonical structural rule.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CanonicalStructureError {
     /// SemanticState element entries are not sorted by element ID.
-    #[error("SemanticState element entries must be sorted by element ID")]
-    SemanticElementsUnordered,
+        SemanticElementsUnordered,
     /// SemanticState contains two entries with the same element ID.
-    #[error("SemanticState contains a duplicate element ID: {0}")]
-    SemanticElementsDuplicate(ElementId),
+        SemanticElementsDuplicate(ElementId),
     /// SemanticState relationship entries are not sorted by relationship ID.
-    #[error("SemanticState relationship entries must be sorted by relationship ID")]
-    SemanticRelationshipsUnordered,
+        SemanticRelationshipsUnordered,
     /// SemanticState contains two entries with the same relationship ID.
-    #[error("SemanticState contains a duplicate relationship ID: {0}")]
-    SemanticRelationshipsDuplicate(RelationshipId),
+        SemanticRelationshipsDuplicate(RelationshipId),
     /// Ontology element type definitions are not sorted by type ID.
-    #[error("ontology element type definitions must be sorted by type ID")]
-    OntologyElementTypesUnordered,
+        OntologyElementTypesUnordered,
     /// Ontology contains two element type definitions with the same type ID.
-    #[error("ontology contains a duplicate element type ID: {0}")]
-    OntologyElementTypesDuplicate(String),
+        OntologyElementTypesDuplicate(String),
     /// Ontology relationship type definitions are not sorted by type ID.
-    #[error("ontology relationship type definitions must be sorted by type ID")]
-    OntologyRelationshipTypesUnordered,
+        OntologyRelationshipTypesUnordered,
     /// Ontology contains two relationship type definitions with the same type ID.
-    #[error("ontology contains a duplicate relationship type ID: {0}")]
-    OntologyRelationshipTypesDuplicate(String),
+        OntologyRelationshipTypesDuplicate(String),
     /// An allowed-source-type list is not sorted.
-    #[error("allowed source types must be sorted")]
-    AllowedSourceTypesUnordered,
+        AllowedSourceTypesUnordered,
     /// An allowed-source-type list contains a duplicate.
-    #[error("allowed source types contain a duplicate: {0}")]
-    AllowedSourceTypesDuplicate(String),
+        AllowedSourceTypesDuplicate(String),
     /// An allowed-target-type list is not sorted.
-    #[error("allowed target types must be sorted")]
-    AllowedTargetTypesUnordered,
+        AllowedTargetTypesUnordered,
     /// An allowed-target-type list contains a duplicate.
-    #[error("allowed target types contain a duplicate: {0}")]
-    AllowedTargetTypesDuplicate(String),
+        AllowedTargetTypesDuplicate(String),
     /// ChangeRevision has more than one base state that is not sorted.
-    #[error("ChangeRevision base states must be sorted by ObjectId when more than one is present")]
-    ChangeBaseStatesUnordered,
+        ChangeBaseStatesUnordered,
     /// ChangeRevision has no base state.
-    #[error("ChangeRevision must contain at least one base state")]
-    ChangeBaseStatesEmpty,
+        ChangeBaseStatesEmpty,
     /// ChangeRevision dependencies are not sorted by ObjectId.
-    #[error("ChangeRevision dependencies must be sorted by ObjectId")]
-    ChangeDependenciesUnordered,
+        ChangeDependenciesUnordered,
     /// ChangeRevision contains a duplicate dependency.
-    #[error("ChangeRevision contains a duplicate dependency: {0}")]
-    ChangeDependenciesDuplicate(ObjectId),
+        ChangeDependenciesDuplicate(ObjectId),
     /// ChangeRevision has no operations.
-    #[error("ChangeRevision must contain at least one operation")]
-    ChangeOperationsEmpty,
+        ChangeOperationsEmpty,
     /// A property map's keys are not in canonical order.
-    #[error("property map keys must be in canonical order")]
-    PropertyKeysUnordered,
+        PropertyKeysUnordered,
     /// A property map contains a duplicate key.
-    #[error("property map contains a duplicate key: {0}")]
-    PropertyKeysDuplicate(String),
+        PropertyKeysDuplicate(String),
     /// AccountArtifact reconciliations are not sorted by relationship ID.
-    #[error("AccountArtifact reconciliations must be sorted by relationship ID")]
-    AccountReconciliationsUnordered,
+        AccountReconciliationsUnordered,
     /// AccountArtifact reconciliations contain a duplicate relationship ID.
-    #[error("AccountArtifact reconciliations contain a duplicate relationship ID: {0}")]
-    AccountReconciliationsDuplicate(RelationshipId),
+        AccountReconciliationsDuplicate(RelationshipId),
 }
 
 /// Canonical structural validation for values that must conform to the
@@ -703,4 +682,35 @@ mod tests {
             Err(CanonicalStructureError::SemanticElementsUnordered)
         );
     }
+}
+
+impl std::fmt::Display for CanonicalStructureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SemanticElementsUnordered => write!(f, "SemanticState element entries must be sorted by element ID"),
+            Self::SemanticElementsDuplicate(_0) => write!(f, "SemanticState contains a duplicate element ID: {_0}"),
+            Self::SemanticRelationshipsUnordered => write!(f, "SemanticState relationship entries must be sorted by relationship ID"),
+            Self::SemanticRelationshipsDuplicate(_0) => write!(f, "SemanticState contains a duplicate relationship ID: {_0}"),
+            Self::OntologyElementTypesUnordered => write!(f, "ontology element type definitions must be sorted by type ID"),
+            Self::OntologyElementTypesDuplicate(_0) => write!(f, "ontology contains a duplicate element type ID: {_0}"),
+            Self::OntologyRelationshipTypesUnordered => write!(f, "ontology relationship type definitions must be sorted by type ID"),
+            Self::OntologyRelationshipTypesDuplicate(_0) => write!(f, "ontology contains a duplicate relationship type ID: {_0}"),
+            Self::AllowedSourceTypesUnordered => write!(f, "allowed source types must be sorted"),
+            Self::AllowedSourceTypesDuplicate(_0) => write!(f, "allowed source types contain a duplicate: {_0}"),
+            Self::AllowedTargetTypesUnordered => write!(f, "allowed target types must be sorted"),
+            Self::AllowedTargetTypesDuplicate(_0) => write!(f, "allowed target types contain a duplicate: {_0}"),
+            Self::ChangeBaseStatesUnordered => write!(f, "ChangeRevision base states must be sorted by ObjectId when more than one is present"),
+            Self::ChangeBaseStatesEmpty => write!(f, "ChangeRevision must contain at least one base state"),
+            Self::ChangeDependenciesUnordered => write!(f, "ChangeRevision dependencies must be sorted by ObjectId"),
+            Self::ChangeDependenciesDuplicate(_0) => write!(f, "ChangeRevision contains a duplicate dependency: {_0}"),
+            Self::ChangeOperationsEmpty => write!(f, "ChangeRevision must contain at least one operation"),
+            Self::PropertyKeysUnordered => write!(f, "property map keys must be in canonical order"),
+            Self::PropertyKeysDuplicate(_0) => write!(f, "property map contains a duplicate key: {_0}"),
+            Self::AccountReconciliationsUnordered => write!(f, "AccountArtifact reconciliations must be sorted by relationship ID"),
+            Self::AccountReconciliationsDuplicate(_0) => write!(f, "AccountArtifact reconciliations contain a duplicate relationship ID: {_0}"),
+        }
+    }
+}
+
+impl std::error::Error for CanonicalStructureError {
 }

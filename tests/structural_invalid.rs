@@ -16,7 +16,7 @@ use kat::domain::property::PropertyValue;
 use kat::domain::state::{ElementStateEntry, RelationshipStateEntry, SemanticState};
 use kat::encoding::object::{CanonicalObject, CanonicalPayload};
 use kat::encoding::validate::CanonicalStructureError;
-use kat::encoding::{EncodingError, canonical_bytes};
+use kat::encoding::canonical_bytes;
 
 fn element_id(n: u8) -> ElementId {
     ElementId::from_uuid(Uuid::from_u128(n as u128))
@@ -33,7 +33,7 @@ fn object_id(n: u8) -> ObjectId {
 fn assert_rejected(object: CanonicalObject, expected: CanonicalStructureError) {
     assert_eq!(
         canonical_bytes(&object),
-        Err(EncodingError::InvalidCanonicalStructure(expected.clone())),
+        Err(expected.clone()),
         "expected rejection with {expected:?}"
     );
 }
