@@ -84,6 +84,7 @@ canonical-object =
   / change-revision-object
   / semantic-state-object
   / ontology-version-object
+  / repository-revision-object
 
 knowledge-element-object = {
   0: 1,
@@ -118,6 +119,13 @@ ontology-version-object = {
   1: 5,
   2: 1,
   3: ontology-version
+}
+
+repository-revision-object = {
+  0: 1,
+  1: 6,
+  2: 1,
+  3: repository-revision
 }
 
 ; ---------------------------------------------------------------------------
@@ -299,6 +307,30 @@ change-revision = {
   3: [1* operation],
   4: [* object-id],
   ? 5: description
+}
+
+; ---------------------------------------------------------------------------
+; Repository Revision
+; ---------------------------------------------------------------------------
+
+; A RepositoryRevision represents one complete accepted repository state.
+;
+; Fields:
+;
+;   0 -> parents (array of RepositoryRevision ObjectIds)
+;   1 -> semantic_state ObjectId
+;   2 -> workspace_snapshot bytes
+;   3 -> optional semantic_change ObjectId
+;
+; Parents MUST be sorted lexicographically by raw ObjectId bytes.
+; Duplicate parents are invalid.
+; 0 parents indicates an initial revision.
+
+repository-revision = {
+  0: [* object-id],
+  1: object-id,
+  2: bstr,
+  ? 3: object-id
 }
 
 ; ---------------------------------------------------------------------------

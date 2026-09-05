@@ -207,6 +207,7 @@ fn object_kind_number(kind: ObjectKind) -> u64 {
         ObjectKind::ChangeRevision => 3,
         ObjectKind::SemanticState => 4,
         ObjectKind::OntologyVersion => 5,
+        ObjectKind::RepositoryRevision => 6,
     }
 }
 
@@ -221,6 +222,7 @@ fn encode_payload(
         CanonicalPayload::ChangeRevision(v) => encode_change_revision(writer, v),
         CanonicalPayload::SemanticState(v) => encode_semantic_state(writer, v),
         CanonicalPayload::OntologyVersion(v) => encode_ontology_version(writer, v),
+        CanonicalPayload::RepositoryRevision(v) => encode_repository_revision(writer, v),
     }
 }
 
@@ -454,7 +456,38 @@ fn encode_change_revision(
     Ok(())
 }
 
-/// Encodes an ObjectId array (base states / dependencies).
+/// Encodes a RepositoryRevision map.
+fn encode_repository_revision(
+    writer: &mut CborWriter,
+    revision: &crate::domain::revision::RepositoryRevision,
+) -> Result<(), CanonicalStructureError> {
+    let size = if revision.semantic_change.is_some() { 4 } else { 3 };
+    writer.write_map_header(size);
+
+    writer.write_uint(0);
+    // parents is a vector of RepositoryRevisionId which wrap ObjectId
+    // They must be sorted, but validation guarantees this. We extract the ObjectIds.
+    let parent_ids: Vec<ObjectId> = revision
+        .parents
+        .iter()
+        .map(|id| id.as_object_id())
+        .collect();
+    write_object_id_array(writer, &parent_ids);
+
+    writer.write_uint(1);
+    write_object_id(writer, &revision.semantic_state.as_object_id());
+
+    writer.write_uint(2);
+    writer.write_byte_string(revision.workspace_snapshot.as_bytes());
+
+    if let Some(change_id) = &revision.semantic_change {
+        writer.write_uint(3);
+        write_object_id(writer, &change_id.as_object_id());
+    }
+    Ok(())
+}
+
+/// Encodes an ObjectId array (base states / dependencies / parents).
 fn write_object_id_array(writer: &mut CborWriter, ids: &[ObjectId]) {
     writer.write_array_header(ids.len());
     for id in ids {
@@ -546,7 +579,8 @@ fn encode_operation(writer: &mut CborWriter, operation: &Operation) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::identity::{ChangeId, ElementId, OntologyId, RelationshipId};
+    use crate::domain::identity::{ChangeId, ElementId, OntologyId, RelationshipId, RepositoryRevisionId, WorkspaceSnapshotId, SemanticStateId, ChangeRevisionId};
+    use crate::domain::revision::RepositoryRevision;
     use crate::encoding::validate::CanonicalStructureError;
 
     /// Lowercase hex of a UUID's 16 bytes (independent of the encoder).
@@ -917,6 +951,30 @@ mod tests {
             oid1 = hex_object_id(1),
             oid2 = hex_object_id(2),
             oid3 = hex_object_id(3),
+        );
+        assert_eq!(
+            canonical_bytes(&object).unwrap(),
+            decode_hex(&expected).unwrap()
+        );
+    }
+
+    #[test]
+    fn repository_revision_fixture() {
+        let object = CanonicalObject {
+            payload: CanonicalPayload::RepositoryRevision(RepositoryRevision {
+                parents: vec![RepositoryRevisionId::from_object_id(object_id(2))],
+                semantic_state: SemanticStateId::from_object_id(object_id(1)),
+                workspace_snapshot: WorkspaceSnapshotId::new(b"some-git-hash".to_vec()),
+                semantic_change: None,
+            }),
+        };
+        let expected = format!(
+            "a400010106020103a3\
+             00815820{oid2}\
+             015820{oid1}\
+             024d736f6d652d6769742d68617368",
+            oid1 = hex_object_id(1),
+            oid2 = hex_object_id(2),
         );
         assert_eq!(
             canonical_bytes(&object).unwrap(),

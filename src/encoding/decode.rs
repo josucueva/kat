@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 use crate::domain::change::ChangeRevision;
 use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
-use crate::domain::identity::{ChangeId, ElementId, ObjectId, OntologyId, RelationshipId};
+use crate::domain::identity::{ChangeId, ElementId, ObjectId, OntologyId, RelationshipId, RepositoryRevisionId, WorkspaceSnapshotId, SemanticStateId, ChangeRevisionId};
 use crate::domain::ontology::{ElementTypeDefinition, OntologyVersion, RelationshipTypeDefinition};
 use crate::domain::operation::{Operation, RelationshipReconciliation};
 use crate::domain::property::PropertyValue;
@@ -318,6 +318,7 @@ fn decode_envelope(value: &CborValue) -> Result<CanonicalObject, DecodingError> 
         3 => CanonicalPayload::ChangeRevision(decode_change_revision(payload)?),
         4 => CanonicalPayload::SemanticState(decode_semantic_state(payload)?),
         5 => CanonicalPayload::OntologyVersion(decode_ontology_version(payload)?),
+        6 => CanonicalPayload::RepositoryRevision(decode_repository_revision(payload)?),
         other => return Err(DecodingError::UnknownObjectKind(other)),
     };
 
@@ -588,6 +589,36 @@ fn decode_change_revision(map: &[(CborValue, CborValue)]) -> Result<ChangeRevisi
         } else {
             None
         },
+    })
+}
+
+fn decode_repository_revision(
+    map: &[(CborValue, CborValue)],
+) -> Result<crate::domain::revision::RepositoryRevision, DecodingError> {
+    if map.len() < 3 || map.len() > 4 {
+        return Err(DecodingError::InvalidObjectShape);
+    }
+
+    let parents_ids = decode_object_id_array(map_get(map, 0)?)?;
+    let parents = parents_ids.into_iter().map(RepositoryRevisionId::from_object_id).collect();
+
+    let semantic_state = SemanticStateId::from_object_id(expect_object_id(map_get(map, 1)?)?);
+
+    let workspace_snapshot = match map_get(map, 2)? {
+        CborValue::Bytes(b) => WorkspaceSnapshotId::new(b.clone()),
+        _ => return Err(DecodingError::InvalidObjectShape),
+    };
+
+    let semantic_change = match map_get(map, 3) {
+        Ok(v) => Some(ChangeRevisionId::from_object_id(expect_object_id(v)?)),
+        Err(_) => None,
+    };
+
+    Ok(crate::domain::revision::RepositoryRevision {
+        parents,
+        semantic_state,
+        workspace_snapshot,
+        semantic_change,
     })
 }
 

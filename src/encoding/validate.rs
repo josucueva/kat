@@ -71,6 +71,10 @@ pub enum CanonicalStructureError {
         AccountReconciliationsUnordered,
     /// AccountArtifact reconciliations contain a duplicate relationship ID.
         AccountReconciliationsDuplicate(RelationshipId),
+    /// RepositoryRevision parents are not sorted by ObjectId.
+        RepositoryRevisionParentsUnordered,
+    /// RepositoryRevision contains a duplicate parent.
+        RepositoryRevisionParentsDuplicate(ObjectId),
 }
 
 /// Canonical structural validation for values that must conform to the
@@ -193,6 +197,18 @@ impl CanonicalValidate for SemanticState {
     }
 }
 
+impl CanonicalValidate for crate::domain::revision::RepositoryRevision {
+    fn validate_canonical_structure(&self) -> Result<(), CanonicalStructureError> {
+        check_strictly_ascending(
+            &self.parents,
+            |p| p,
+            Ord::cmp,
+            || CanonicalStructureError::RepositoryRevisionParentsUnordered,
+            |p| CanonicalStructureError::RepositoryRevisionParentsDuplicate(p.as_object_id()),
+        )
+    }
+}
+
 impl CanonicalValidate for RelationshipTypeDefinition {
     fn validate_canonical_structure(&self) -> Result<(), CanonicalStructureError> {
         check_strictly_ascending(
@@ -284,6 +300,7 @@ impl CanonicalValidate for CanonicalObject {
             CanonicalPayload::ChangeRevision(v) => v.validate_canonical_structure(),
             CanonicalPayload::SemanticState(v) => v.validate_canonical_structure(),
             CanonicalPayload::OntologyVersion(v) => v.validate_canonical_structure(),
+            CanonicalPayload::RepositoryRevision(v) => v.validate_canonical_structure(),
         }
     }
 }
@@ -651,6 +668,69 @@ mod tests {
     }
 
     #[test]
+    fn repository_revision_validates_parents() {
+        use crate::domain::revision::RepositoryRevision;
+        use crate::domain::identity::{RepositoryRevisionId, WorkspaceSnapshotId, SemanticStateId, ChangeRevisionId};
+
+        let snapshot = WorkspaceSnapshotId::new(vec![]);
+
+        let valid_0 = RepositoryRevision {
+            parents: vec![],
+            semantic_state: SemanticStateId::from_object_id(object_id(1)),
+            workspace_snapshot: snapshot.clone(),
+            semantic_change: None,
+        };
+        assert!(valid_0.validate_canonical_structure().is_ok());
+
+        let valid_1 = RepositoryRevision {
+            parents: vec![RepositoryRevisionId::from_object_id(object_id(1))],
+            semantic_state: SemanticStateId::from_object_id(object_id(1)),
+            workspace_snapshot: snapshot.clone(),
+            semantic_change: None,
+        };
+        assert!(valid_1.validate_canonical_structure().is_ok());
+
+        let valid_many = RepositoryRevision {
+            parents: vec![
+                RepositoryRevisionId::from_object_id(object_id(1)),
+                RepositoryRevisionId::from_object_id(object_id(2)),
+            ],
+            semantic_state: SemanticStateId::from_object_id(object_id(1)),
+            workspace_snapshot: snapshot.clone(),
+            semantic_change: None,
+        };
+        assert!(valid_many.validate_canonical_structure().is_ok());
+
+        let unsorted = RepositoryRevision {
+            parents: vec![
+                RepositoryRevisionId::from_object_id(object_id(2)),
+                RepositoryRevisionId::from_object_id(object_id(1)),
+            ],
+            semantic_state: SemanticStateId::from_object_id(object_id(1)),
+            workspace_snapshot: snapshot.clone(),
+            semantic_change: None,
+        };
+        assert_eq!(
+            unsorted.validate_canonical_structure(),
+            Err(CanonicalStructureError::RepositoryRevisionParentsUnordered)
+        );
+
+        let duplicate = RepositoryRevision {
+            parents: vec![
+                RepositoryRevisionId::from_object_id(object_id(3)),
+                RepositoryRevisionId::from_object_id(object_id(3)),
+            ],
+            semantic_state: SemanticStateId::from_object_id(object_id(1)),
+            workspace_snapshot: snapshot.clone(),
+            semantic_change: None,
+        };
+        assert_eq!(
+            duplicate.validate_canonical_structure(),
+            Err(CanonicalStructureError::RepositoryRevisionParentsDuplicate(object_id(3)))
+        );
+    }
+
+    #[test]
     fn canonical_object_validates_its_payload() {
         let valid = CanonicalObject {
             payload: CanonicalPayload::KnowledgeElementVersion(element_with_properties(vec![(
@@ -707,7 +787,11 @@ impl std::fmt::Display for CanonicalStructureError {
             Self::PropertyKeysUnordered => write!(f, "property map keys must be in canonical order"),
             Self::PropertyKeysDuplicate(_0) => write!(f, "property map contains a duplicate key: {_0}"),
             Self::AccountReconciliationsUnordered => write!(f, "AccountArtifact reconciliations must be sorted by relationship ID"),
-            Self::AccountReconciliationsDuplicate(_0) => write!(f, "AccountArtifact reconciliations contain a duplicate relationship ID: {_0}"),
+            Self::AccountReconciliationsDuplicate(id) => {
+                write!(f, "AccountArtifact reconciliations contain duplicate relationship ID: {id}")
+            }
+            Self::RepositoryRevisionParentsUnordered => write!(f, "RepositoryRevision parents must be sorted by ObjectId"),
+            Self::RepositoryRevisionParentsDuplicate(id) => write!(f, "RepositoryRevision contains duplicate parent: {id}"),
         }
     }
 }

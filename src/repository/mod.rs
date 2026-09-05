@@ -13,6 +13,7 @@ pub mod ref_store;
 pub mod resolve;
 pub mod session;
 pub mod validation;
+pub mod workspace;
 
 pub use author::*;
 

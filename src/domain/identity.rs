@@ -146,8 +146,133 @@ impl ObjectId {
     }
 }
 
+/// A generic typed wrapper macro for ObjectIds that refer to specific canonical object kinds.
+macro_rules! typed_object_id {
+    ($name:ident, $doc:expr) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+        pub struct $name(ObjectId);
+
+        impl $name {
+            #[doc = "Creates a `"]
+            #[doc = stringify!($name)]
+            #[doc = "` from an `ObjectId`."]
+            pub const fn from_object_id(id: ObjectId) -> Self {
+                Self(id)
+            }
+
+            #[doc = "Returns the underlying `ObjectId`."]
+            pub const fn as_object_id(&self) -> ObjectId {
+                self.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+
+        impl std::str::FromStr for $name {
+            type Err = ObjectIdParseError;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                ObjectId::from_str(s).map(Self)
+            }
+        }
+
+        impl serde::Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                self.0.serialize(serializer)
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                ObjectId::deserialize(deserializer).map(Self)
+            }
+        }
+    };
+}
+
+typed_object_id!(RepositoryRevisionId, "Type-safe identity of a `RepositoryRevision`.");
+typed_object_id!(SemanticStateId, "Identity known to refer specifically to a SemanticState.");
+typed_object_id!(ChangeRevisionId, "Identity known to refer specifically to a ChangeRevision.");
+
+/// Immutable physical identity: the SHA-256 digest over a physical materialization
+/// (file or directory) according to DEC-003.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct MaterializationId([u8; 32]);
+
+impl MaterializationId {
+    /// Creates a `MaterializationId` from its raw 32 digest bytes.
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Returns the raw 32 digest bytes.
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// Consumes this `MaterializationId`, returning the raw 32 digest bytes.
+    pub const fn into_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+/// Opaque deterministic identity of tracked physical content (the KAT workspace).
+///
+/// Phase 2 will implement the actual derivation of this identity. It will NOT
+/// be a Git commit hash, but rather a deterministic KAT digest of the workspace.
+/// The backend metadata will map this digest to physical commit hashes.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct WorkspaceSnapshotId(Vec<u8>);
+
+impl WorkspaceSnapshotId {
+    /// Creates a `WorkspaceSnapshotId` from raw bytes.
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
+    /// Returns the raw bytes representing the snapshot identity.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Consumes the ID and returns the underlying bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
+    /// Returns a lowercase hexadecimal string representation.
+    pub fn to_hex(&self) -> String {
+        let mut out = String::with_capacity(self.0.len() * 2);
+        for byte in &self.0 {
+            use std::fmt::Write;
+            write!(&mut out, "{:02x}", byte).unwrap();
+        }
+        out
+    }
+}
+
 impl fmt::Display for ObjectId {
     /// Always writes exactly 64 lowercase hexadecimal characters.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for MaterializationId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.0 {
             write!(f, "{:02x}", byte)?;
@@ -175,6 +300,25 @@ impl<'de> serde::Deserialize<'de> for ObjectId {
     }
 }
 
+impl serde::Serialize for MaterializationId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MaterializationId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Self::from_str(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Error returned when parsing a textual [`ObjectId`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ObjectIdParseError {
@@ -192,6 +336,24 @@ impl FromStr for ObjectId {
     ///
     /// Uppercase digits are deliberately rejected to keep the canonical
     /// textual representation unambiguous (lowercase is the canonical form).
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() != OBJECT_ID_TEXT_LEN {
+            return Err(ObjectIdParseError::InvalidLength);
+        }
+
+        let mut bytes = [0u8; 32];
+        for (byte, pair) in bytes.iter_mut().zip(s.as_bytes().chunks_exact(2)) {
+            let high = decode_hex_nibble(pair[0])?;
+            let low = decode_hex_nibble(pair[1])?;
+            *byte = (high << 4) | low;
+        }
+        Ok(Self(bytes))
+    }
+}
+
+impl FromStr for MaterializationId {
+    type Err = ObjectIdParseError;
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.len() != OBJECT_ID_TEXT_LEN {
             return Err(ObjectIdParseError::InvalidLength);

@@ -9,4 +9,6 @@ pub mod ontology;
 pub mod operation;
 pub mod property;
 pub mod relationship;
+pub mod revision;
 pub mod state;
+pub mod workspace;

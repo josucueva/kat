@@ -1,0 +1,12 @@
+{
+  "name": "repository-revision-initial",
+  "object_id": "b5867e9d2cdada81f077ecbb1147e1b7cb1e54e6807050cb9c00b8d649667bee",
+  "cbor_hex": "a400010106020103a3008001582000000000000000000000000000000000000000000000000000000000000000010244736e6170",
+  "object": {
+    "kind": "repository-revision",
+    "parents": [],
+    "semantic_state": "0000000000000000000000000000000000000000000000000000000000000001",
+    "workspace_snapshot": "736e6170",
+    "semantic_change": null
+  }
+}

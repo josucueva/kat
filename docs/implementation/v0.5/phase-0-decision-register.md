@@ -17,7 +17,7 @@ This document records the exact architectural and canonical representation decis
 *   `semantic_state`: `ObjectId` (reference to `SemanticState`).
 *   `workspace_snapshot`: `WorkspaceSnapshotId` (see DEC-002).
 *   `semantic_change`: Optional `ObjectId` (reference to `ChangeRevision`).
-**Status**: APPROVE WITH CLARIFICATION
+**Status**: RESOLVED
 
 ## DEC-002 WorkspaceSnapshot identity representation
 **Context**: `workspace-model.md` specifies `WorkspaceSnapshotId` must be backend-neutral at the KAT boundary. Identical physical content must resolve to equivalent identity.
@@ -30,8 +30,9 @@ The `GitWorkspaceBackend` maintains the internal mapping `WorkspaceSnapshotId ->
 ## DEC-003 MaterializationId representation
 **Context**: `artifact-materialization-model.md` requires deterministic physical identity for Artifacts, and backend neutrality.
 **Decision**: `MaterializationId` is defined semantically as the **KAT deterministic digest of the normalized resolved materialization**.
-*   For a file: `MaterializationId = H(type || bytes)`
-*   For a directory: `MaterializationId = H(canonical ordered entries(relative locator, type, materialization identity))`
+*   For a file: `MaterializationId = H(KAT-MATERIALIZATION-FILE || executable_mode_byte || content_length || bytes)` (where `executable_mode_byte` is `1` for executable, `0` for normal).
+*   For a directory: `MaterializationId = H(KAT-MATERIALIZATION-DIRECTORY || entry_count || canonical ordered entries(relative locator, type, materialization identity))`
+*   For a symlink: `MaterializationId = H(KAT-MATERIALIZATION-SYMLINK || target_bytes)`
 Git can optimize resolution by exploiting Git blob/tree identities internally, but the identity semantic avoids tying Artifact accountability to Git forever.
 **Status**: RESOLVED
 
@@ -45,7 +46,7 @@ The baseline directly records the exact physical materialization that was review
 **Context**: `canonical-impact-audit.md` questions whether `ChangeRevision` needs modification for multi-parent reconciliation.
 **Decision**: The existing `ChangeRevision` model already supports plural `base_states[]`. This is structurally sufficient.
 *   **Rule**: A multi-parent `RepositoryRevision` does not necessarily imply a new `ChangeRevision`. If reconciliation is physical-only and semantic state remains unchanged, `RC.semantic_change = none`.
-**Status**: APPROVE WITH CLARIFICATION
+**Status**: RESOLVED
 
 ## DEC-006 Deterministic merge-base policy
 **Context**: `reconciliation-model.md` requires deterministic common ancestor discovery.
@@ -62,9 +63,10 @@ The baseline directly records the exact physical materialization that was review
 **Status**: RESOLVED
 
 ### DEC-007A Existing Git adoption
-**Context**: The implementation plan calls for adopting an existing Git repository.
-**Decision**: Whether to continue using `.git/`, import/copy its state into `.kat/physical/git/`, or convert `.git/` into the managed internal repository is deferred.
-**Status**: DEFERRED UNTIL PHASE 3 (must be resolved before Git backend implementation).
+**Context**: The implementation plan calls for adopting an existing Git repository. `git-workspace-backend.md` outlines approaches to migration.
+**Decision**: KAT will use **Managed Import and Cutover**. KAT adopts an existing Git repository by inspecting it, performing a managed import into `.kat/physical/git/`, validating the imported repository, verifying working tree equivalence, creating the initial WorkspaceSnapshot, and only then performing an atomic KAT adoption. KAT MUST NOT destructively remove or relocate the existing Git repository before the managed backend has been created and validated. 
+For the atomic cutover, the original `.git/` is moved to a quarantine location (e.g., `.kat/adoption-backup/original-git/`) so that it ceases to be the active conventional repository. After successful adoption, `.kat/physical/git/` becomes the exclusive KAT-managed physical backend, eliminating dual-authority.
+**Status**: RESOLVED
 
 ## DEC-008 Conflict persistence decision
 **Context**: `conflict-model.md` and `canonical-impact-audit.md` dictate that conflicts are not canonical history.

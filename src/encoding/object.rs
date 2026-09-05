@@ -7,6 +7,7 @@ use crate::domain::change::ChangeRevision;
 use crate::domain::element::KnowledgeElementVersion;
 use crate::domain::ontology::OntologyVersion;
 use crate::domain::relationship::RelationshipVersion;
+use crate::domain::revision::RepositoryRevision;
 use crate::domain::state::SemanticState;
 
 /// Envelope protocol version for v0.1 (protocol constant, not a field).
@@ -31,6 +32,8 @@ pub enum ObjectKind {
     SemanticState,
     /// `5`
     OntologyVersion,
+    /// `6`
+    RepositoryRevision,
 }
 
 /// Typed payload of a canonical object. Each variant carries exactly the
@@ -47,6 +50,8 @@ pub enum CanonicalPayload {
     SemanticState(SemanticState),
     /// An ontology version.
     OntologyVersion(OntologyVersion),
+    /// A repository revision.
+    RepositoryRevision(RepositoryRevision),
 }
 
 /// An immutable canonical object: a typed envelope over one payload.
@@ -71,6 +76,7 @@ impl ObjectKind {
             ObjectKind::ChangeRevision => 3,
             ObjectKind::SemanticState => 4,
             ObjectKind::OntologyVersion => 5,
+            ObjectKind::RepositoryRevision => 6,
         }
     }
 }
@@ -83,6 +89,7 @@ impl fmt::Display for ObjectKind {
             ObjectKind::ChangeRevision => "change-revision",
             ObjectKind::SemanticState => "semantic-state",
             ObjectKind::OntologyVersion => "ontology-version",
+            ObjectKind::RepositoryRevision => "repository-revision",
         };
         f.write_str(name)
     }
@@ -97,6 +104,7 @@ impl CanonicalObject {
             CanonicalPayload::ChangeRevision(_) => ObjectKind::ChangeRevision,
             CanonicalPayload::SemanticState(_) => ObjectKind::SemanticState,
             CanonicalPayload::OntologyVersion(_) => ObjectKind::OntologyVersion,
+            CanonicalPayload::RepositoryRevision(_) => ObjectKind::RepositoryRevision,
         }
     }
 }
@@ -106,10 +114,11 @@ mod tests {
     use super::*;
     use crate::domain::change::ChangeRevision;
     use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
-    use crate::domain::identity::{ChangeId, ElementId, ObjectId, OntologyId, RelationshipId};
+    use crate::domain::identity::{ChangeId, ElementId, ObjectId, OntologyId, RelationshipId, RepositoryRevisionId, WorkspaceSnapshotId, SemanticStateId};
     use crate::domain::ontology::{ElementTypeDefinition, OntologyVersion};
     use crate::domain::operation::Operation;
     use crate::domain::relationship::RelationshipVersion;
+    use crate::domain::revision::RepositoryRevision;
     use crate::domain::state::{ElementStateEntry, RelationshipStateEntry, SemanticState};
     use uuid::Uuid;
 
@@ -184,5 +193,15 @@ mod tests {
             }),
         };
         assert_eq!(ontology.object_kind(), ObjectKind::OntologyVersion);
+
+        let revision = CanonicalObject {
+            payload: CanonicalPayload::RepositoryRevision(RepositoryRevision {
+                parents: vec![RepositoryRevisionId::from_object_id(object_id(2))],
+                semantic_state: SemanticStateId::from_object_id(object_id(1)),
+                workspace_snapshot: WorkspaceSnapshotId::new(b"some-git-hash".to_vec()),
+                semantic_change: None,
+            }),
+        };
+        assert_eq!(revision.object_kind(), ObjectKind::RepositoryRevision);
     }
 }
