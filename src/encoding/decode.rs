@@ -28,7 +28,10 @@ use uuid::Uuid;
 
 use crate::domain::change::ChangeRevision;
 use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
-use crate::domain::identity::{ChangeId, ElementId, ObjectId, OntologyId, RelationshipId, RepositoryRevisionId, WorkspaceSnapshotId, SemanticStateId, ChangeRevisionId};
+use crate::domain::identity::{
+    ChangeId, ChangeRevisionId, ElementId, ObjectId, OntologyId, RelationshipId,
+    RepositoryRevisionId, SemanticStateId, WorkspaceSnapshotId,
+};
 use crate::domain::ontology::{ElementTypeDefinition, OntologyVersion, RelationshipTypeDefinition};
 use crate::domain::operation::{Operation, RelationshipReconciliation};
 use crate::domain::property::PropertyValue;
@@ -45,32 +48,32 @@ use crate::encoding::validate::{CanonicalStructureError, CanonicalValidate};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodingError {
     /// Input ended in the middle of a value.
-        UnexpectedEof,
+    UnexpectedEof,
     /// Bytes remain after the top-level canonical object.
-        TrailingData,
+    TrailingData,
     /// Malformed CBOR (reserved additional info, invalid UTF-8, ...).
-        InvalidCbor,
+    InvalidCbor,
     /// Well-formed CBOR that is not in the canonical deterministic form.
-        NonCanonicalEncoding,
+    NonCanonicalEncoding,
     /// A CBOR map contains a duplicate key.
-        DuplicateMapKey,
+    DuplicateMapKey,
     /// The envelope version is not supported.
-        UnsupportedEnvelopeVersion(u64),
+    UnsupportedEnvelopeVersion(u64),
     /// The object schema version is not supported.
-        UnsupportedSchemaVersion(u64),
+    UnsupportedSchemaVersion(u64),
     /// The object kind is not a known protocol identifier.
-        UnknownObjectKind(u64),
+    UnknownObjectKind(u64),
     /// The value does not match its required protocol shape (kind/payload
     /// mismatch, wrong field set, wrong tuple length, wrong value type).
-        InvalidObjectShape,
+    InvalidObjectShape,
     /// A UUID is not tag 37 containing exactly 16 bytes.
-        InvalidUuid,
+    InvalidUuid,
     /// An ObjectId is not a byte string of exactly 32 bytes.
-        InvalidObjectId,
+    InvalidObjectId,
     /// An operation is not a known identifier or has the wrong shape.
-        InvalidOperation,
+    InvalidOperation,
     /// The decoded object is structurally non-canonical.
-        InvalidCanonicalStructure(CanonicalStructureError),
+    InvalidCanonicalStructure(CanonicalStructureError),
 }
 
 /// Decodes raw bytes into a typed [`CanonicalObject`].
@@ -600,7 +603,10 @@ fn decode_repository_revision(
     }
 
     let parents_ids = decode_object_id_array(map_get(map, 0)?)?;
-    let parents = parents_ids.into_iter().map(RepositoryRevisionId::from_object_id).collect();
+    let parents = parents_ids
+        .into_iter()
+        .map(RepositoryRevisionId::from_object_id)
+        .collect();
 
     let semantic_state = SemanticStateId::from_object_id(expect_object_id(map_get(map, 1)?)?);
 
@@ -719,6 +725,38 @@ fn decode_operation(value: &CborValue) -> Result<Operation, DecodingError> {
         _ => Err(DecodingError::InvalidOperation),
     }
 }
+
+#[allow(dead_code)]
+fn decode_hex(s: &str) -> Result<Vec<u8>, ()> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
+        .collect()
+}
+
+impl std::fmt::Display for DecodingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnexpectedEof => write!(f, "unexpected end of CBOR input"),
+            Self::TrailingData => write!(f, "trailing data after canonical object"),
+            Self::InvalidCbor => write!(f, "invalid CBOR data"),
+            Self::NonCanonicalEncoding => write!(f, "non-canonical CBOR encoding"),
+            Self::DuplicateMapKey => write!(f, "duplicate CBOR map key"),
+            Self::UnsupportedEnvelopeVersion(e0) => write!(f, "unsupported envelope version: {e0}"),
+            Self::UnsupportedSchemaVersion(e0) => write!(f, "unsupported schema version: {e0}"),
+            Self::UnknownObjectKind(e0) => write!(f, "unknown object kind: {e0}"),
+            Self::InvalidObjectShape => write!(f, "invalid object shape"),
+            Self::InvalidUuid => write!(f, "invalid UUID encoding"),
+            Self::InvalidObjectId => write!(f, "invalid ObjectId encoding"),
+            Self::InvalidOperation => write!(f, "invalid operation"),
+            Self::InvalidCanonicalStructure(e0) => {
+                write!(f, "cannot decode structurally non-canonical object: {e0}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DecodingError {}
 
 #[cfg(test)]
 mod tests {
@@ -885,34 +923,4 @@ mod tests {
             ))
         );
     }
-}
-
-fn decode_hex(s: &str) -> Result<Vec<u8>, ()> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
-        .collect()
-}
-
-impl std::fmt::Display for DecodingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnexpectedEof => write!(f, "unexpected end of CBOR input"),
-            Self::TrailingData => write!(f, "trailing data after canonical object"),
-            Self::InvalidCbor => write!(f, "invalid CBOR data"),
-            Self::NonCanonicalEncoding => write!(f, "non-canonical CBOR encoding"),
-            Self::DuplicateMapKey => write!(f, "duplicate CBOR map key"),
-            Self::UnsupportedEnvelopeVersion(_0) => write!(f, "unsupported envelope version: {_0}"),
-            Self::UnsupportedSchemaVersion(_0) => write!(f, "unsupported schema version: {_0}"),
-            Self::UnknownObjectKind(_0) => write!(f, "unknown object kind: {_0}"),
-            Self::InvalidObjectShape => write!(f, "invalid object shape"),
-            Self::InvalidUuid => write!(f, "invalid UUID encoding"),
-            Self::InvalidObjectId => write!(f, "invalid ObjectId encoding"),
-            Self::InvalidOperation => write!(f, "invalid operation"),
-            Self::InvalidCanonicalStructure(_0) => write!(f, "cannot decode structurally non-canonical object: {_0}"),
-        }
-    }
-}
-
-impl std::error::Error for DecodingError {
 }

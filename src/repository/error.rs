@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use crate::domain::identity::ObjectId;
 use crate::encoding::decode::DecodingError;
-use crate::encoding::validate::CanonicalStructureError;
 use crate::encoding::object::ObjectKind;
+use crate::encoding::validate::CanonicalStructureError;
 use crate::repository::metadata::MetadataError;
 use crate::repository::object_store::ObjectStoreError;
 use crate::repository::ref_store::RefStoreError;
@@ -14,21 +14,21 @@ use crate::repository::ref_store::RefStoreError;
 #[derive(Debug)]
 pub enum RepositoryError {
     /// A KAT repository already exists at the given `.kat` path.
-        AlreadyExists(PathBuf),
+    AlreadyExists(PathBuf),
     /// No KAT repository exists at the given `.kat` path.
-        NotFound(PathBuf),
+    NotFound(PathBuf),
     /// A repository metadata failure.
-        Metadata(MetadataError),
+    Metadata(MetadataError),
     /// An object store failure.
-        ObjectStore(ObjectStoreError),
+    ObjectStore(ObjectStoreError),
     /// A ref store failure.
-        RefStore(RefStoreError),
+    RefStore(RefStoreError),
     /// A canonical encoding failure.
-        Encoding(CanonicalStructureError),
+    Encoding(CanonicalStructureError),
     /// A canonical decoding failure.
-        Decoding(DecodingError),
+    Decoding(DecodingError),
     /// A referenced object has a different canonical kind than expected.
-        UnexpectedObjectKind {
+    UnexpectedObjectKind {
         /// The canonical kind the reference required.
         expected: ObjectKind,
         /// The canonical kind the stored object actually has.
@@ -36,7 +36,7 @@ pub enum RepositoryError {
     },
     /// The accepted ChangeRevision's result state does not match the
     /// accepted SemanticState (the repository head is internally inconsistent).
-        AcceptedChangeStateMismatch {
+    AcceptedChangeStateMismatch {
         /// ObjectId of the accepted ChangeRevision.
         change: ObjectId,
         /// ObjectId of the accepted SemanticState.
@@ -45,22 +45,34 @@ pub enum RepositoryError {
         actual: ObjectId,
     },
     /// An underlying filesystem failure.
-        Io(std::io::Error),
+    Io(std::io::Error),
 }
 
 impl std::fmt::Display for RepositoryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::AlreadyExists(_0) => write!(f, "a KAT repository already exists at {}", _0.display()),
-            Self::NotFound(_0) => write!(f, "no KAT repository found at {}", _0.display()),
-            Self::Metadata(_0) => write!(f, "repository metadata error: {_0}"),
-            Self::ObjectStore(_0) => write!(f, "object store error: {_0}"),
-            Self::RefStore(_0) => write!(f, "ref store error: {_0}"),
-            Self::Encoding(_0) => write!(f, "encoding error: {_0}"),
-            Self::Decoding(_0) => write!(f, "decoding error: {_0}"),
-            Self::UnexpectedObjectKind { expected, actual, .. } => write!(f, "expected object kind {expected}, found {actual}"),
-            Self::AcceptedChangeStateMismatch { change, expected, actual, .. } => write!(f, "accepted change {change} results in state {actual}, but the accepted state is {expected}"),
-            Self::Io(_0) => write!(f, "repository I/O error: {_0}"),
+            Self::AlreadyExists(e0) => {
+                write!(f, "a KAT repository already exists at {}", e0.display())
+            }
+            Self::NotFound(e0) => write!(f, "no KAT repository found at {}", e0.display()),
+            Self::Metadata(e0) => write!(f, "repository metadata error: {e0}"),
+            Self::ObjectStore(e0) => write!(f, "object store error: {e0}"),
+            Self::RefStore(e0) => write!(f, "ref store error: {e0}"),
+            Self::Encoding(e0) => write!(f, "encoding error: {e0}"),
+            Self::Decoding(e0) => write!(f, "decoding error: {e0}"),
+            Self::UnexpectedObjectKind {
+                expected, actual, ..
+            } => write!(f, "expected object kind {expected}, found {actual}"),
+            Self::AcceptedChangeStateMismatch {
+                change,
+                expected,
+                actual,
+                ..
+            } => write!(
+                f,
+                "accepted change {change} results in state {actual}, but the accepted state is {expected}"
+            ),
+            Self::Io(e0) => write!(f, "repository I/O error: {e0}"),
         }
     }
 }

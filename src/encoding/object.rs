@@ -114,7 +114,10 @@ mod tests {
     use super::*;
     use crate::domain::change::ChangeRevision;
     use crate::domain::element::{KnowledgeElementVersion, Lifecycle};
-    use crate::domain::identity::{ChangeId, ElementId, ObjectId, OntologyId, RelationshipId, RepositoryRevisionId, WorkspaceSnapshotId, SemanticStateId};
+    use crate::domain::identity::{
+        ChangeId, ElementId, ObjectId, OntologyId, RelationshipId, RepositoryRevisionId,
+        SemanticStateId, WorkspaceSnapshotId,
+    };
     use crate::domain::ontology::{ElementTypeDefinition, OntologyVersion};
     use crate::domain::operation::Operation;
     use crate::domain::relationship::RelationshipVersion;

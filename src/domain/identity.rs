@@ -201,9 +201,18 @@ macro_rules! typed_object_id {
     };
 }
 
-typed_object_id!(RepositoryRevisionId, "Type-safe identity of a `RepositoryRevision`.");
-typed_object_id!(SemanticStateId, "Identity known to refer specifically to a SemanticState.");
-typed_object_id!(ChangeRevisionId, "Identity known to refer specifically to a ChangeRevision.");
+typed_object_id!(
+    RepositoryRevisionId,
+    "Type-safe identity of a `RepositoryRevision`."
+);
+typed_object_id!(
+    SemanticStateId,
+    "Identity known to refer specifically to a SemanticState."
+);
+typed_object_id!(
+    ChangeRevisionId,
+    "Identity known to refer specifically to a ChangeRevision."
+);
 
 /// Immutable physical identity: the SHA-256 digest over a physical materialization
 /// (file or directory) according to DEC-003.
@@ -323,10 +332,10 @@ impl<'de> serde::Deserialize<'de> for MaterializationId {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ObjectIdParseError {
     /// The text was not exactly 64 characters long.
-        InvalidLength,
+    InvalidLength,
 
     /// A character was not a lowercase hexadecimal digit (`0-9`, `a-f`).
-        InvalidCharacter,
+    InvalidCharacter,
 }
 
 impl FromStr for ObjectId {
@@ -377,6 +386,22 @@ fn decode_hex_nibble(b: u8) -> Result<u8, ObjectIdParseError> {
         _ => Err(ObjectIdParseError::InvalidCharacter),
     }
 }
+
+impl std::fmt::Display for ObjectIdParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidLength => write!(
+                f,
+                "object ID must contain exactly 64 hexadecimal characters"
+            ),
+            Self::InvalidCharacter => {
+                write!(f, "object ID must use lowercase hexadecimal characters")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ObjectIdParseError {}
 
 #[cfg(test)]
 mod tests {
@@ -499,16 +524,4 @@ mod tests {
         let err = ObjectId::from_str(&"A".repeat(64)).unwrap_err();
         assert_eq!(err, ObjectIdParseError::InvalidCharacter);
     }
-}
-
-impl std::fmt::Display for ObjectIdParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidLength => write!(f, "object ID must contain exactly 64 hexadecimal characters"),
-            Self::InvalidCharacter => write!(f, "object ID must use lowercase hexadecimal characters"),
-        }
-    }
-}
-
-impl std::error::Error for ObjectIdParseError {
 }

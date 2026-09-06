@@ -14,9 +14,9 @@ use kat::domain::ontology::{ElementTypeDefinition, OntologyVersion};
 use kat::domain::operation::Operation;
 use kat::domain::property::PropertyValue;
 use kat::domain::state::{ElementStateEntry, RelationshipStateEntry, SemanticState};
+use kat::encoding::canonical_bytes;
 use kat::encoding::object::{CanonicalObject, CanonicalPayload};
 use kat::encoding::validate::CanonicalStructureError;
-use kat::encoding::canonical_bytes;
 
 fn element_id(n: u8) -> ElementId {
     ElementId::from_uuid(Uuid::from_u128(n as u128))

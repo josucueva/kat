@@ -1,6 +1,8 @@
 //! Repository revisions (see `spec/canonical-format.cddl`, `repository-revision`).
 
-use crate::domain::identity::{ObjectId, RepositoryRevisionId, WorkspaceSnapshotId, SemanticStateId, ChangeRevisionId};
+use crate::domain::identity::{
+    ChangeRevisionId, RepositoryRevisionId, SemanticStateId, WorkspaceSnapshotId,
+};
 
 /// The core version-control unit binding the semantic state to the physical workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]

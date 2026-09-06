@@ -1,10 +1,10 @@
-use std::path::{Path, PathBuf};
-use std::fs;
 use git2::Repository;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::domain::identity::{MaterializationId, WorkspaceSnapshotId};
 use crate::domain::workspace::{
-    BackendConsistency, MaterializationResolution, WorkingState, WorkspaceBackend,
+    BackendConsistency, MaterializationResolution, PhysicalChanges, WorkingState, WorkspaceBackend,
     WorkspaceBackendError,
 };
 
@@ -25,7 +25,7 @@ impl GitWorkspaceBackend {
     /// The physical git repository will be at `<project_root>/.kat/physical/git/`.
     pub fn open(project_root: &Path) -> Result<Self, WorkspaceBackendError> {
         let kat_git_dir = project_root.join(".kat/physical/git");
-        
+
         // If it doesn't exist, we can't open it (init logic handles creation).
         if !kat_git_dir.exists() {
             return Err(WorkspaceBackendError::Io(std::io::Error::new(
@@ -35,10 +35,16 @@ impl GitWorkspaceBackend {
         }
 
         let repo = Repository::open(&kat_git_dir).map_err(|e| {
-            WorkspaceBackendError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to open Git repository: {}", e),
-            ))
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to open Git repository: {}",
+                e
+            )))
+        })?;
+        repo.set_workdir(project_root, false).map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to set Git workdir: {}",
+                e
+            )))
         })?;
 
         Ok(Self {
@@ -50,12 +56,18 @@ impl GitWorkspaceBackend {
     /// Initializes a new GitWorkspaceBackend at the given project root.
     pub fn init(project_root: &Path) -> Result<Self, WorkspaceBackendError> {
         let kat_git_dir = project_root.join(".kat/physical/git");
-        
+
         let repo = Repository::init_bare(&kat_git_dir).map_err(|e| {
-            WorkspaceBackendError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to initialize Git repository: {}", e),
-            ))
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to initialize Git repository: {}",
+                e
+            )))
+        })?;
+        repo.set_workdir(project_root, false).map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to set Git workdir: {}",
+                e
+            )))
         })?;
 
         Ok(Self {
@@ -71,30 +83,36 @@ impl GitWorkspaceBackend {
         let backup_git_dir = project_root.join(".kat/adoption-backup/original-git");
 
         if kat_git_dir.exists() {
-            return Err(WorkspaceBackendError::Io(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "KAT physical Git repository already exists",
-            )));
+            if original_git_dir.exists() {
+                // Interrupted adoption: clean up partial physical git and retry
+                std::fs::remove_dir_all(&kat_git_dir).map_err(WorkspaceBackendError::Io)?;
+            } else {
+                return Err(WorkspaceBackendError::Io(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "KAT physical Git repository already exists",
+                )));
+            }
+        }
         if !original_git_dir.exists() {
             return Self::init(project_root);
         }
 
         // 1. Inspect / Pre-validate (Check if we can open it)
         if let Err(e) = Repository::open(&original_git_dir) {
-            return Err(WorkspaceBackendError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to inspect original Git repository: {}", e),
-            )));
+            return Err(WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to inspect original Git repository: {}",
+                e
+            ))));
         }
 
         // 2. Import: Copy the .git directory to .kat/physical/git
         if let Err(e) = copy_dir_all(&original_git_dir, &kat_git_dir) {
             // Clean up partial import
             let _ = fs::remove_dir_all(&kat_git_dir);
-            return Err(WorkspaceBackendError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to import Git repository: {}", e),
-            )));
+            return Err(WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to import Git repository: {}",
+                e
+            ))));
         }
 
         // 3. Validate the imported repository
@@ -102,30 +120,42 @@ impl GitWorkspaceBackend {
             Ok(r) => r,
             Err(e) => {
                 let _ = fs::remove_dir_all(&kat_git_dir);
-                return Err(WorkspaceBackendError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Imported Git repository failed validation: {}", e),
-                )));
+                return Err(WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Imported Git repository failed validation: {}",
+                    e
+                ))));
             }
         };
 
+        repo.set_workdir(project_root, false).map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to set Git workdir for adopted repo: {}",
+                e
+            )))
+        })?;
+
         // 4. Snapshot / Verify Working Tree Equivalence
         // TODO: In Phase 3.4 we will create the initial WorkspaceSnapshot here.
-        
-        // 5. Atomic Cutover
+
         fs::create_dir_all(backup_git_dir.parent().unwrap()).map_err(|e| {
-            WorkspaceBackendError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to create backup directory: {}", e),
-            ))
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to create backup directory: {}",
+                e
+            )))
         })?;
+
+        if let Ok(head) = repo.head()
+            && let Some(target) = head.target()
+        {
+            Self::write_active_lineage(project_root, target)?;
+        }
 
         if let Err(e) = fs::rename(&original_git_dir, &backup_git_dir) {
             let _ = fs::remove_dir_all(&kat_git_dir);
-            return Err(WorkspaceBackendError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to cut over Git repository: {}", e),
-            )));
+            return Err(WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to cut over Git repository: {}",
+                e
+            ))));
         }
 
         Ok(Self {
@@ -156,36 +186,116 @@ impl GitWorkspaceBackend {
         }
 
         if let Some(parent) = index_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| WorkspaceBackendError::Io(e))?;
+            std::fs::create_dir_all(parent).map_err(WorkspaceBackendError::Io)?;
         }
         let content = serde_json::to_string_pretty(&index).unwrap();
-        std::fs::write(index_path, content).map_err(WorkspaceBackendError::Io)
+        std::fs::write(index_path, content).map_err(WorkspaceBackendError::Io)?;
+
+        // Also create a ref to protect from GC
+        if let Ok(repo) = git2::Repository::open(project_root.join(".kat/physical/git")) {
+            let ref_name = format!("refs/kat/lineage/{}/{}", snapshot_id.to_hex(), commit);
+            let _ = repo.reference(&ref_name, commit, true, "KAT physical lineage protection");
+        }
+
+        Ok(())
     }
 
     /// Loads the representation mapping for a given WorkspaceSnapshotId
     pub fn get_snapshot_representations(
         project_root: &Path,
-        snapshot_id: &WorkspaceSnapshotId,
+        id: &WorkspaceSnapshotId,
     ) -> Vec<BackendSnapshotRepresentation> {
         let index_path = project_root.join(".kat/physical/snapshots.json");
-        if !index_path.exists() {
-            return Vec::new();
-        }
-        let content = match std::fs::read_to_string(&index_path) {
+        let content = match fs::read_to_string(&index_path) {
             Ok(c) => c,
             Err(_) => return Vec::new(),
         };
-        let index: std::collections::HashMap<String, Vec<String>> = 
-            serde_json::from_str(&content).unwrap_or_default();
 
-        index.get(&snapshot_id.to_hex())
-            .map(|commits| {
-                commits.iter()
-                    .filter_map(|c| git2::Oid::from_str(c).ok())
-                    .map(|oid| BackendSnapshotRepresentation { commit: oid })
-                    .collect()
-            })
-            .unwrap_or_default()
+        let index: std::collections::HashMap<String, Vec<String>> =
+            match serde_json::from_str(&content) {
+                Ok(idx) => idx,
+                Err(_) => return Vec::new(),
+            };
+
+        let id_hex = id.to_hex();
+        if let Some(oids_hex) = index.get(&id_hex) {
+            oids_hex
+                .iter()
+                .filter_map(|h| git2::Oid::from_str(h).ok())
+                .map(|commit| BackendSnapshotRepresentation { commit })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn active_lineage_path(project_root: &Path) -> PathBuf {
+        project_root.join(".kat/physical/active_lineage")
+    }
+
+    fn read_active_lineage(project_root: &Path) -> Option<git2::Oid> {
+        let path = Self::active_lineage_path(project_root);
+        if let Ok(content) = fs::read_to_string(&path) {
+            git2::Oid::from_str(content.trim()).ok()
+        } else {
+            None
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn read_active_lineage_for_test(root: &Path) -> Option<git2::Oid> {
+        Self::read_active_lineage(root)
+    }
+
+    fn write_active_lineage(
+        project_root: &Path,
+        oid: git2::Oid,
+    ) -> Result<(), WorkspaceBackendError> {
+        let path = Self::active_lineage_path(project_root);
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+
+        // Write atomically
+        let temp_path = path.with_extension("tmp");
+        fs::write(&temp_path, oid.to_string()).map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to write active lineage: {}",
+                e
+            )))
+        })?;
+        fs::rename(&temp_path, &path).map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to persist active lineage: {}",
+                e
+            )))
+        })?;
+        Ok(())
+    }
+
+    /// Checks if the backend representation of `ancestor` is an ancestor of `descendant`
+    /// in the underlying Git history.
+    pub fn is_ancestor(
+        &self,
+        ancestor: &BackendSnapshotRepresentation,
+        descendant: &BackendSnapshotRepresentation,
+    ) -> Result<bool, WorkspaceBackendError> {
+        self._repo
+            .graph_descendant_of(descendant.commit, ancestor.commit)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))
+    }
+
+    /// Returns the physical merge base (common ancestor) of two representations.
+    pub fn physical_merge_base(
+        &self,
+        a: &BackendSnapshotRepresentation,
+        b: &BackendSnapshotRepresentation,
+    ) -> Result<BackendSnapshotRepresentation, WorkspaceBackendError> {
+        let base_oid = self
+            ._repo
+            .merge_base(a.commit, b.commit)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))?;
+        Ok(BackendSnapshotRepresentation { commit: base_oid })
     }
 }
 
@@ -206,52 +316,651 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result
 impl WorkspaceBackend for GitWorkspaceBackend {
     fn inspect_working_state(
         &self,
-        _base: &WorkspaceSnapshotId,
+        base: &WorkspaceSnapshotId,
     ) -> Result<WorkingState, WorkspaceBackendError> {
-        // TODO: Implement proper Git statuses and BackendConsistency logic
-        Ok(WorkingState {
-            backend_consistency: BackendConsistency::Consistent,
+        let representations = Self::get_snapshot_representations(&self._project_root, base);
+        if representations.is_empty() {
+            return Err(WorkspaceBackendError::SnapshotNotFound(base.clone()));
+        }
+
+        let active_oid = Self::read_active_lineage(&self._project_root).ok_or_else(|| {
+            WorkspaceBackendError::Io(std::io::Error::other("Active lineage not found"))
+        })?;
+
+        let is_consistent = representations.iter().any(|r| r.commit == active_oid);
+        let backend_consistency = if is_consistent {
+            BackendConsistency::Consistent
+        } else {
+            BackendConsistency::Mismatch(format!(
+                "Active lineage is at {}, but expected one of {:?}",
+                active_oid,
+                representations.iter().map(|r| r.commit).collect::<Vec<_>>()
+            ))
+        };
+
+        let base_commit_oid = if is_consistent {
+            active_oid
+        } else {
+            representations[0].commit
+        };
+
+        let commit = self._repo.find_commit(base_commit_oid).map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to find commit: {}",
+                e
+            )))
+        })?;
+        let tree = commit.tree().map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!("Failed to find tree: {}", e)))
+        })?;
+
+        let mut diff_opts = git2::DiffOptions::new();
+        diff_opts.include_untracked(true);
+        diff_opts.include_ignored(true);
+        diff_opts.recurse_untracked_dirs(true);
+
+        let diff = self
+            ._repo
+            .diff_tree_to_workdir(Some(&tree), Some(&mut diff_opts))
+            .map_err(|e| {
+                WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Failed to diff tree: {}",
+                    e
+                )))
+            })?;
+
+        let mut changes = crate::domain::workspace::PhysicalChanges {
             added: Vec::new(),
             modified: Vec::new(),
             deleted: Vec::new(),
             untracked: Vec::new(),
             ignored: Vec::new(),
+        };
+
+        for delta in diff.deltas() {
+            let old_file = delta.old_file();
+            let new_file = delta.new_file();
+            let path = new_file.path().unwrap_or_else(|| old_file.path().unwrap());
+
+            // .kat exclusion
+            if path.starts_with(".kat") {
+                continue;
+            }
+
+            match delta.status() {
+                git2::Delta::Added => changes.added.push(path.to_path_buf()),
+                git2::Delta::Deleted => changes.deleted.push(path.to_path_buf()),
+                git2::Delta::Modified | git2::Delta::Typechange => {
+                    changes.modified.push(path.to_path_buf())
+                }
+                git2::Delta::Untracked => changes.untracked.push(path.to_path_buf()),
+                git2::Delta::Ignored => changes.ignored.push(path.to_path_buf()),
+                git2::Delta::Renamed => {
+                    changes.added.push(new_file.path().unwrap().to_path_buf());
+                    if let Some(old_path) = old_file.path() {
+                        changes.deleted.push(old_path.to_path_buf());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        changes.added.sort();
+        changes.modified.sort();
+        changes.deleted.sort();
+        changes.untracked.sort();
+        changes.ignored.sort();
+
+        Ok(WorkingState {
+            changes,
+            backend_consistency,
         })
     }
 
-    fn create_snapshot(&self, _tracked_paths: &[PathBuf]) -> Result<WorkspaceSnapshotId, WorkspaceBackendError> {
-        // TODO: Implement temporary index, tree building, and KAT hashing
-        unimplemented!()
+    fn create_snapshot(
+        &self,
+        tracked_paths: &[PathBuf],
+    ) -> Result<WorkspaceSnapshotId, WorkspaceBackendError> {
+        // 1. Validate and normalize desired tracked state
+        let mut normalized_paths = Vec::new();
+        for p in tracked_paths {
+            if p.is_absolute() {
+                return Err(WorkspaceBackendError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Absolute paths not allowed in tracked_paths",
+                )));
+            }
+            let p_str = p.to_string_lossy();
+            if p_str.contains("..") {
+                return Err(WorkspaceBackendError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Paths containing '..' not allowed in tracked_paths",
+                )));
+            }
+            if p.starts_with(".kat") {
+                return Err(WorkspaceBackendError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Paths in .kat/ are not allowed in tracked_paths",
+                )));
+            }
+            normalized_paths.push(p.clone());
+        }
+        normalized_paths.sort();
+
+        for i in 1..normalized_paths.len() {
+            if normalized_paths[i - 1] == normalized_paths[i] {
+                return Err(WorkspaceBackendError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Duplicate tracked path detected: {:?}", normalized_paths[i]),
+                )));
+            }
+        }
+
+        // 2. Tree construction independent of user index
+        let mut index = self._repo.index().map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to open index: {}",
+                e
+            )))
+        })?;
+        index.clear().map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to clear index: {}",
+                e
+            )))
+        })?;
+
+        for path in &normalized_paths {
+            index.add_path(path).map_err(|e| {
+                WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Failed to add path {:?} to index: {}",
+                    path, e
+                )))
+            })?;
+        }
+        let tree_oid = index.write_tree().map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to write tree: {}",
+                e
+            )))
+        })?;
+        let tree = self._repo.find_tree(tree_oid).map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to find written tree: {}",
+                e
+            )))
+        })?;
+
+        // 3. Lineage-aware synthetic parent
+        let mut parents = Vec::new();
+        let mut base_snapshot_id = None;
+
+        if let Some(active_oid) = Self::read_active_lineage(&self._project_root)
+            && let Ok(parent_commit) = self._repo.find_commit(active_oid)
+        {
+            if let Ok(parent_tree) = parent_commit.tree() {
+                let mut parent_entries = Vec::new();
+                if collect_git_tree(
+                    &self._repo,
+                    &parent_tree,
+                    Path::new(""),
+                    &mut parent_entries,
+                )
+                .is_ok()
+                {
+                    parent_entries.sort_by(|a, b| a.0.cmp(&b.0));
+                    base_snapshot_id = Some(crate::encoding::hash::hash_workspace_snapshot(
+                        &parent_entries,
+                    ));
+                }
+            }
+            parents.push(parent_commit);
+        }
+
+        // Compute KAT identity of the new tree
+        let mut entries = Vec::new();
+        collect_git_tree(&self._repo, &tree, Path::new(""), &mut entries)?;
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let computed_id = crate::encoding::hash::hash_workspace_snapshot(&entries);
+
+        // Check if we can reuse the current lineage's representation
+        if let Some(base_id) = base_snapshot_id
+            && computed_id == base_id
+        {
+            // The physical state is unchanged according to KAT identity
+            // Reuse the active lineage representation exactly
+            let _ = self._repo.set_head_detached(parents[0].id());
+            return Ok(computed_id);
+        }
+
+        // Create synthetic commit
+        let sig = git2::Signature::now("KAT", "kat@localhost").map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to create signature: {}",
+                e
+            )))
+        })?;
+
+        let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+        let commit_oid = self
+            ._repo
+            .commit(
+                None, // Create commit without updating HEAD automatically to bypass parent checks
+                &sig,
+                &sig,
+                "KAT synthetic snapshot",
+                &tree,
+                &parent_refs,
+            )
+            .map_err(|e| {
+                WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Failed to create synthetic commit: {}",
+                    e
+                )))
+            })?;
+
+        // 5. Post-create identity verification
+        let verify_commit = self._repo.find_commit(commit_oid).map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to re-read commit: {}",
+                e
+            )))
+        })?;
+        let verify_tree = verify_commit.tree().map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to re-read tree: {}",
+                e
+            )))
+        })?;
+        let mut verify_entries = Vec::new();
+        collect_git_tree(
+            &self._repo,
+            &verify_tree,
+            Path::new(""),
+            &mut verify_entries,
+        )?;
+        verify_entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let verify_id = crate::encoding::hash::hash_workspace_snapshot(&verify_entries);
+
+        if verify_id != computed_id {
+            return Err(WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Post-create identity verification failed. Derived: {:?}, Verified: {:?}",
+                computed_id, verify_id
+            ))));
+        }
+
+        // 6. Persist representation mapping
+        Self::record_snapshot_representation(&self._project_root, &computed_id, commit_oid)?;
+
+        // 7. Update active lineage to the newly created physical commit
+        Self::write_active_lineage(&self._project_root, commit_oid)?;
+        let _ = self._repo.set_head_detached(commit_oid);
+
+        Ok(computed_id)
     }
 
-    fn materialize_snapshot(&self, _id: &WorkspaceSnapshotId) -> Result<(), WorkspaceBackendError> {
-        // TODO: Safe materialization only
-        unimplemented!()
+    fn materialize_snapshot(&self, id: &WorkspaceSnapshotId) -> Result<(), WorkspaceBackendError> {
+        // 1. Get target representation
+        let reps = Self::get_snapshot_representations(&self._project_root, id);
+        if reps.is_empty() {
+            return Err(WorkspaceBackendError::SnapshotNotFound(id.clone()));
+        }
+
+        // Use the representation if unique, otherwise reject ambiguity
+        let target_oid = if reps.len() == 1 {
+            reps[0].commit
+        } else {
+            return Err(WorkspaceBackendError::AmbiguousBackendRepresentation(
+                id.clone(),
+            ));
+        };
+        let target_commit = self._repo.find_commit(target_oid).map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to find target commit: {}",
+                e
+            )))
+        })?;
+        let target_tree = target_commit.tree().map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to find target tree: {}",
+                e
+            )))
+        })?;
+
+        // 2. Prepare the index to represent our current physical lineage
+        let mut index = self._repo.index().map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to open index: {}",
+                e
+            )))
+        })?;
+
+        index.clear().map_err(|e| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to clear index: {}",
+                e
+            )))
+        })?;
+
+        if let Some(active_oid) = Self::read_active_lineage(&self._project_root)
+            && let Ok(active_commit) = self._repo.find_commit(active_oid)
+            && let Ok(active_tree) = active_commit.tree()
+        {
+            let _ = index.read_tree(&active_tree);
+        }
+        let _ = index.write();
+
+        // 3. Safe materialization
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout.safe(); // Prevents overwriting local modifications
+
+        self._repo
+            .checkout_tree(target_tree.as_object(), Some(&mut checkout))
+            .map_err(|e| {
+                WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Safe materialization failed (likely incompatible working state): {}",
+                    e
+                )))
+            })?;
+
+        // 4. Recompute / verify resulting KAT physical state
+        let mut diff_opts = git2::DiffOptions::new();
+        diff_opts.include_untracked(true);
+        diff_opts.include_ignored(true);
+        diff_opts.recurse_untracked_dirs(true);
+
+        let diff = self
+            ._repo
+            .diff_tree_to_workdir(Some(&target_tree), Some(&mut diff_opts))
+            .map_err(|e| {
+                WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Failed to diff tree for verification: {}",
+                    e
+                )))
+            })?;
+
+        let mut has_changes = false;
+        for delta in diff.deltas() {
+            let path = delta
+                .new_file()
+                .path()
+                .unwrap_or_else(|| delta.old_file().path().unwrap());
+            if !path.starts_with(".kat") {
+                has_changes = true;
+                break;
+            }
+        }
+
+        if has_changes {
+            return Err(WorkspaceBackendError::Io(std::io::Error::other(
+                "Working directory is not clean after materialization",
+            )));
+        }
+
+        // 5. Update active lineage and HEAD
+        Self::write_active_lineage(&self._project_root, target_oid)?;
+        let _ = self._repo.set_head_detached(target_oid);
+
+        Ok(())
     }
 
     fn compare_snapshots(
         &self,
-        _left: &WorkspaceSnapshotId,
-        _right: &WorkspaceSnapshotId,
-    ) -> Result<Vec<PathBuf>, WorkspaceBackendError> {
-        // TODO: git2 diff
-        unimplemented!()
+        left: &WorkspaceSnapshotId,
+        right: &WorkspaceSnapshotId,
+    ) -> Result<PhysicalChanges, WorkspaceBackendError> {
+        let mut changes = PhysicalChanges {
+            added: Vec::new(),
+            modified: Vec::new(),
+            deleted: Vec::new(),
+            untracked: Vec::new(),
+            ignored: Vec::new(),
+        };
+
+        if left == right {
+            return Ok(changes);
+        }
+
+        let left_reps = Self::get_snapshot_representations(&self._project_root, left);
+        let right_reps = Self::get_snapshot_representations(&self._project_root, right);
+
+        if left_reps.is_empty() {
+            return Err(WorkspaceBackendError::SnapshotNotFound(left.clone()));
+        }
+        // First valid representation requires verifying snapshot integrity
+        if !self.verify_snapshot_integrity(left)? {
+            return Err(WorkspaceBackendError::SnapshotIntegrity(left.clone()));
+        }
+
+        if right_reps.is_empty() {
+            return Err(WorkspaceBackendError::SnapshotNotFound(right.clone()));
+        }
+        if !self.verify_snapshot_integrity(right)? {
+            return Err(WorkspaceBackendError::SnapshotIntegrity(right.clone()));
+        }
+
+        let left_commit = self
+            ._repo
+            .find_commit(left_reps[0].commit)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))?;
+        let right_commit = self
+            ._repo
+            .find_commit(right_reps[0].commit)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))?;
+
+        let left_tree = left_commit.tree().unwrap();
+        let right_tree = right_commit.tree().unwrap();
+
+        let mut diff_opts = git2::DiffOptions::new();
+        diff_opts.include_untracked(true);
+
+        let diff = self
+            ._repo
+            .diff_tree_to_tree(Some(&left_tree), Some(&right_tree), Some(&mut diff_opts))
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))?;
+
+        for delta in diff.deltas() {
+            let path = delta
+                .new_file()
+                .path()
+                .unwrap_or_else(|| delta.old_file().path().unwrap());
+            if path.starts_with(".kat") {
+                continue;
+            }
+            let pb = path.to_path_buf();
+            match delta.status() {
+                git2::Delta::Added => changes.added.push(pb),
+                git2::Delta::Deleted => changes.deleted.push(pb),
+                git2::Delta::Modified
+                | git2::Delta::Typechange
+                | git2::Delta::Renamed
+                | git2::Delta::Copied => changes.modified.push(pb),
+                git2::Delta::Untracked => changes.untracked.push(pb),
+                git2::Delta::Ignored => changes.ignored.push(pb),
+                _ => changes.modified.push(pb),
+            }
+        }
+
+        changes.added.sort();
+        changes.modified.sort();
+        changes.deleted.sort();
+        changes.untracked.sort();
+        changes.ignored.sort();
+
+        changes.added.dedup();
+        changes.modified.dedup();
+        changes.deleted.dedup();
+        changes.untracked.dedup();
+        changes.ignored.dedup();
+
+        Ok(changes)
     }
 
     fn resolve_materialization(
         &self,
-        _path: &Path,
-        _snapshot: &WorkspaceSnapshotId,
+        path: &Path,
+        snapshot: &WorkspaceSnapshotId,
     ) -> Result<MaterializationResolution, WorkspaceBackendError> {
-        // TODO: Git tree traversal and materialization hashing
-        unimplemented!()
+        if path.starts_with(".kat") {
+            return Ok(MaterializationResolution::NotFound);
+        }
+
+        let reps = Self::get_snapshot_representations(&self._project_root, snapshot);
+        if reps.is_empty() {
+            return Err(WorkspaceBackendError::SnapshotNotFound(snapshot.clone()));
+        }
+
+        let commit_oid = reps[0].commit;
+        let commit = self
+            ._repo
+            .find_commit(commit_oid)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))?;
+        let tree = commit
+            .tree()
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))?;
+
+        let mut entries = Vec::new();
+        collect_git_tree(&self._repo, &tree, Path::new(""), &mut entries)?;
+
+        let target_str = path
+            .to_str()
+            .ok_or_else(|| WorkspaceBackendError::UnsupportedPathEncoding(path.to_path_buf()))?;
+
+        // Check for exact file/symlink match
+        for (p, type_byte, mat_id) in &entries {
+            if p == target_str {
+                if *type_byte == b'S' {
+                    return Ok(MaterializationResolution::Symlink(*mat_id));
+                } else {
+                    return Ok(MaterializationResolution::File(*mat_id));
+                }
+            }
+        }
+
+        // Check for directory match
+        let mut children = Vec::new();
+        let mut is_dir = false;
+
+        for (p, type_byte, mat_id) in entries {
+            if target_str.is_empty() || (p.starts_with(&target_str.to_string()) && p != target_str)
+            {
+                is_dir = true;
+                children.push((p, type_byte, mat_id));
+            }
+        }
+
+        if is_dir {
+            children.sort_by(|a, b| a.0.cmp(&b.0));
+            Ok(MaterializationResolution::Directory(
+                crate::encoding::hash::hash_directory_materialization(&children),
+            ))
+        } else {
+            Ok(MaterializationResolution::NotFound)
+        }
     }
 
     fn verify_snapshot_integrity(
         &self,
-        _id: &WorkspaceSnapshotId,
+        id: &WorkspaceSnapshotId,
     ) -> Result<bool, WorkspaceBackendError> {
-        // TODO: Recompute hash from Git tree
-        unimplemented!()
+        let representations = Self::get_snapshot_representations(&self._project_root, id);
+        if representations.is_empty() {
+            return Err(WorkspaceBackendError::SnapshotNotFound(id.clone()));
+        }
+
+        for rep in representations {
+            let commit = self._repo.find_commit(rep.commit).map_err(|e| {
+                WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Failed to find commit {}: {}",
+                    rep.commit, e
+                )))
+            })?;
+            let tree = commit.tree().map_err(|e| {
+                WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Failed to get tree for commit {}: {}",
+                    rep.commit, e
+                )))
+            })?;
+
+            let mut entries = Vec::new();
+            collect_git_tree(&self._repo, &tree, Path::new(""), &mut entries)?;
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+            let computed_id = crate::encoding::hash::hash_workspace_snapshot(&entries);
+            if computed_id.as_bytes() != id.as_bytes() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
+}
+
+pub fn collect_git_tree(
+    repo: &git2::Repository,
+    tree: &git2::Tree,
+    prefix: &Path,
+    entries: &mut Vec<(String, u8, MaterializationId)>,
+) -> Result<(), WorkspaceBackendError> {
+    for entry in tree.iter() {
+        let name = std::str::from_utf8(entry.name_bytes()).map_err(|_| {
+            WorkspaceBackendError::UnsupportedPathEncoding(
+                prefix.join(String::from_utf8_lossy(entry.name_bytes()).as_ref()),
+            )
+        })?;
+
+        if name == ".kat" && prefix == Path::new("") {
+            continue;
+        }
+
+        let path = prefix.join(name);
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| WorkspaceBackendError::UnsupportedPathEncoding(path.clone()))?
+            .to_string();
+
+        match entry.filemode() {
+            0o100644 => {
+                let obj = entry
+                    .to_object(repo)
+                    .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))?;
+                let blob = obj.as_blob().unwrap();
+                let mat_id =
+                    crate::encoding::hash::hash_file_materialization(false, blob.content());
+                entries.push((path_str, b'F', mat_id));
+            }
+            0o100755 => {
+                let obj = entry
+                    .to_object(repo)
+                    .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))?;
+                let blob = obj.as_blob().unwrap();
+                let mat_id = crate::encoding::hash::hash_file_materialization(true, blob.content());
+                entries.push((path_str, b'X', mat_id));
+            }
+            0o120000 => {
+                let obj = entry
+                    .to_object(repo)
+                    .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))?;
+                let blob = obj.as_blob().unwrap();
+                let mat_id = crate::encoding::hash::hash_symlink_materialization(blob.content());
+                entries.push((path_str, b'S', mat_id));
+            }
+            0o040000 => {
+                let obj = entry
+                    .to_object(repo)
+                    .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))?;
+                let subtree = obj.as_tree().unwrap();
+                collect_git_tree(repo, subtree, &path, entries)?;
+            }
+            0o160000 => {
+                return Err(WorkspaceBackendError::UnsupportedPhysicalEntryType);
+            }
+            mode => {
+                return Err(WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Unsupported git file mode: {:o}",
+                    mode
+                ))));
+            }
+        }
+    }
+    Ok(())
 }

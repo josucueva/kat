@@ -6,7 +6,6 @@
 
 use std::str::FromStr;
 
-
 use crate::domain::identity::{ElementId, RelationshipId};
 use crate::encoding::decode_canonical;
 use crate::encoding::object::CanonicalPayload;
@@ -15,20 +14,26 @@ use crate::repository::open::Repository;
 /// Errors returned by ID prefix resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
-        InvalidIdentifier { input: String },
+    InvalidIdentifier {
+        input: String,
+    },
 
-        PrefixTooShort { input: String },
+    PrefixTooShort {
+        input: String,
+    },
 
-        NotFound { input: String },
+    NotFound {
+        input: String,
+    },
 
-        Ambiguous {
+    Ambiguous {
         input: String,
         count: usize,
         candidates: Vec<String>,
         candidates_joined: String,
     },
 
-        Repository(String),
+    Repository(String),
 }
 
 /// Counts the number of hexadecimal digits (`0-9`, `a-f`, `A-F`) in `input`,
@@ -273,6 +278,35 @@ pub fn resolve_element_in_draft_session(
     resolve_element_in_state(&session.working_state, trimmed)
 }
 
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidIdentifier { input, .. } => write!(f, "invalid identifier '{input}'"),
+            Self::PrefixTooShort { input, .. } => write!(
+                f,
+                "identifier prefix '{input}' is too short (minimum 8 hex digits required)"
+            ),
+            Self::NotFound { input, .. } => write!(
+                f,
+                "identifier '{input}' not found in current accepted state"
+            ),
+            Self::Ambiguous {
+                input,
+                count,
+                candidates: _candidates,
+                candidates_joined,
+                ..
+            } => write!(
+                f,
+                "identifier prefix '{input}' is ambiguous ({count} matches: {candidates_joined})"
+            ),
+            Self::Repository(e0) => write!(f, "repository error: {e0}"),
+        }
+    }
+}
+
+impl std::error::Error for ResolveError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,19 +362,4 @@ mod tests {
             elem_id
         );
     }
-}
-
-impl std::fmt::Display for ResolveError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidIdentifier { input, .. } => write!(f, "invalid identifier '{input}'"),
-            Self::PrefixTooShort { input, .. } => write!(f, "identifier prefix '{input}' is too short (minimum 8 hex digits required)"),
-            Self::NotFound { input, .. } => write!(f, "identifier '{input}' not found in current accepted state"),
-            Self::Ambiguous { input, count, candidates: _candidates, candidates_joined, .. } => write!(f, "identifier prefix '{input}' is ambiguous ({count} matches: {candidates_joined})"),
-            Self::Repository(_0) => write!(f, "repository error: {_0}"),
-        }
-    }
-}
-
-impl std::error::Error for ResolveError {
 }

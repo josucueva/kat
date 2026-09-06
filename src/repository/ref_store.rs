@@ -81,16 +81,15 @@ fn parse_object_id(value: &str, field: &str) -> Result<ObjectId, String> {
 #[derive(Debug)]
 pub enum RefStoreError {
     /// The ref is absent (not yet initialized).
-        NotFound,
+    NotFound,
     /// An underlying filesystem failure.
-        Io(std::io::Error),
+    Io(std::io::Error),
     /// The ref file is not in the expected format.
-        Parse(String),
+    Parse(String),
     /// A compare-and-swap could not publish because the ref state did not
     /// match expectations (or another publication is in progress).
-        Conflict,
+    Conflict,
 }
-
 
 /// Filesystem ref store rooted at a `.kat` directory.
 #[derive(Debug)]
@@ -206,6 +205,35 @@ impl FileRefStore {
         }
         fs::rename(&tmp_path, self.accepted_path())?;
         Ok(())
+    }
+}
+
+impl std::fmt::Display for RefStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "repository ref not found"),
+            Self::Io(e0) => write!(f, "repository ref I/O error: {e0}"),
+            Self::Parse(e0) => write!(f, "malformed repository ref: {e0}"),
+            Self::Conflict => write!(
+                f,
+                "accepted ref changed concurrently (compare-and-swap failed)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RefStoreError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for RefStoreError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
     }
 }
 
@@ -371,31 +399,5 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
         assert_eq!(names, vec!["accepted".to_string()]);
-    }
-}
-
-impl std::fmt::Display for RefStoreError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotFound => write!(f, "repository ref not found"),
-            Self::Io(_0) => write!(f, "repository ref I/O error: {_0}"),
-            Self::Parse(_0) => write!(f, "malformed repository ref: {_0}"),
-            Self::Conflict => write!(f, "accepted ref changed concurrently (compare-and-swap failed)"),
-        }
-    }
-}
-
-impl std::error::Error for RefStoreError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for RefStoreError {
-    fn from(err: std::io::Error) -> Self {
-        Self::Io(err)
     }
 }

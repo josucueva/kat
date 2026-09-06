@@ -33,16 +33,16 @@ static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 #[derive(Debug)]
 pub enum ObjectStoreError {
     /// The requested object is absent from the store.
-        NotFound(ObjectId),
+    NotFound(ObjectId),
     /// An object's bytes do not hash to the ObjectId they are stored under.
-        Integrity {
+    Integrity {
         /// The ObjectId the object was expected to have.
         expected: ObjectId,
         /// The ObjectId its actual bytes hash to.
         actual: ObjectId,
     },
     /// An underlying filesystem failure.
-        Io(std::io::Error),
+    Io(std::io::Error),
 }
 
 /// Immutable content-addressed object store rooted at a `.kat` directory.
@@ -148,6 +148,36 @@ impl ObjectStore {
     /// Checks whether `objects/<id>` exists, without reading or hashing it.
     pub fn exists(&self, id: ObjectId) -> Result<bool, ObjectStoreError> {
         Ok(self.path_for(id).try_exists()?)
+    }
+}
+
+impl std::fmt::Display for ObjectStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(e0) => write!(f, "object not found: {e0}"),
+            Self::Integrity {
+                expected, actual, ..
+            } => write!(
+                f,
+                "object integrity mismatch: expected {expected}, actual {actual}"
+            ),
+            Self::Io(e0) => write!(f, "object store I/O error: {e0}"),
+        }
+    }
+}
+
+impl std::error::Error for ObjectStoreError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ObjectStoreError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
     }
 }
 
@@ -288,30 +318,5 @@ mod tests {
             Err(ObjectStoreError::NotFound(found)) => assert_eq!(found, id),
             other => panic!("expected NotFound, got {other:?}"),
         }
-    }
-}
-
-impl std::fmt::Display for ObjectStoreError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotFound(_0) => write!(f, "object not found: {_0}"),
-            Self::Integrity { expected, actual, .. } => write!(f, "object integrity mismatch: expected {expected}, actual {actual}"),
-            Self::Io(_0) => write!(f, "object store I/O error: {_0}"),
-        }
-    }
-}
-
-impl std::error::Error for ObjectStoreError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for ObjectStoreError {
-    fn from(err: std::io::Error) -> Self {
-        Self::Io(err)
     }
 }

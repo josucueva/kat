@@ -286,22 +286,29 @@ fn build_logical_object(v: &Value, name: &str) -> CanonicalObject {
                 .and_then(|d| d.as_str())
                 .map(String::from),
         }),
-        "repository-revision" => CanonicalPayload::RepositoryRevision(kat::domain::revision::RepositoryRevision {
-            parents: v["parents"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|p| kat::domain::identity::RepositoryRevisionId::from_object_id(object_id(p)))
-                .collect(),
-            semantic_state: kat::domain::identity::SemanticStateId::from_object_id(object_id(&v["semantic_state"])),
-            workspace_snapshot: kat::domain::identity::WorkspaceSnapshotId::new(
-                decode_hex(v["workspace_snapshot"].as_str().unwrap())
-                    .unwrap_or_else(|_| panic!("bad workspace_snapshot hex"))
-            ),
-            semantic_change: v.get("semantic_change").filter(|c| !c.is_null()).map(|c| {
-                kat::domain::identity::ChangeRevisionId::from_object_id(object_id(c))
-            }),
-        }),
+        "repository-revision" => {
+            CanonicalPayload::RepositoryRevision(kat::domain::revision::RepositoryRevision {
+                parents: v["parents"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|p| {
+                        kat::domain::identity::RepositoryRevisionId::from_object_id(object_id(p))
+                    })
+                    .collect(),
+                semantic_state: kat::domain::identity::SemanticStateId::from_object_id(object_id(
+                    &v["semantic_state"],
+                )),
+                workspace_snapshot: kat::domain::identity::WorkspaceSnapshotId::new(
+                    decode_hex(v["workspace_snapshot"].as_str().unwrap())
+                        .unwrap_or_else(|_| panic!("bad workspace_snapshot hex")),
+                ),
+                semantic_change: v
+                    .get("semantic_change")
+                    .filter(|c| !c.is_null())
+                    .map(|c| kat::domain::identity::ChangeRevisionId::from_object_id(object_id(c))),
+            })
+        }
         other => panic!("unknown payload kind {other}"),
     };
     CanonicalObject { payload }
@@ -340,7 +347,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 fn decode_hex(s: &str) -> Result<Vec<u8>, ()> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(());
     }
     (0..s.len())

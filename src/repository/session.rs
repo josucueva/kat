@@ -68,15 +68,15 @@ impl DraftSessionState {
 #[derive(Debug)]
 pub enum DraftSessionError {
     /// A draft session is already open in the repository.
-        AlreadyExists,
+    AlreadyExists,
     /// No open draft session exists.
-        NotFound,
+    NotFound,
     /// Attempted to modify or commit a stale session.
-        StaleSession,
+    StaleSession,
     /// An underlying filesystem failure.
-        Io(std::io::Error),
+    Io(std::io::Error),
     /// Draft session file format or decoding error.
-        Invalid(String),
+    Invalid(String),
 }
 
 /// An open draft change transaction session.
@@ -563,7 +563,6 @@ fn extract_json_string_array(json: &str, key: &str) -> Result<Vec<String>, Draft
     Ok(result)
 }
 
-
 fn encode_hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut s = String::with_capacity(bytes.len() * 2);
@@ -574,13 +573,49 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 fn decode_hex(s: &str) -> Result<Vec<u8>, ()> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(());
     }
     (0..s.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
         .collect()
+}
+
+impl std::fmt::Display for DraftSessionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyExists => write!(
+                f,
+                "a draft change transaction is already open at .kat/work/change/session.json"
+            ),
+            Self::NotFound => write!(
+                f,
+                "no open draft change transaction found at .kat/work/change/session.json"
+            ),
+            Self::StaleSession => write!(
+                f,
+                "draft session is stale because accepted head moved since begin; use 'kat change abort' to clear"
+            ),
+            Self::Io(e0) => write!(f, "draft session I/O error: {e0}"),
+            Self::Invalid(e0) => write!(f, "invalid draft session file: {e0}"),
+        }
+    }
+}
+
+impl std::error::Error for DraftSessionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for DraftSessionError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
 }
 
 #[cfg(test)]
@@ -618,32 +653,5 @@ mod tests {
         let json = format_draft_session_json(&session).unwrap();
         let parsed = parse_draft_session_json(&json).unwrap();
         assert_eq!(session, parsed);
-    }
-}
-
-impl std::fmt::Display for DraftSessionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::AlreadyExists => write!(f, "a draft change transaction is already open at .kat/work/change/session.json"),
-            Self::NotFound => write!(f, "no open draft change transaction found at .kat/work/change/session.json"),
-            Self::StaleSession => write!(f, "draft session is stale because accepted head moved since begin; use 'kat change abort' to clear"),
-            Self::Io(_0) => write!(f, "draft session I/O error: {_0}"),
-            Self::Invalid(_0) => write!(f, "invalid draft session file: {_0}"),
-        }
-    }
-}
-
-impl std::error::Error for DraftSessionError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for DraftSessionError {
-    fn from(err: std::io::Error) -> Self {
-        Self::Io(err)
     }
 }

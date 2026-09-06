@@ -1,7 +1,7 @@
 //! Domain representations for physical workspace semantics.
 
-use std::path::{Path, PathBuf};
 use crate::domain::identity::{MaterializationId, WorkspaceSnapshotId};
+use std::path::{Path, PathBuf};
 
 /// Errors originating from workspace backend operations.
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +17,15 @@ pub enum WorkspaceBackendError {
 
     #[error("Materialization resolution failed: {0}")]
     Resolution(String),
+
+    #[error("Unsupported physical entry type encountered (e.g. gitlink/submodule)")]
+    UnsupportedPhysicalEntryType,
+
+    #[error("Ambiguous backend representation for snapshot: {0:?}")]
+    AmbiguousBackendRepresentation(WorkspaceSnapshotId),
+
+    #[error("Path encoding is not valid UTF-8: {0:?}")]
+    UnsupportedPathEncoding(PathBuf),
 }
 
 /// Information about a materialized entity (file, directory, or symlink) inside a snapshot.
@@ -41,15 +50,29 @@ pub enum BackendConsistency {
     Mismatch(String),
 }
 
-/// Represents the physical working state diff against the snapshot.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkingState {
-    pub backend_consistency: BackendConsistency,
+pub struct PhysicalChanges {
     pub added: Vec<PathBuf>,
     pub modified: Vec<PathBuf>,
     pub deleted: Vec<PathBuf>,
     pub untracked: Vec<PathBuf>,
     pub ignored: Vec<PathBuf>,
+}
+
+impl PhysicalChanges {
+    pub fn is_clean(&self) -> bool {
+        self.added.is_empty()
+            && self.modified.is_empty()
+            && self.deleted.is_empty()
+            && self.untracked.is_empty()
+    }
+}
+
+/// Represents the physical working state diff against the snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkingState {
+    pub changes: PhysicalChanges,
+    pub backend_consistency: BackendConsistency,
 }
 
 /// The required capabilities of a physical workspace backend independent of Git.
@@ -59,22 +82,28 @@ pub struct WorkingState {
 /// the underlying physical storage mechanism.
 pub trait WorkspaceBackend {
     /// Inspects the current physical working tree, identifying modifications.
-    fn inspect_working_state(&self, base: &WorkspaceSnapshotId) -> Result<WorkingState, WorkspaceBackendError>;
+    fn inspect_working_state(
+        &self,
+        base: &WorkspaceSnapshotId,
+    ) -> Result<WorkingState, WorkspaceBackendError>;
 
     /// Creates an immutable physical snapshot representing exactly the `tracked_paths`.
     /// The backend must NOT guess or include other files (like untracked files).
-    fn create_snapshot(&self, tracked_paths: &[PathBuf]) -> Result<WorkspaceSnapshotId, WorkspaceBackendError>;
+    fn create_snapshot(
+        &self,
+        tracked_paths: &[PathBuf],
+    ) -> Result<WorkspaceSnapshotId, WorkspaceBackendError>;
 
     /// Modifies the physical working tree to match the given snapshot exactly.
     fn materialize_snapshot(&self, id: &WorkspaceSnapshotId) -> Result<(), WorkspaceBackendError>;
 
     /// Compares two snapshots to find the differing file paths.
-    /// (Returns structural diffs, placeholder returning `Vec<PathBuf>`).
+    /// Returns the structural physical changes (added, modified, deleted).
     fn compare_snapshots(
         &self,
         base: &WorkspaceSnapshotId,
         target: &WorkspaceSnapshotId,
-    ) -> Result<Vec<PathBuf>, WorkspaceBackendError>;
+    ) -> Result<PhysicalChanges, WorkspaceBackendError>;
 
     /// Resolves the canonical identity of a specific path within a snapshot.
     fn resolve_materialization(
@@ -84,5 +113,8 @@ pub trait WorkspaceBackend {
     ) -> Result<MaterializationResolution, WorkspaceBackendError>;
 
     /// Verifies the internal structural integrity of the referenced snapshot.
-    fn verify_snapshot_integrity(&self, id: &WorkspaceSnapshotId) -> Result<bool, WorkspaceBackendError>;
+    fn verify_snapshot_integrity(
+        &self,
+        id: &WorkspaceSnapshotId,
+    ) -> Result<bool, WorkspaceBackendError>;
 }

@@ -36,7 +36,7 @@ use crate::encoding::hash::canonical_object_id;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
 use crate::repository::object_store::{ObjectStore, ObjectStoreError};
 use crate::repository::open::Repository;
-use crate::repository::ref_store::{RefStoreError};
+use crate::repository::ref_store::RefStoreError;
 use crate::repository::session::{DraftSessionError, read_draft_session};
 use crate::repository::validation::repository::{
     ValidationReport, validate_repository, validate_repository_state,
@@ -305,24 +305,24 @@ pub struct ArtifactAccountabilityReport {
 #[derive(Debug)]
 pub enum QueryError {
     /// A ref store failure while reading the accepted head.
-        RefStore(RefStoreError),
+    RefStore(RefStoreError),
     /// An object store failure while loading a referenced object.
-        ObjectStore(ObjectStoreError),
+    ObjectStore(ObjectStoreError),
     /// A referenced object failed strict canonical decoding.
-        Decoding(DecodingError),
+    Decoding(DecodingError),
     /// A referenced object has a different canonical kind than expected.
-        UnexpectedObjectKind {
+    UnexpectedObjectKind {
         /// The canonical kind the repository structure required.
         expected: ObjectKind,
         /// The canonical kind the stored object actually has.
         actual: ObjectKind,
     },
     /// The ElementId is not present in the accepted SemanticState.
-        ElementNotFound(ElementId),
+    ElementNotFound(ElementId),
     /// The accepted ChangeRevision's result state does not match the accepted
     /// SemanticState read from the live ref (the head is internally
     /// inconsistent; the open-time snapshot may be stale).
-        AcceptedChangeStateMismatch {
+    AcceptedChangeStateMismatch {
         /// ObjectId of the accepted ChangeRevision.
         change: ObjectId,
         /// ObjectId of the accepted SemanticState.
@@ -336,18 +336,18 @@ pub enum QueryError {
     /// is defense-in-depth against a non-conforming store implementation: a
     /// revision reached while still on the traversal stack is rejected rather
     /// than traversed forever.
-        HistoryCycle(ObjectId),
+    HistoryCycle(ObjectId),
     /// The specified type ID or query short name is not registered in the active ontology.
-        UnknownOntologyType(String),
+    UnknownOntologyType(String),
     /// The short type identifier query matches multiple registered types in the active ontology.
-        AmbiguousOntologyType {
+    AmbiguousOntologyType {
         /// The query string provided by the user.
         query: String,
         /// The matching canonical type IDs.
         matches: Vec<String>,
     },
     /// The specified max_depth parameter is invalid (must be >= 1).
-        InvalidMaxDepth(usize),
+    InvalidMaxDepth(usize),
 }
 
 /// Detailed view of a single relationship attached to an element.
@@ -2580,16 +2580,31 @@ fn explore_context_graph(
 impl std::fmt::Display for QueryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::RefStore(_0) => write!(f, "ref store error: {_0}"),
-            Self::ObjectStore(_0) => write!(f, "object store error: {_0}"),
-            Self::Decoding(_0) => write!(f, "decoding error: {_0}"),
-            Self::UnexpectedObjectKind { expected, actual, .. } => write!(f, "expected object kind {expected}, found {actual}"),
-            Self::ElementNotFound(_0) => write!(f, "element {_0} not found in the accepted state"),
-            Self::AcceptedChangeStateMismatch { change, expected, actual, .. } => write!(f, "accepted change {change} results in state {actual}, but the accepted state is {expected}"),
-            Self::HistoryCycle(_0) => write!(f, "history contains a dependency cycle at revision {_0}"),
-            Self::UnknownOntologyType(_0) => write!(f, "unknown ontology type '{_0}'"),
-            Self::AmbiguousOntologyType { query, matches, .. } => write!(f, "ontology type query '{query}' is ambiguous (matches: {matches:?})"),
-            Self::InvalidMaxDepth(_0) => write!(f, "max depth must be greater than 0, got {_0}"),
+            Self::RefStore(e0) => write!(f, "ref store error: {e0}"),
+            Self::ObjectStore(e0) => write!(f, "object store error: {e0}"),
+            Self::Decoding(e0) => write!(f, "decoding error: {e0}"),
+            Self::UnexpectedObjectKind {
+                expected, actual, ..
+            } => write!(f, "expected object kind {expected}, found {actual}"),
+            Self::ElementNotFound(e0) => write!(f, "element {e0} not found in the accepted state"),
+            Self::AcceptedChangeStateMismatch {
+                change,
+                expected,
+                actual,
+                ..
+            } => write!(
+                f,
+                "accepted change {change} results in state {actual}, but the accepted state is {expected}"
+            ),
+            Self::HistoryCycle(e0) => {
+                write!(f, "history contains a dependency cycle at revision {e0}")
+            }
+            Self::UnknownOntologyType(e0) => write!(f, "unknown ontology type '{e0}'"),
+            Self::AmbiguousOntologyType { query, matches, .. } => write!(
+                f,
+                "ontology type query '{query}' is ambiguous (matches: {matches:?})"
+            ),
+            Self::InvalidMaxDepth(e0) => write!(f, "max depth must be greater than 0, got {e0}"),
         }
     }
 }

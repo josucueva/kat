@@ -1,5 +1,16 @@
 # KAT v0.5 Implementation Plan
 
+## Status
+Phase 3 (GitWorkspaceBackend) Complete.
+
+## Progress Log
+| Phase | Commit | Notes |
+|---|---|---|
+| Phase 0 | `N/A` | Complete. Consistency resolved. |
+| Phase 1 | `c806322` | Complete. RepositoryRevision structure added. |
+| Phase 2 | `c806322` | Complete. WorkspaceSnapshot abstraction added. |
+| Phase 3 | `3d1ed40` | Complete. GitWorkspaceBackend implementation added, physical identity enforced. |
+
 ## 1. Objective
 
 To implement KAT v0.5, introducing repository-level version control, collaboration, and workspace capabilities across semantic and physical software state. This plan acts as a **controlled translation from the frozen design into executable engineering work**, with explicit checks that the implementation has not drifted from KAT's philosophy or from the v0.4 guarantees.
@@ -243,26 +254,26 @@ Integrate Git as the subordinate physical backend.
 - Git commit identity != `RepositoryRevisionId`.
 - Git branch != KAT reference.
 ### Implementation work
-- Initialize managed Git storage.
-- Adopt existing Git repository.
-- Maintain the backend mapping between `WorkspaceSnapshotId` and the immutable Git commit representing that physical snapshot.
-- Generate synthetic physical commits where necessary.
-- Materialize a snapshot safely.
-- Inspect tracked working state.
-- Distinguish ordinary edits from backend mismatch.
-- Protect referenced objects from Git GC.
-- Support physical ancestry queries.
-- Support physical three-way merge primitives.
-- Establish hidden/internal ref strategy if required.
-- Verify exact snapshot content after materialization.
+- [x] Initialize managed Git storage.
+- [x] Adopt existing Git repository.
+- [x] Maintain the backend mapping between `WorkspaceSnapshotId` and the immutable Git commit representing that physical snapshot.
+- [x] Generate synthetic physical commits where necessary.
+- [x] Materialize a snapshot safely.
+- [x] Inspect tracked working state.
+- [x] Distinguish ordinary edits from backend mismatch.
+- [x] Protect referenced objects from Git GC.
+- [x] Support physical ancestry queries.
+- [x] Support physical three-way merge primitives.
+- [x] Establish hidden/internal ref strategy if required.
+- [x] Verify exact snapshot content after materialization.
 ### Tests
-- fresh non-Git project, existing Git project
-- tracked modification, tracked addition, tracked deletion
-- untracked content, ignored content, empty workspace
-- snapshot reuse
-- same tree across different Git metadata
-- external checkout, external reset, Git HEAD moved independently, detached HEAD
-- missing object, GC/reachability
+- [x] fresh non-Git project, existing Git project
+- [x] tracked modification, tracked addition, tracked deletion
+- [x] untracked content, ignored content, empty workspace
+- [x] snapshot reuse
+- [x] same tree across different Git metadata
+- [x] external checkout, external reset, Git HEAD moved independently, detached HEAD
+- [x] missing object, GC/reachability
 ### Regression checks
 - `cargo test --workspace`, `cargo fmt --check`, `cargo clippy ... -D warnings`.
 - Existing canonical vectors unchanged.

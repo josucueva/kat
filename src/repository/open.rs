@@ -166,14 +166,22 @@ pub fn check_repository_revision_integrity(
     store: &ObjectStore,
     revision: &crate::domain::revision::RepositoryRevision,
 ) -> Result<(), RepositoryError> {
-    let _ = load_typed(store, revision.semantic_state.as_object_id(), ObjectKind::SemanticState)?;
+    let _ = load_typed(
+        store,
+        revision.semantic_state.as_object_id(),
+        ObjectKind::SemanticState,
+    )?;
 
     if let Some(change_id) = &revision.semantic_change {
         let _ = load_typed(store, change_id.as_object_id(), ObjectKind::ChangeRevision)?;
     }
 
     for parent_id in &revision.parents {
-        let _ = load_typed(store, parent_id.as_object_id(), ObjectKind::RepositoryRevision)?;
+        let _ = load_typed(
+            store,
+            parent_id.as_object_id(),
+            ObjectKind::RepositoryRevision,
+        )?;
     }
 
     Ok(())
@@ -182,12 +190,14 @@ pub fn check_repository_revision_integrity(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::identity::{SemanticStateId, WorkspaceSnapshotId, ChangeRevisionId, RepositoryRevisionId};
+    use crate::domain::change::ChangeRevision;
+    use crate::domain::identity::{
+        ChangeRevisionId, RepositoryRevisionId, SemanticStateId, WorkspaceSnapshotId,
+    };
     use crate::domain::revision::RepositoryRevision;
     use crate::domain::state::SemanticState;
-    use crate::domain::change::ChangeRevision;
+
     use crate::encoding::object::{CanonicalObject, CanonicalPayload};
-    use crate::encoding::hash::canonical_object_id;
     use crate::repository::object_store::ObjectStoreError;
 
     fn store_object(store: &ObjectStore, payload: CanonicalPayload) -> ObjectId {
@@ -201,22 +211,28 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let store = ObjectStore::new(temp.path());
 
-        let state_id = store_object(&store, CanonicalPayload::SemanticState(SemanticState {
-            ontology_version: ObjectId::from_bytes([0; 32]),
-            elements: vec![],
-            relationships: vec![],
-        }));
+        let state_id = store_object(
+            &store,
+            CanonicalPayload::SemanticState(SemanticState {
+                ontology_version: ObjectId::from_bytes([0; 32]),
+                elements: vec![],
+                relationships: vec![],
+            }),
+        );
 
-        let change_id = store_object(&store, CanonicalPayload::ChangeRevision(ChangeRevision {
-            change_id: crate::domain::identity::ChangeId::new(),
-            base_states: vec![ObjectId::from_bytes([0; 32])],
-            result_state: state_id,
-            operations: vec![crate::domain::operation::Operation::CreateElement {
-                new_version: ObjectId::from_bytes([0; 32]),
-            }],
-            dependencies: vec![],
-            description: None,
-        }));
+        let change_id = store_object(
+            &store,
+            CanonicalPayload::ChangeRevision(ChangeRevision {
+                change_id: crate::domain::identity::ChangeId::new(),
+                base_states: vec![ObjectId::from_bytes([0; 32])],
+                result_state: state_id,
+                operations: vec![crate::domain::operation::Operation::CreateElement {
+                    new_version: ObjectId::from_bytes([0; 32]),
+                }],
+                dependencies: vec![],
+                description: None,
+            }),
+        );
 
         let rev = RepositoryRevision {
             parents: vec![],
@@ -229,7 +245,8 @@ mod tests {
 
         // 1. Missing SemanticState
         let mut rev_missing_state = rev.clone();
-        rev_missing_state.semantic_state = SemanticStateId::from_object_id(ObjectId::from_bytes([1; 32]));
+        rev_missing_state.semantic_state =
+            SemanticStateId::from_object_id(ObjectId::from_bytes([1; 32]));
         assert!(matches!(
             check_repository_revision_integrity(&store, &rev_missing_state),
             Err(RepositoryError::ObjectStore(ObjectStoreError::NotFound(_)))
@@ -240,7 +257,10 @@ mod tests {
         rev_wrong_state.semantic_state = SemanticStateId::from_object_id(change_id);
         assert!(matches!(
             check_repository_revision_integrity(&store, &rev_wrong_state),
-            Err(RepositoryError::UnexpectedObjectKind { expected: ObjectKind::SemanticState, .. })
+            Err(RepositoryError::UnexpectedObjectKind {
+                expected: ObjectKind::SemanticState,
+                ..
+            })
         ));
 
         // 3. semantic_change wrong object kind
@@ -248,12 +268,17 @@ mod tests {
         rev_wrong_change.semantic_change = Some(ChangeRevisionId::from_object_id(state_id));
         assert!(matches!(
             check_repository_revision_integrity(&store, &rev_wrong_change),
-            Err(RepositoryError::UnexpectedObjectKind { expected: ObjectKind::ChangeRevision, .. })
+            Err(RepositoryError::UnexpectedObjectKind {
+                expected: ObjectKind::ChangeRevision,
+                ..
+            })
         ));
 
         // 4. missing semantic change
         let mut rev_missing_change = rev.clone();
-        rev_missing_change.semantic_change = Some(ChangeRevisionId::from_object_id(ObjectId::from_bytes([1; 32])));
+        rev_missing_change.semantic_change = Some(ChangeRevisionId::from_object_id(
+            ObjectId::from_bytes([1; 32]),
+        ));
         assert!(matches!(
             check_repository_revision_integrity(&store, &rev_missing_change),
             Err(RepositoryError::ObjectStore(ObjectStoreError::NotFound(_)))
@@ -261,7 +286,9 @@ mod tests {
 
         // 5. missing parent
         let mut rev_missing_parent = rev.clone();
-        rev_missing_parent.parents = vec![RepositoryRevisionId::from_object_id(ObjectId::from_bytes([1; 32]))];
+        rev_missing_parent.parents = vec![RepositoryRevisionId::from_object_id(
+            ObjectId::from_bytes([1; 32]),
+        )];
         assert!(matches!(
             check_repository_revision_integrity(&store, &rev_missing_parent),
             Err(RepositoryError::ObjectStore(ObjectStoreError::NotFound(_)))
@@ -272,7 +299,10 @@ mod tests {
         rev_wrong_parent.parents = vec![RepositoryRevisionId::from_object_id(state_id)];
         assert!(matches!(
             check_repository_revision_integrity(&store, &rev_wrong_parent),
-            Err(RepositoryError::UnexpectedObjectKind { expected: ObjectKind::RepositoryRevision, .. })
+            Err(RepositoryError::UnexpectedObjectKind {
+                expected: ObjectKind::RepositoryRevision,
+                ..
+            })
         ));
     }
 }

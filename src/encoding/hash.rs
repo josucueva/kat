@@ -11,12 +11,11 @@
 //! the object store hashes bytes it already holds.
 
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
 
 use crate::domain::identity::{MaterializationId, ObjectId, WorkspaceSnapshotId};
 use crate::encoding::cbor::canonical_bytes;
-use crate::encoding::validate::CanonicalStructureError;
 use crate::encoding::object::CanonicalObject;
+use crate::encoding::validate::CanonicalStructureError;
 
 /// Computes the ObjectId (SHA-256) of exact canonical bytes.
 pub fn object_id(bytes: &[u8]) -> ObjectId {
@@ -40,8 +39,8 @@ pub fn hash_file_materialization(is_executable: bool, bytes: &[u8]) -> Materiali
     let mut hasher = Sha256::new();
     hasher.update(b"KAT-MATERIALIZATION-FILE");
     let mode_byte = if is_executable { 1u8 } else { 0u8 };
-    hasher.update(&[mode_byte]);
-    hasher.update(&(bytes.len() as u64).to_le_bytes());
+    hasher.update([mode_byte]);
+    hasher.update((bytes.len() as u64).to_le_bytes());
     hasher.update(bytes);
     let mut out = [0u8; 32];
     out.copy_from_slice(&hasher.finalize());
@@ -67,13 +66,13 @@ pub fn hash_directory_materialization(
 ) -> MaterializationId {
     let mut hasher = Sha256::new();
     hasher.update(b"KAT-MATERIALIZATION-DIRECTORY");
-    hasher.update(&(entries.len() as u32).to_le_bytes());
-    
+    hasher.update((entries.len() as u32).to_le_bytes());
+
     for (locator, type_byte, id) in entries {
         let name_bytes = locator.as_bytes();
-        hasher.update(&(name_bytes.len() as u32).to_le_bytes());
+        hasher.update((name_bytes.len() as u32).to_le_bytes());
         hasher.update(name_bytes);
-        hasher.update(&[*type_byte]);
+        hasher.update([*type_byte]);
         hasher.update(id.as_bytes());
     }
     let mut out = [0u8; 32];
@@ -85,18 +84,16 @@ pub fn hash_directory_materialization(
 ///
 /// Hashing algorithm: H(domain_tag || entry_count || ordered_entries).
 /// The caller is responsible for providing strictly sorted canonical tracked entries (by locator).
-pub fn hash_workspace_snapshot(
-    entries: &[(String, u8, MaterializationId)],
-) -> WorkspaceSnapshotId {
+pub fn hash_workspace_snapshot(entries: &[(String, u8, MaterializationId)]) -> WorkspaceSnapshotId {
     let mut hasher = Sha256::new();
     hasher.update(b"KAT-WORKSPACE-SNAPSHOT");
-    hasher.update(&(entries.len() as u32).to_le_bytes());
-    
+    hasher.update((entries.len() as u32).to_le_bytes());
+
     for (locator, type_byte, id) in entries {
         let name_bytes = locator.as_bytes();
-        hasher.update(&(name_bytes.len() as u32).to_le_bytes());
+        hasher.update((name_bytes.len() as u32).to_le_bytes());
         hasher.update(name_bytes);
-        hasher.update(&[*type_byte]);
+        hasher.update([*type_byte]);
         hasher.update(id.as_bytes());
     }
     let mut out = [0u8; 32];
@@ -162,7 +159,7 @@ mod tests {
         let obj_id = object_id(b"abc");
         let symlink_id = hash_symlink_materialization(b"abc");
         let dir_id = hash_directory_materialization(&[]);
-        
+
         assert_ne!(file_id.as_bytes(), obj_id.as_bytes());
         assert_ne!(file_id, symlink_id);
         assert_ne!(symlink_id.as_bytes(), obj_id.as_bytes());
@@ -182,10 +179,10 @@ mod tests {
         // Even with the same entries, a directory materialization != a workspace snapshot
         let file1_id = hash_file_materialization(false, b"1");
         let entries = vec![("a".to_string(), b'F', file1_id)];
-        
+
         let dir_id = hash_directory_materialization(&entries);
         let snap_id = hash_workspace_snapshot(&entries);
-        
+
         assert_ne!(dir_id.as_bytes(), snap_id.as_bytes());
     }
 
@@ -200,12 +197,12 @@ mod tests {
         ];
 
         let mut entries2 = entries1.clone();
-        entries2.reverse(); 
+        entries2.reverse();
 
         let dir1 = hash_directory_materialization(&entries1);
         let dir2 = hash_directory_materialization(&entries2);
         assert_ne!(dir1, dir2);
-        
+
         let dir1_again = hash_directory_materialization(&entries1);
         assert_eq!(dir1, dir1_again);
     }

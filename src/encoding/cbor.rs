@@ -461,7 +461,11 @@ fn encode_repository_revision(
     writer: &mut CborWriter,
     revision: &crate::domain::revision::RepositoryRevision,
 ) -> Result<(), CanonicalStructureError> {
-    let size = if revision.semantic_change.is_some() { 4 } else { 3 };
+    let size = if revision.semantic_change.is_some() {
+        4
+    } else {
+        3
+    };
     writer.write_map_header(size);
 
     writer.write_uint(0);
@@ -496,7 +500,10 @@ fn write_object_id_array(writer: &mut CborWriter, ids: &[ObjectId]) {
 }
 
 /// Encodes one semantic operation as its canonical tagged array.
-fn encode_operation(writer: &mut CborWriter, operation: &Operation) -> Result<(), CanonicalStructureError> {
+fn encode_operation(
+    writer: &mut CborWriter,
+    operation: &Operation,
+) -> Result<(), CanonicalStructureError> {
     match operation {
         Operation::CreateElement { new_version } => {
             writer.write_array_header(2);
@@ -576,10 +583,21 @@ fn encode_operation(writer: &mut CborWriter, operation: &Operation) -> Result<()
     Ok(())
 }
 
+#[allow(dead_code)]
+fn decode_hex(s: &str) -> Result<Vec<u8>, ()> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::identity::{ChangeId, ElementId, OntologyId, RelationshipId, RepositoryRevisionId, WorkspaceSnapshotId, SemanticStateId, ChangeRevisionId};
+    use crate::domain::identity::{
+        ChangeId, ElementId, OntologyId, RelationshipId, RepositoryRevisionId, SemanticStateId,
+        WorkspaceSnapshotId,
+    };
     use crate::domain::revision::RepositoryRevision;
     use crate::encoding::validate::CanonicalStructureError;
 
@@ -738,10 +756,7 @@ mod tests {
     #[test]
     fn tag_bool_and_null() {
         assert_eq!(write_with(|w| w.write_tag(0)), decode_hex("c0").unwrap());
-        assert_eq!(
-            write_with(|w| w.write_tag(37)),
-            decode_hex("d825").unwrap()
-        );
+        assert_eq!(write_with(|w| w.write_tag(37)), decode_hex("d825").unwrap());
         assert_eq!(write_with(|w| w.write_true()), decode_hex("f5").unwrap());
         assert_eq!(write_with(|w| w.write_false()), decode_hex("f4").unwrap());
         assert_eq!(write_with(|w| w.write_null()), decode_hex("f6").unwrap());
@@ -1009,11 +1024,4 @@ mod tests {
             Err(CanonicalStructureError::SemanticElementsUnordered)
         );
     }
-}
-
-fn decode_hex(s: &str) -> Result<Vec<u8>, ()> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
-        .collect()
 }

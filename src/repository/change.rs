@@ -41,8 +41,8 @@ use crate::domain::state::{ElementStateEntry, RelationshipStateEntry, SemanticSt
 use crate::encoding::cbor::cmp_encoded_text;
 use crate::encoding::decode::DecodingError;
 use crate::encoding::decode_canonical;
-use crate::encoding::validate::CanonicalStructureError;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload, ObjectKind};
+use crate::encoding::validate::CanonicalStructureError;
 use crate::encoding::{canonical_bytes, canonical_object_id};
 use crate::repository::object_store::{ObjectStore, ObjectStoreError};
 use crate::repository::open::Repository;
@@ -64,13 +64,13 @@ pub enum PreconditionError {
     /// one semantic ID to its current version, so a present ID — active,
     /// deprecated, or superseded — cannot be created; reuse/resurrection is an
     /// explicit operation's concern, not `CreateElement`'s.
-        ElementAlreadyExists(ElementId),
+    ElementAlreadyExists(ElementId),
     /// The ElementId is not present in the base state (an update targets an
     /// existing element).
-        ElementNotFound(ElementId),
+    ElementNotFound(ElementId),
     /// The base state maps the element to a different version than the
     /// operation's `expected_version` (element-level optimistic concurrency).
-        VersionMismatch {
+    VersionMismatch {
         /// Stable identity of the element being updated.
         element_id: ElementId,
         /// The version the operation was prepared against (`expected_version`).
@@ -80,41 +80,41 @@ pub enum PreconditionError {
     },
     /// The element's current version is not `Active`; update does not perform
     /// lifecycle transitions (deprecation/supersession are explicit operations).
-        ElementNotActive(ElementId),
+    ElementNotActive(ElementId),
     /// The update patch contains no properties to change.
-        EmptyUpdate,
+    EmptyUpdate,
     /// The update patch produces a content-identical version
     /// (`Vn+1` ObjectId == `Vn`); the change would not evolve the state.
-        NoEffectiveChange,
+    NoEffectiveChange,
     /// The RelationshipId already appears in the base state.
-        RelationshipAlreadyExists(RelationshipId),
+    RelationshipAlreadyExists(RelationshipId),
     /// A relationship of the same type between the same source and target elements already exists in the base state.
-        DuplicateRelationshipTriple {
+    DuplicateRelationshipTriple {
         relationship_type: String,
         source_element_id: ElementId,
         target_element_id: ElementId,
     },
     /// The relationship ID is not mapped in the base state.
-        RelationshipNotFound(RelationshipId),
+    RelationshipNotFound(RelationshipId),
     /// The relationship version in the base state does not match the expected version.
-        RelationshipVersionMismatch {
+    RelationshipVersionMismatch {
         relationship_id: RelationshipId,
         expected: ObjectId,
         actual: ObjectId,
     },
     /// No active draft session was found.
-        DraftNotFound,
+    DraftNotFound,
     /// Attempted to commit a draft change transaction with no staged operations.
-        EmptyDraftCommit,
+    EmptyDraftCommit,
     /// The loaded relationship object's ID does not match the requested relationship ID.
-        RelationshipIdentityMismatch {
+    RelationshipIdentityMismatch {
         relationship_id: RelationshipId,
         version_relationship_id: RelationshipId,
     },
     /// Element is not an artifact element type ('kat.core/artifact').
-        NotAnArtifact(ElementId),
+    NotAnArtifact(ElementId),
     /// Artifact has no active direct accountability relationships ('represents', 'derived-from').
-        NoAccountabilityRelationships(ElementId),
+    NoAccountabilityRelationships(ElementId),
 }
 
 /// Error produced by the Change Engine.
@@ -124,13 +124,13 @@ pub enum PreconditionError {
 #[derive(Debug)]
 pub enum ChangeError {
     /// An object store failure while loading a referenced object.
-        ObjectStore(ObjectStoreError),
+    ObjectStore(ObjectStoreError),
     /// A referenced object failed strict canonical decoding.
-        Decoding(DecodingError),
+    Decoding(DecodingError),
     /// A canonical object failed to encode (fail-closed).
-        Encoding(CanonicalStructureError),
+    Encoding(CanonicalStructureError),
     /// A referenced object has a different canonical kind than expected.
-        UnexpectedObjectKind {
+    UnexpectedObjectKind {
         /// The canonical kind the repository structure required.
         expected: ObjectKind,
         /// The canonical kind the stored object actually has.
@@ -139,7 +139,7 @@ pub enum ChangeError {
     /// The ObjectStore returned a different ObjectId than the identity derived
     /// during preparation. This is an integrity/programming failure and must
     /// not be silently accepted.
-        PersistenceIdentityMismatch {
+    PersistenceIdentityMismatch {
         /// The canonical kind that was persisted.
         kind: ObjectKind,
         /// The identity derived at preparation time.
@@ -148,15 +148,15 @@ pub enum ChangeError {
         actual: ObjectId,
     },
     /// An operation-level precondition was not satisfied.
-        Precondition(PreconditionError),
+    Precondition(PreconditionError),
     /// The candidate violates ontology conformance.
-        Ontology(OntologyError),
+    Ontology(OntologyError),
     /// The candidate violates a semantic repository invariant.
-        Invariant(InvariantError),
+    Invariant(InvariantError),
     /// The application input contained a duplicate canonical property key.
-        DuplicatePropertyKey(String),
+    DuplicatePropertyKey(String),
     /// Multi-operation batch staging failed at index k.
-        BatchStagingFailed {
+    BatchStagingFailed {
         /// Failing operation index (0-indexed).
         index: usize,
         /// Description of the error.
@@ -165,17 +165,17 @@ pub enum ChangeError {
     /// The accepted repository head changed since this change was prepared
     /// (compare-and-swap conflict). The change's immutable objects remain
     /// stored but unreferenced; prepare against the new head and retry.
-        Conflict,
+    Conflict,
     /// A ref store failure during publication, other than a CAS conflict.
-        RefStore(RefStoreError),
+    RefStore(RefStoreError),
     /// A query or validation scan error.
-        Query(crate::repository::query::QueryError),
+    Query(crate::repository::query::QueryError),
     /// The prepared change is internally inconsistent at the publication
     /// boundary: its `ChangeRevision.result_state` does not match the prepared
     /// `state_id`. Construction (1.5) and persistence (1.6) guarantee these
     /// agree, so a violation here is an integrity/programming failure and the
     /// repository must not make such a Change authoritative.
-        PublicationStateMismatch {
+    PublicationStateMismatch {
         /// The prepared candidate SemanticState ObjectId (`state_id`).
         expected: ObjectId,
         /// The ObjectId the ChangeRevision claims as its result state.
@@ -3172,6 +3172,182 @@ pub fn publish_single_operation(
     Ok((op, outcome.published_change))
 }
 
+impl std::fmt::Display for PreconditionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ElementAlreadyExists(e0) => {
+                write!(f, "element {e0} already exists in the base state")
+            }
+            Self::ElementNotFound(e0) => write!(f, "element {e0} not found in the base state"),
+            Self::VersionMismatch {
+                element_id,
+                expected,
+                actual,
+                ..
+            } => write!(
+                f,
+                "element {element_id} is at version {actual}, but the operation expected {expected}"
+            ),
+            Self::ElementNotActive(e0) => {
+                write!(f, "element {e0} is not active and cannot be updated")
+            }
+            Self::EmptyUpdate => write!(f, "update contains no properties to change"),
+            Self::NoEffectiveChange => write!(
+                f,
+                "update produces no effective change (the new version is identical to the current version)"
+            ),
+            Self::RelationshipAlreadyExists(e0) => {
+                write!(f, "relationship {e0} already exists in the base state")
+            }
+            Self::DuplicateRelationshipTriple {
+                relationship_type,
+                source_element_id,
+                target_element_id,
+                ..
+            } => write!(
+                f,
+                "relationship of type '{relationship_type}' already exists between source element {source_element_id} and target element {target_element_id} in the base state"
+            ),
+            Self::RelationshipNotFound(e0) => {
+                write!(f, "relationship {e0} was not found in the base state")
+            }
+            Self::RelationshipVersionMismatch {
+                relationship_id,
+                expected,
+                actual,
+                ..
+            } => write!(
+                f,
+                "expected relationship version {expected} for relationship {relationship_id}, but found {actual} in the base state"
+            ),
+            Self::DraftNotFound => write!(
+                f,
+                "no open draft change transaction found at .kat/work/change/session.json"
+            ),
+            Self::EmptyDraftCommit => write!(
+                f,
+                "cannot commit a draft change transaction with zero staged operations"
+            ),
+            Self::RelationshipIdentityMismatch {
+                relationship_id,
+                version_relationship_id,
+                ..
+            } => write!(
+                f,
+                "relationship version object maps to relationship {version_relationship_id}, expected {relationship_id}"
+            ),
+            Self::NotAnArtifact(e0) => write!(
+                f,
+                "element {e0} is not an artifact element type ('kat.core/artifact')"
+            ),
+            Self::NoAccountabilityRelationships(e0) => write!(
+                f,
+                "artifact {e0} has no active direct accountability relationships ('represents', 'derived-from')"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PreconditionError {}
+
+impl std::fmt::Display for ChangeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ObjectStore(e0) => write!(f, "object store error: {e0}"),
+            Self::Decoding(e0) => write!(f, "decoding error: {e0}"),
+            Self::Encoding(e0) => write!(f, "encoding error: {e0}"),
+            Self::UnexpectedObjectKind {
+                expected, actual, ..
+            } => write!(f, "expected object kind {expected}, found {actual}"),
+            Self::PersistenceIdentityMismatch {
+                kind,
+                expected,
+                actual,
+                ..
+            } => write!(
+                f,
+                "persisted identity mismatch for {kind}: expected {expected}, actual {actual}"
+            ),
+            Self::Precondition(e0) => write!(f, "precondition violated: {e0}"),
+            Self::Ontology(e0) => write!(f, "ontology conformance error: {e0}"),
+            Self::Invariant(e0) => write!(f, "invariant violated: {e0}"),
+            Self::DuplicatePropertyKey(e0) => write!(f, "duplicate property key: {e0}"),
+            Self::BatchStagingFailed { index, cause, .. } => {
+                write!(f, "batch staging failed at index {index}: {cause}")
+            }
+            Self::Conflict => write!(
+                f,
+                "accepted repository state changed since this change was prepared; re-prepare against the new head and retry"
+            ),
+            Self::RefStore(e0) => write!(f, "ref store error: {e0}"),
+            Self::Query(e0) => write!(f, "query error: {e0}"),
+            Self::PublicationStateMismatch {
+                expected, actual, ..
+            } => write!(
+                f,
+                "cannot publish inconsistent change: result_state {actual} does not match prepared state {expected}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ChangeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ObjectStore(err) => Some(err),
+            Self::Decoding(err) => Some(err),
+            Self::Encoding(err) => Some(err),
+            Self::Precondition(err) => Some(err),
+            Self::Ontology(err) => Some(err),
+            Self::Invariant(err) => Some(err),
+            Self::RefStore(err) => Some(err),
+            Self::Query(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<ObjectStoreError> for ChangeError {
+    fn from(err: ObjectStoreError) -> Self {
+        Self::ObjectStore(err)
+    }
+}
+impl From<DecodingError> for ChangeError {
+    fn from(err: DecodingError) -> Self {
+        Self::Decoding(err)
+    }
+}
+impl From<CanonicalStructureError> for ChangeError {
+    fn from(err: CanonicalStructureError) -> Self {
+        Self::Encoding(err)
+    }
+}
+impl From<PreconditionError> for ChangeError {
+    fn from(err: PreconditionError) -> Self {
+        Self::Precondition(err)
+    }
+}
+impl From<OntologyError> for ChangeError {
+    fn from(err: OntologyError) -> Self {
+        Self::Ontology(err)
+    }
+}
+impl From<InvariantError> for ChangeError {
+    fn from(err: InvariantError) -> Self {
+        Self::Invariant(err)
+    }
+}
+impl From<RefStoreError> for ChangeError {
+    fn from(err: RefStoreError) -> Self {
+        Self::RefStore(err)
+    }
+}
+impl From<crate::repository::query::QueryError> for ChangeError {
+    fn from(err: crate::repository::query::QueryError) -> Self {
+        Self::Query(err)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3582,108 +3758,5 @@ mod tests {
         // Milestone 3 Invariant Verification: session.json on disk remains byte-for-byte identical to pre-batch
         let post_batch_bytes = std::fs::read(&session_path).unwrap();
         assert_eq!(pre_batch_bytes, post_batch_bytes);
-    }
-}
-
-impl std::fmt::Display for PreconditionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ElementAlreadyExists(_0) => write!(f, "element {_0} already exists in the base state"),
-            Self::ElementNotFound(_0) => write!(f, "element {_0} not found in the base state"),
-            Self::VersionMismatch { element_id, expected, actual, .. } => write!(f, "element {element_id} is at version {actual}, but the operation expected {expected}"),
-            Self::ElementNotActive(_0) => write!(f, "element {_0} is not active and cannot be updated"),
-            Self::EmptyUpdate => write!(f, "update contains no properties to change"),
-            Self::NoEffectiveChange => write!(f, "update produces no effective change (the new version is identical to the current version)"),
-            Self::RelationshipAlreadyExists(_0) => write!(f, "relationship {_0} already exists in the base state"),
-            Self::DuplicateRelationshipTriple { relationship_type, source_element_id, target_element_id, .. } => write!(f, "relationship of type '{relationship_type}' already exists between source element {source_element_id} and target element {target_element_id} in the base state"),
-            Self::RelationshipNotFound(_0) => write!(f, "relationship {_0} was not found in the base state"),
-            Self::RelationshipVersionMismatch { relationship_id, expected, actual, .. } => write!(f, "expected relationship version {expected} for relationship {relationship_id}, but found {actual} in the base state"),
-            Self::DraftNotFound => write!(f, "no open draft change transaction found at .kat/work/change/session.json"),
-            Self::EmptyDraftCommit => write!(f, "cannot commit a draft change transaction with zero staged operations"),
-            Self::RelationshipIdentityMismatch { relationship_id, version_relationship_id, .. } => write!(f, "relationship version object maps to relationship {version_relationship_id}, expected {relationship_id}"),
-            Self::NotAnArtifact(_0) => write!(f, "element {_0} is not an artifact element type ('kat.core/artifact')"),
-            Self::NoAccountabilityRelationships(_0) => write!(f, "artifact {_0} has no active direct accountability relationships ('represents', 'derived-from')"),
-        }
-    }
-}
-
-impl std::error::Error for PreconditionError {
-}
-
-impl std::fmt::Display for ChangeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ObjectStore(_0) => write!(f, "object store error: {_0}"),
-            Self::Decoding(_0) => write!(f, "decoding error: {_0}"),
-            Self::Encoding(_0) => write!(f, "encoding error: {_0}"),
-            Self::UnexpectedObjectKind { expected, actual, .. } => write!(f, "expected object kind {expected}, found {actual}"),
-            Self::PersistenceIdentityMismatch { kind, expected, actual, .. } => write!(f, "persisted identity mismatch for {kind}: expected {expected}, actual {actual}"),
-            Self::Precondition(_0) => write!(f, "precondition violated: {_0}"),
-            Self::Ontology(_0) => write!(f, "ontology conformance error: {_0}"),
-            Self::Invariant(_0) => write!(f, "invariant violated: {_0}"),
-            Self::DuplicatePropertyKey(_0) => write!(f, "duplicate property key: {_0}"),
-            Self::BatchStagingFailed { index, cause, .. } => write!(f, "batch staging failed at index {index}: {cause}"),
-            Self::Conflict => write!(f, "accepted repository state changed since this change was prepared; re-prepare against the new head and retry"),
-            Self::RefStore(_0) => write!(f, "ref store error: {_0}"),
-            Self::Query(_0) => write!(f, "query error: {_0}"),
-            Self::PublicationStateMismatch { expected, actual, .. } => write!(f, "cannot publish inconsistent change: result_state {actual} does not match prepared state {expected}"),
-        }
-    }
-}
-
-impl std::error::Error for ChangeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::ObjectStore(err) => Some(err),
-            Self::Decoding(err) => Some(err),
-            Self::Encoding(err) => Some(err),
-            Self::Precondition(err) => Some(err),
-            Self::Ontology(err) => Some(err),
-            Self::Invariant(err) => Some(err),
-            Self::RefStore(err) => Some(err),
-            Self::Query(err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl From<ObjectStoreError> for ChangeError {
-    fn from(err: ObjectStoreError) -> Self {
-        Self::ObjectStore(err)
-    }
-}
-impl From<DecodingError> for ChangeError {
-    fn from(err: DecodingError) -> Self {
-        Self::Decoding(err)
-    }
-}
-impl From<CanonicalStructureError> for ChangeError {
-    fn from(err: CanonicalStructureError) -> Self {
-        Self::Encoding(err)
-    }
-}
-impl From<PreconditionError> for ChangeError {
-    fn from(err: PreconditionError) -> Self {
-        Self::Precondition(err)
-    }
-}
-impl From<OntologyError> for ChangeError {
-    fn from(err: OntologyError) -> Self {
-        Self::Ontology(err)
-    }
-}
-impl From<InvariantError> for ChangeError {
-    fn from(err: InvariantError) -> Self {
-        Self::Invariant(err)
-    }
-}
-impl From<RefStoreError> for ChangeError {
-    fn from(err: RefStoreError) -> Self {
-        Self::RefStore(err)
-    }
-}
-impl From<crate::repository::query::QueryError> for ChangeError {
-    fn from(err: crate::repository::query::QueryError) -> Self {
-        Self::Query(err)
     }
 }
