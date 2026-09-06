@@ -59,6 +59,22 @@ impl Repository {
     pub fn ref_store(&self) -> &FileRefStore {
         &self.refs
     }
+
+    /// Loads a RepositoryRevision by its canonical identity.
+    pub fn read_revision(
+        &self,
+        id: crate::domain::identity::RepositoryRevisionId,
+    ) -> Result<crate::domain::revision::RepositoryRevision, RepositoryError> {
+        let obj = load_typed(
+            &self.store,
+            id.as_object_id(),
+            crate::encoding::object::ObjectKind::RepositoryRevision,
+        )?;
+        match obj.payload {
+            crate::encoding::object::CanonicalPayload::RepositoryRevision(r) => Ok(r),
+            _ => unreachable!("kind verified by load_typed"),
+        }
+    }
 }
 
 /// Opens the KAT repository rooted at `path` (`.kat/` inside it), verifying

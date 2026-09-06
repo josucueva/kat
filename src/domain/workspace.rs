@@ -1,7 +1,28 @@
 //! Domain representations for physical workspace semantics.
 
-use crate::domain::identity::{MaterializationId, WorkspaceSnapshotId};
+use crate::domain::identity::{MaterializationId, RepositoryRevisionId, WorkspaceSnapshotId};
 use std::path::{Path, PathBuf};
+
+/// A unique identity for a local workspace.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceId(pub String);
+
+/// The overall combined divergence status of a workspace.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkspaceStatus {
+    Clean,
+    SemanticModified,
+    PhysicalModified,
+    CombinedModified,
+    BackendMismatch(String),
+}
+
+/// The core domain entity for a workspace, representing its immutable base revision.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Workspace {
+    pub id: WorkspaceId,
+    pub base_revision: RepositoryRevisionId,
+}
 
 /// Errors originating from workspace backend operations.
 #[derive(Debug, thiserror::Error)]

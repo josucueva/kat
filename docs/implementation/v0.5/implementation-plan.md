@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 3 (GitWorkspaceBackend) Complete.
+Phase 4 (Workspace Integration) Complete.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -301,16 +301,16 @@ Manage local workspace lifecycle and detect tracked physical changes.
 - Ordinary file edits are not backend mismatch.
 - Untracked files are not silently included.
 ### Implementation work
-- Implement `Workspace`: identity, `base_repository_revision`, semantic draft state, physical backend association.
-- Handle behaviors: open workspace, reload workspace, clean workspace.
-- Detect semantic-only modified, physical-only modified, combined modified.
-- Guarantee base never silently moves.
+- [x] Implement `Workspace`: identity, `base_repository_revision`, semantic draft state, physical backend association.
+- [x] Handle behaviors: open workspace, reload workspace, clean workspace.
+- [x] Detect semantic-only modified, physical-only modified, combined modified.
+- [x] Guarantee base never silently moves.
 ### Tests
-- persistence/restart tests.
-- tracked modification detected.
-- untracked/ignored file excluded.
-- unchanged workspace reuses snapshot.
-- direct backend movement classified separately.
+- [x] persistence/restart tests.
+- [x] tracked modification detected.
+- [x] untracked/ignored file excluded.
+- [x] unchanged workspace reuses snapshot.
+- [x] direct backend movement classified separately.
 ### Regression checks
 - `cargo test --workspace`, `cargo fmt --check`, `cargo clippy ... -D warnings`.
 - Existing canonical vectors unchanged.
