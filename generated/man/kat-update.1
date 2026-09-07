@@ -4,7 +4,7 @@
 .SH NAME
 update \- Update an active knowledge element (prefer kat author for normal authoring)
 .SH SYNOPSIS
-\fBupdate\fR [\fB\-\-title\fR] [\fB\-\-description\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_ID\fR> 
+\fBupdate\fR [\fB\-\-title\fR] [\fB\-\-description\fR] [\fB\-\-locator\fR] [\fB\-\-clear\-locator\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_ID\fR> 
 .SH DESCRIPTION
 Update an active knowledge element (prefer kat author for normal authoring)
 .SH OPTIONS
@@ -18,6 +18,12 @@ New title for the element
 .TP
 \fB\-\-description\fR \fI<DESCRIPTION>\fR
 New description for the element
+.TP
+\fB\-\-locator\fR \fI<LOCATOR>\fR
+New physical locator path
+.TP
+\fB\-\-clear\-locator\fR
+Clear the physical locator path
 .TP
 <\fIELEMENT_ID\fR>
 Element ID (UUID) to update

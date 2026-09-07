@@ -809,7 +809,7 @@ fn v043_check_porcelain_acceptance_tests() {
     assert_eq!(json_val["success"], true);
     assert_eq!(json_val["data"]["repository_clean"], true);
     assert!(
-        json_val["data"]["artifact_accountability"]["repository_summary"]["stale"]
+        json_val["data"]["artifact_accountability"]["repository_summary"]["semantic_stale"]
             .as_u64()
             .unwrap()
             >= 1

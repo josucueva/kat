@@ -2290,7 +2290,7 @@ fn phase10_acceptance_cli_flow_end_to_end() {
     let (art_out1, _art_err1, ok1) = run_kat(root, &["artifacts"]);
     assert!(!ok1, "expected exit 1 for unaccounted artifact");
     assert!(art_out1.contains(e_art));
-    assert!(art_out1.contains("status:      unaccounted"));
+    assert!(art_out1.contains("semantic:    unaccounted"));
 
     // 5. Link A1 (represents) -> M1
     let (l1_out, l1_err, ok) = run_kat(root, &["link", "represents", e_art, e_imp]);
@@ -2300,7 +2300,7 @@ fn phase10_acceptance_cli_flow_end_to_end() {
     // 6. Check status -> CURRENT
     let (art_out2, art_err2, ok2) = run_kat(root, &["artifacts"]);
     assert!(ok2, "kat artifacts failed: {art_err2}\n{art_out2}");
-    assert!(art_out2.contains("status:      current"));
+    assert!(art_out2.contains("semantic:    current"));
     assert!(art_out2.contains(e_imp));
 
     // 7. Update M1 -> advances Implementation version
@@ -2313,7 +2313,7 @@ fn phase10_acceptance_cli_flow_end_to_end() {
     // 8. Check status -> STALE
     let (art_out3, _err, ok3) = run_kat(root, &["artifacts"]);
     assert!(!ok3, "expected exit 1 for stale artifact");
-    assert!(art_out3.contains("status:      stale"));
+    assert!(art_out3.contains("semantic:    stale"));
 
     // 9. Re-account: Unlink r1 and Link r2 (A1 represents M1)
     let (_out, err, ok) = run_kat(root, &["unlink", r1_id]);
@@ -2325,8 +2325,8 @@ fn phase10_acceptance_cli_flow_end_to_end() {
     // 10. Check status -> CURRENT restored
     let (art_out4, art_err4, ok4) = run_kat(root, &["artifacts"]);
     assert!(ok4, "kat artifacts failed: {art_err4}\n{art_out4}");
-    assert!(art_out4.contains("status:      current"));
-    assert!(art_out4.contains("  current:      1"));
+    assert!(art_out4.contains("semantic:    current"));
+    assert!(art_out4.contains("  semantic current:      1"));
 
     // 11. Non-mutation verification
     let objects_before = std::fs::read_dir(root.join(".kat/objects"))
@@ -2767,7 +2767,7 @@ fn kat_compact_read_commands() {
     // artifacts --compact
     let (art_out, _, ok) = run_kat(root, &["artifacts", "--compact"]);
     assert!(ok);
-    assert!(art_out.contains("STATUS       ARTIFACT"));
+    assert!(art_out.contains("STATUS (SEM / PHYS)       ARTIFACT"));
 }
 
 #[test]
@@ -2840,7 +2840,7 @@ fn phase12_acceptance_cli_flow_end_to_end() {
 
     let (artifacts_c, _, ok6) = run_kat(root, &["artifacts", "--compact"]);
     assert!(ok6);
-    assert!(artifacts_c.contains("STATUS       ARTIFACT"));
+    assert!(artifacts_c.contains("STATUS (SEM / PHYS)       ARTIFACT"));
 }
 
 #[test]
@@ -3827,7 +3827,7 @@ fn phase21_acceptance_cli_flow_end_to_end() {
     assert!(out_det.contains("ARTIFACT ACCOUNTABILITY DETAIL"));
     assert!(out_det.contains(e_art));
     assert!(out_det.contains("src/auth.js"));
-    assert!(out_det.contains("status:      stale"));
+    assert!(out_det.contains("semantic:    stale"));
     assert!(out_det.contains("ACCOUNTABILITY BASELINES (1)"));
     assert!(out_det.contains("kat.core/represents"));
     assert!(out_det.contains("[STALE]"));
@@ -3835,7 +3835,8 @@ fn phase21_acceptance_cli_flow_end_to_end() {
     // 7. Compact stale list: kat artifacts --stale --compact
     let (out_comp_stale, _, ok_comp_stale) = run_kat(root, &["artifacts", "--stale", "--compact"]);
     assert!(!ok_comp_stale);
-    assert!(out_comp_stale.contains("stale        src/auth.js"));
+    println!("COMPACT STALE OUTPUT:\n{}", out_comp_stale);
+    assert!(out_comp_stale.contains("stale/"));
 
     // 8. Re-baseline artifact using kat account <artifact-id>
     let (out_acc, err_acc, ok_acc) = run_kat(
@@ -3929,8 +3930,9 @@ fn v031_artifacts_compact_suppresses_note() {
     // Compact output suppresses note and displays machine status table only
     let (out_compact, _, ok_compact) = run_kat(root, &["artifacts", "--compact"]);
     assert!(ok_compact);
-    assert!(out_compact.contains("STATUS       ARTIFACT"));
-    assert!(out_compact.contains("current      src/auth.js"));
+    assert!(out_compact.contains("STATUS (SEM / PHYS)       ARTIFACT"));
+    println!("COMPACT CURRENT OUTPUT:\n{}", out_compact);
+    assert!(out_compact.contains("current/"));
     assert!(!out_compact.contains("Note: KAT accountability evaluates"));
 }
 

@@ -11,6 +11,8 @@ use std::collections::HashMap;
 
 use crate::domain::identity::ElementId;
 use crate::domain::property::PropertyValue;
+use crate::domain::property::{PROPERTY_ARTIFACT_LOCATOR, PROPERTY_ARTIFACT_MATERIALIZATION_ID};
+use crate::domain::workspace::MaterializationResolution;
 use crate::repository::change::{
     AccountArtifactInput, ChangeError, CreateElementInput, DeprecateElementInput, LinkElementInput,
     StagedOperationInput, SupersedeElementInput, UnlinkElementInput, UpdateElementInput,
@@ -21,6 +23,7 @@ use crate::repository::resolve::{resolve_element_in_draft_session, resolve_relat
 use crate::repository::session::{
     begin_draft_session, has_draft_session, read_draft_session, write_draft_session_atomic,
 };
+use crate::repository::workspace::fs_resolve_working_materialization;
 
 /// Declarative claim supported by the authoring compiler.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -40,6 +43,9 @@ pub enum AuthorClaim {
         /// Optional workflow reference handle (e.g. `@req-auth`).
         #[serde(default)]
         handle: Option<String>,
+        /// Optional physical locator path (e.g. `src/main.rs`).
+        #[serde(default)]
+        locator: Option<String>,
     },
     /// Link two knowledge elements via relationship.
     #[serde(alias = "LinkElement")]
@@ -77,6 +83,12 @@ pub enum AuthorClaim {
         /// New description property value.
         #[serde(default)]
         description: Option<String>,
+        /// New physical locator path.
+        #[serde(default)]
+        locator: Option<String>,
+        /// Clear the physical locator path.
+        #[serde(default)]
+        clear_locator: Option<bool>,
     },
     /// Deprecate an active element.
     #[serde(alias = "DeprecateElement")]
@@ -109,6 +121,7 @@ pub enum AuthorClaimLegacy {
         title: String,
         description: Option<String>,
         handle: Option<String>,
+        locator: Option<String>,
     },
     LinkElement {
         source_ref: String,
@@ -127,6 +140,8 @@ pub enum AuthorClaimLegacy {
         element_ref: String,
         title: Option<String>,
         description: Option<String>,
+        locator: Option<String>,
+        clear_locator: Option<bool>,
     },
     DeprecateElement {
         element_ref: String,
@@ -148,11 +163,13 @@ impl From<AuthorClaimLegacy> for AuthorClaim {
                 title,
                 description,
                 handle,
+                locator,
             } => AuthorClaim::CreateElement {
                 type_id,
                 title,
                 description,
                 handle,
+                locator,
             },
             AuthorClaimLegacy::LinkElement {
                 source_ref,
@@ -177,10 +194,14 @@ impl From<AuthorClaimLegacy> for AuthorClaim {
                 element_ref,
                 title,
                 description,
+                locator,
+                clear_locator,
             } => AuthorClaim::UpdateElement {
                 element_ref,
                 title,
                 description,
+                locator,
+                clear_locator,
             },
             AuthorClaimLegacy::DeprecateElement { element_ref } => {
                 AuthorClaim::DeprecateElement { element_ref }
@@ -259,6 +280,7 @@ pub fn compile_and_stage_claims(
                 title,
                 description,
                 handle,
+                locator,
             } => {
                 let element_id = ElementId::new();
                 let handle_str = match handle {
@@ -296,6 +318,29 @@ pub fn compile_and_stage_claims(
                     vec![("title".to_string(), PropertyValue::Text(title.clone()))];
                 if let Some(desc) = description {
                     properties.push(("description".to_string(), PropertyValue::Text(desc.clone())));
+                }
+                if let Some(loc) = locator.as_ref() {
+                    let mat_id = match fs_resolve_working_materialization(
+                        repository.root_dir(),
+                        std::path::Path::new(loc),
+                    ) {
+                        Ok(MaterializationResolution::File(id))
+                        | Ok(MaterializationResolution::Directory(id))
+                        | Ok(MaterializationResolution::Symlink(id)) => id,
+                        _ => return Err(ChangeError::Precondition(
+                            crate::repository::change::PreconditionError::MissingMaterialization(
+                                loc.clone(),
+                            ),
+                        )),
+                    };
+                    properties.push((
+                        PROPERTY_ARTIFACT_LOCATOR.to_string(),
+                        PropertyValue::Text(loc.clone()),
+                    ));
+                    properties.push((
+                        PROPERTY_ARTIFACT_MATERIALIZATION_ID.to_string(),
+                        PropertyValue::Bytes(mat_id.into_bytes().to_vec()),
+                    ));
                 }
 
                 staged_inputs.push(StagedOperationInput::CreateElement(CreateElementInput {
@@ -357,7 +402,7 @@ pub fn compile_and_stage_claims(
                 }));
             }
             AuthorClaim::AccountArtifact {
-                artifact_path: _,
+                artifact_path,
                 element_ref,
             } => {
                 let artifact_id =
@@ -367,6 +412,49 @@ pub fn compile_and_stage_claims(
                         ))
                     })?;
 
+                if !artifact_path.is_empty() {
+                    let elem_entry = session
+                        .working_state
+                        .elements
+                        .iter()
+                        .find(|e| e.element_id == artifact_id)
+                        .ok_or_else(|| {
+                            ChangeError::Precondition(
+                                crate::repository::change::PreconditionError::ElementNotFound(
+                                    artifact_id,
+                                ),
+                            )
+                        })?;
+                    let mat_id = match fs_resolve_working_materialization(
+                        repository.root_dir(),
+                        std::path::Path::new(&artifact_path),
+                    ) {
+                        Ok(MaterializationResolution::File(id))
+                        | Ok(MaterializationResolution::Directory(id))
+                        | Ok(MaterializationResolution::Symlink(id)) => id,
+                        _ => return Err(ChangeError::Precondition(
+                            crate::repository::change::PreconditionError::MissingMaterialization(
+                                artifact_path.clone(),
+                            ),
+                        )),
+                    };
+                    let properties = vec![
+                        (
+                            PROPERTY_ARTIFACT_LOCATOR.to_string(),
+                            PropertyValue::Text(artifact_path.clone()),
+                        ),
+                        (
+                            PROPERTY_ARTIFACT_MATERIALIZATION_ID.to_string(),
+                            PropertyValue::Bytes(mat_id.into_bytes().to_vec()),
+                        ),
+                    ];
+                    staged_inputs.push(StagedOperationInput::UpdateElement(UpdateElementInput {
+                        element_id: artifact_id,
+                        expected_version: elem_entry.version,
+                        properties,
+                    }));
+                }
+
                 staged_inputs.push(StagedOperationInput::AccountArtifact(
                     AccountArtifactInput { artifact_id },
                 ));
@@ -375,6 +463,8 @@ pub fn compile_and_stage_claims(
                 element_ref,
                 title,
                 description,
+                locator,
+                clear_locator,
             } => {
                 let element_id =
                     resolve_element_in_draft_session(&session, element_ref).map_err(|e| {
@@ -401,6 +491,36 @@ pub fn compile_and_stage_claims(
                 }
                 if let Some(d) = description {
                     properties.push(("description".to_string(), PropertyValue::Text(d.clone())));
+                }
+                if let Some(loc) = locator.as_ref() {
+                    let mat_id = match fs_resolve_working_materialization(
+                        repository.root_dir(),
+                        std::path::Path::new(loc),
+                    ) {
+                        Ok(MaterializationResolution::File(id))
+                        | Ok(MaterializationResolution::Directory(id))
+                        | Ok(MaterializationResolution::Symlink(id)) => id,
+                        _ => return Err(ChangeError::Precondition(
+                            crate::repository::change::PreconditionError::MissingMaterialization(
+                                loc.clone(),
+                            ),
+                        )),
+                    };
+                    properties.push((
+                        PROPERTY_ARTIFACT_LOCATOR.to_string(),
+                        PropertyValue::Text(loc.clone()),
+                    ));
+                    properties.push((
+                        PROPERTY_ARTIFACT_MATERIALIZATION_ID.to_string(),
+                        PropertyValue::Bytes(mat_id.into_bytes().to_vec()),
+                    ));
+                }
+                if let Some(true) = clear_locator {
+                    properties.push((PROPERTY_ARTIFACT_LOCATOR.to_string(), PropertyValue::Null));
+                    properties.push((
+                        PROPERTY_ARTIFACT_MATERIALIZATION_ID.to_string(),
+                        PropertyValue::Null,
+                    ));
                 }
 
                 staged_inputs.push(StagedOperationInput::UpdateElement(UpdateElementInput {
@@ -528,12 +648,14 @@ mod tests {
                 title: "Auth Req".to_string(),
                 description: Some("Must support JWT".to_string()),
                 handle: Some("@req-auth".to_string()),
+                locator: None,
             },
             AuthorClaim::CreateElement {
                 type_id: "kat.core/implementation".to_string(),
                 title: "Auth Module".to_string(),
                 description: None,
                 handle: Some("@imp-auth".to_string()),
+                locator: None,
             },
             AuthorClaim::LinkElement {
                 source_ref: "@imp-auth".to_string(),

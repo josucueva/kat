@@ -254,6 +254,65 @@ impl WorkspaceBackend for FakeWorkspaceBackend {
         }
     }
 
+    fn resolve_working_materialization(
+        &self,
+        path: &Path,
+    ) -> Result<MaterializationResolution, WorkspaceBackendError> {
+        let tree = self.working_tree.read().unwrap();
+
+        // Simple check for exact file match
+        if let Some(entry) = tree.get(path) {
+            return Ok(match entry {
+                FakeEntry::File {
+                    content,
+                    executable,
+                } => MaterializationResolution::File(
+                    crate::encoding::hash::hash_file_materialization(*executable, content),
+                ),
+                FakeEntry::Symlink { target } => MaterializationResolution::Symlink(
+                    crate::encoding::hash::hash_symlink_materialization(target.as_bytes()),
+                ),
+            });
+        }
+
+        // Check if it's a directory (i.e. if any files exist under this path prefix)
+        let mut is_dir = false;
+        let mut children = Vec::new();
+
+        for (p, bytes) in tree.iter() {
+            if p.starts_with(path) && p != path {
+                is_dir = true;
+                let (child_mat_id, file_type) = match bytes {
+                    FakeEntry::File {
+                        content,
+                        executable,
+                    } => (
+                        hash_file_materialization(*executable, content),
+                        if *executable { b'X' } else { b'F' },
+                    ),
+                    FakeEntry::Symlink { target } => (
+                        crate::encoding::hash::hash_symlink_materialization(target.as_bytes()),
+                        b'S',
+                    ),
+                };
+                let p_str = p
+                    .to_str()
+                    .ok_or_else(|| WorkspaceBackendError::UnsupportedPathEncoding(p.clone()))?
+                    .to_string();
+                children.push((p_str, file_type, child_mat_id));
+            }
+        }
+
+        if is_dir {
+            children.sort_by(|a, b| a.0.cmp(&b.0));
+            Ok(MaterializationResolution::Directory(
+                hash_directory_materialization(&children),
+            ))
+        } else {
+            Ok(MaterializationResolution::NotFound)
+        }
+    }
+
     fn verify_snapshot_integrity(
         &self,
         id: &WorkspaceSnapshotId,

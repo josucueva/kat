@@ -111,9 +111,12 @@ complete -c kat -n "__fish_kat_using_subcommand validate" -l json -d 'Output str
 complete -c kat -n "__fish_kat_using_subcommand validate" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c kat -n "__fish_kat_using_subcommand create" -l title -d 'Title of the knowledge element' -r
 complete -c kat -n "__fish_kat_using_subcommand create" -l description -d 'Optional detailed description' -r
+complete -c kat -n "__fish_kat_using_subcommand create" -l locator -d 'Optional physical locator path' -r
 complete -c kat -n "__fish_kat_using_subcommand create" -s h -l help -d 'Print help'
 complete -c kat -n "__fish_kat_using_subcommand update" -l title -d 'New title for the element' -r
 complete -c kat -n "__fish_kat_using_subcommand update" -l description -d 'New description for the element' -r
+complete -c kat -n "__fish_kat_using_subcommand update" -l locator -d 'New physical locator path' -r
+complete -c kat -n "__fish_kat_using_subcommand update" -l clear-locator -d 'Clear the physical locator path'
 complete -c kat -n "__fish_kat_using_subcommand update" -s h -l help -d 'Print help'
 complete -c kat -n "__fish_kat_using_subcommand deprecate" -s h -l help -d 'Print help'
 complete -c kat -n "__fish_kat_using_subcommand supersede" -l title -d 'Title for the replacement element' -r

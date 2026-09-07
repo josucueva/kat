@@ -207,6 +207,7 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--title=[Title of the knowledge element]:TITLE:_default' \
 '--description=[Optional detailed description]:DESCRIPTION:_default' \
+'--locator=[Optional physical locator path]:LOCATOR:_default' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':element_type -- Type of element to create (e.g. requirement, constraint, design-decision, implementation, artifact):_default' \
@@ -216,6 +217,8 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--title=[New title for the element]:TITLE:_default' \
 '--description=[New description for the element]:DESCRIPTION:_default' \
+'--locator=[New physical locator path]:LOCATOR:_default' \
+'--clear-locator[Clear the physical locator path]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':element_id -- Element ID (UUID) to update:_default' \

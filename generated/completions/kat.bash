@@ -506,7 +506,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__create)
-            opts="-h --title --description --help"
+            opts="-h --title --description --locator --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -517,6 +517,10 @@ _kat() {
                     return 0
                     ;;
                 --description)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --locator)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -1212,7 +1216,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__update)
-            opts="-h --title --description --help"
+            opts="-h --title --description --locator --clear-locator --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1223,6 +1227,10 @@ _kat() {
                     return 0
                     ;;
                 --description)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --locator)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

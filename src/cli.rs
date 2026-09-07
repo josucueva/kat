@@ -395,6 +395,10 @@ pub enum Command {
         /// Optional detailed description
         #[arg(long)]
         description: Option<String>,
+
+        /// Optional physical locator path
+        #[arg(long)]
+        locator: Option<String>,
     },
 
     /// Update an active knowledge element (prefer kat author for normal authoring)
@@ -410,6 +414,14 @@ pub enum Command {
         /// New description for the element
         #[arg(long)]
         description: Option<String>,
+
+        /// New physical locator path
+        #[arg(long)]
+        locator: Option<String>,
+
+        /// Clear the physical locator path
+        #[arg(long)]
+        clear_locator: bool,
     },
 
     /// Deprecate an active knowledge element (prefer kat author for normal authoring)

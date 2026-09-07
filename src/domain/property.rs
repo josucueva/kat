@@ -6,6 +6,10 @@ use uuid::Uuid;
 
 /// A canonical property value.
 ///
+/// Constants for well-known artifact properties:
+pub const PROPERTY_ARTIFACT_LOCATOR: &str = "kat.core/locator";
+pub const PROPERTY_ARTIFACT_MATERIALIZATION_ID: &str = "kat.core/materialization-id";
+
 /// Exactly the variants supported by the CDDL; floating-point values are
 /// intentionally not representable in v0.1. Maps are represented as ordered
 /// `(key, value)` pairs so that malformed input such as duplicate or unsorted

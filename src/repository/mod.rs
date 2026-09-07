@@ -60,11 +60,11 @@ pub use change::{
 };
 pub use open::{Repository, open_repository};
 pub use query::{
-    ArtifactAccountability, ArtifactAccountabilityReport, ArtifactAccountabilityStatus,
-    ArtifactAccountabilitySummary, ArtifactBaseline, ArtifactFilter, CandidateEffectSummary,
-    DraftSessionView, ElementTypeSummary, ElementTypeView, ElementView, HistoryEntry, ImpactPath,
-    ImpactResult, ImpactStep, ImpactedElement, ListFilter, OntologySummary, OntologyTypeView,
-    QueryError, RelationshipCapability, RelationshipNeighborhood, RelationshipTypeSummary,
+    ArtifactAccountability, ArtifactAccountabilityReport, ArtifactAccountabilitySummary,
+    ArtifactBaseline, ArtifactFilter, CandidateEffectSummary, DraftSessionView, ElementTypeSummary,
+    ElementTypeView, ElementView, HistoryEntry, ImpactPath, ImpactResult, ImpactStep,
+    ImpactedElement, ListFilter, OntologySummary, OntologyTypeView, QueryError,
+    RelationshipCapability, RelationshipNeighborhood, RelationshipTypeSummary,
     RelationshipTypeView, RelationshipView, StagedOperationDetail, TracePath, TraceResult,
     TraceStep, TraceTreeEdge, TraceTreeNode, TraversalDirection, active_ontology,
     analyze_artifact_accountability, analyze_artifact_accountability_filtered, analyze_impact,

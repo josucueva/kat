@@ -40,7 +40,7 @@ use kat::repository::init::init_repository;
 use kat::repository::object_store::ObjectStoreError;
 use kat::repository::open::open_repository;
 use kat::repository::query::{
-    ArtifactAccountabilityStatus, ListFilter, QueryError, TraversalDirection,
+    ListFilter, QueryError, TraversalDirection,
     analyze_artifact_accountability, analyze_impact, history, list_elements, repository_status,
     show_element, trace_origin,
 };
@@ -1779,7 +1779,7 @@ fn accountability_no_artifacts_returns_empty_report() {
     init_repository(root).unwrap();
 
     let repo = open_repository(root).unwrap();
-    let report = analyze_artifact_accountability(&repo).unwrap();
+    let report = analyze_artifact_accountability(&repo, None).unwrap();
     assert!(report.artifacts.is_empty());
 }
 
@@ -1822,12 +1822,12 @@ fn accountability_unaccounted_artifact_status() {
     .unwrap();
 
     let reopened = open_repository(root).unwrap();
-    let report = analyze_artifact_accountability(&reopened).unwrap();
+    let report = analyze_artifact_accountability(&reopened, None).unwrap();
     assert_eq!(report.artifacts.len(), 1);
     assert_eq!(report.artifacts[0].artifact_element_id, e_art);
     assert_eq!(
-        report.artifacts[0].status,
-        ArtifactAccountabilityStatus::Unaccounted
+        report.artifacts[0].semantic,
+        kat::repository::query::SemanticAccountability::Unaccounted
     );
     assert!(report.artifacts[0].baselines.is_empty());
 }
@@ -1942,11 +1942,11 @@ fn accountability_current_and_stale_and_relink_lifecycle() {
 
     // Verify CURRENT status
     let repo = open_repository(root).unwrap();
-    let report1 = analyze_artifact_accountability(&repo).unwrap();
+    let report1 = analyze_artifact_accountability(&repo, None).unwrap();
     assert_eq!(report1.artifacts.len(), 1);
     assert_eq!(
-        report1.artifacts[0].status,
-        ArtifactAccountabilityStatus::Current
+        report1.artifacts[0].semantic,
+        kat::repository::query::SemanticAccountability::Current
     );
     assert_eq!(report1.artifacts[0].baselines.len(), 1);
     assert!(!report1.artifacts[0].baselines[0].is_stale);
@@ -1988,11 +1988,11 @@ fn accountability_current_and_stale_and_relink_lifecycle() {
 
     // Verify STALE status
     let repo = open_repository(root).unwrap();
-    let report2 = analyze_artifact_accountability(&repo).unwrap();
+    let report2 = analyze_artifact_accountability(&repo, None).unwrap();
     assert_eq!(report2.artifacts.len(), 1);
     assert_eq!(
-        report2.artifacts[0].status,
-        ArtifactAccountabilityStatus::Stale
+        report2.artifacts[0].semantic,
+        kat::repository::query::SemanticAccountability::Stale
     );
     assert_eq!(report2.artifacts[0].baselines.len(), 1);
     assert!(report2.artifacts[0].baselines[0].is_stale);
@@ -2077,11 +2077,11 @@ fn accountability_current_and_stale_and_relink_lifecycle() {
 
     // Verify CURRENT status restored after re-link
     let repo = open_repository(root).unwrap();
-    let report3 = analyze_artifact_accountability(&repo).unwrap();
+    let report3 = analyze_artifact_accountability(&repo, None).unwrap();
     assert_eq!(report3.artifacts.len(), 1);
     assert_eq!(
-        report3.artifacts[0].status,
-        ArtifactAccountabilityStatus::Current
+        report3.artifacts[0].semantic,
+        kat::repository::query::SemanticAccountability::Current
     );
     assert_eq!(report3.artifacts[0].baselines.len(), 1);
     assert!(!report3.artifacts[0].baselines[0].is_stale);
@@ -2098,7 +2098,7 @@ fn accountability_does_not_mutate_repository() {
     let refs_before = fs::read_to_string(kat_dir(root).join("refs").join("accepted")).unwrap();
 
     let repo = open_repository(root).unwrap();
-    analyze_artifact_accountability(&repo).unwrap();
+    analyze_artifact_accountability(&repo, None).unwrap();
 
     assert_eq!(object_ids(root), objects_before);
     assert_eq!(
@@ -2217,10 +2217,10 @@ fn accountability_stale_when_upstream_element_deprecated_or_superseded() {
 
     // Verify CURRENT
     let repo = open_repository(root).unwrap();
-    let report1 = analyze_artifact_accountability(&repo).unwrap();
+    let report1 = analyze_artifact_accountability(&repo, None).unwrap();
     assert_eq!(
-        report1.artifacts[0].status,
-        ArtifactAccountabilityStatus::Current
+        report1.artifacts[0].semantic,
+        kat::repository::query::SemanticAccountability::Current
     );
 
     // 4. Deprecate D1
@@ -2258,11 +2258,11 @@ fn accountability_stale_when_upstream_element_deprecated_or_superseded() {
 
     // Verify STALE due to upstream element deprecation
     let repo = open_repository(root).unwrap();
-    let report2 = analyze_artifact_accountability(&repo).unwrap();
+    let report2 = analyze_artifact_accountability(&repo, None).unwrap();
     assert_eq!(report2.artifacts.len(), 1);
     assert_eq!(
-        report2.artifacts[0].status,
-        ArtifactAccountabilityStatus::Stale
+        report2.artifacts[0].semantic,
+        kat::repository::query::SemanticAccountability::Stale
     );
     assert!(report2.artifacts[0].baselines[0].is_stale);
 }
@@ -2289,9 +2289,9 @@ fn status_on_fresh_repository_returns_zero_counts_and_no_latest_change() {
     assert_eq!(status.consistency.violations, 0);
     assert_eq!(status.consistency.unverified_constraints, 0);
 
-    assert_eq!(status.accountability.current, 0);
-    assert_eq!(status.accountability.stale, 0);
-    assert_eq!(status.accountability.unaccounted, 0);
+    assert_eq!(status.accountability.semantic_current, 0);
+    assert_eq!(status.accountability.semantic_stale, 0);
+    assert_eq!(status.accountability.semantic_unaccounted, 0);
 
     assert!(status.change_id.is_none());
     assert!(status.latest_change.is_none());
@@ -3155,6 +3155,7 @@ fn accountability_filtered_stale_only_and_target_id() {
     // 1. Clean repository: empty report
     let rep_all = kat::repository::analyze_artifact_accountability_filtered(
         &repo,
+        None,
         kat::repository::ArtifactFilter::default(),
     )
     .unwrap();
@@ -3162,6 +3163,7 @@ fn accountability_filtered_stale_only_and_target_id() {
 
     let rep_stale = kat::repository::analyze_artifact_accountability_filtered(
         &repo,
+        None,
         kat::repository::ArtifactFilter {
             stale_only: true,
             target_artifact_id: None,
@@ -3291,6 +3293,7 @@ fn accountability_filtered_preserves_repository_summary() {
     let repo_read = open_repository(root).unwrap();
     let rep_stale = kat::repository::analyze_artifact_accountability_filtered(
         &repo_read,
+        None,
         kat::repository::ArtifactFilter {
             stale_only: true,
             target_artifact_id: None,
@@ -3302,8 +3305,8 @@ fn accountability_filtered_preserves_repository_summary() {
     assert_eq!(rep_stale.artifacts.len(), 2);
     // Repository summary totals remain repository-wide (total: 2, stale: 2)
     assert_eq!(rep_stale.repository_summary.total, 2);
-    assert_eq!(rep_stale.repository_summary.stale, 2);
-    assert_eq!(rep_stale.repository_summary.current, 0);
+    assert_eq!(rep_stale.repository_summary.semantic_stale, 2);
+    assert_eq!(rep_stale.repository_summary.semantic_current, 0);
 }
 
 #[test]

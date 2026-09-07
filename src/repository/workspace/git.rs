@@ -859,6 +859,13 @@ impl WorkspaceBackend for GitWorkspaceBackend {
         }
     }
 
+    fn resolve_working_materialization(
+        &self,
+        path: &Path,
+    ) -> Result<MaterializationResolution, WorkspaceBackendError> {
+        crate::repository::workspace::fs_resolve_working_materialization(&self._project_root, path)
+    }
+
     fn verify_snapshot_integrity(
         &self,
         id: &WorkspaceSnapshotId,

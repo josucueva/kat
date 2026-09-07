@@ -238,15 +238,39 @@ pub fn impact_propagation_direction(relationship_type_id: &str) -> Option<Traver
     }
 }
 
-/// Status of an active Artifact element's alignment with upstream authoritative knowledge.
+use crate::domain::revision::RepositoryRevision;
+use crate::domain::workspace::{Workspace, WorkspaceBackend};
+
+/// Execution context for resolving physical materializations during artifact accountability.
+pub enum AccountabilityContext<'a> {
+    /// Evaluate against the active mutable workspace physical tree
+    Workspace(&'a dyn WorkspaceBackend, &'a Workspace),
+    /// Evaluate against a frozen repository revision (no mutable state)
+    Revision(&'a dyn WorkspaceBackend, &'a RepositoryRevision),
+}
+
+/// Status of an active Artifact element's semantic alignment with upstream authoritative knowledge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum ArtifactAccountabilityStatus {
+pub enum SemanticAccountability {
     /// All direct accountability baselines match current active upstream versions.
     Current,
     /// At least one direct baseline differs from the current active upstream version.
     Stale,
     /// The active Artifact has no direct accountability relationships (represents / derived-from).
     Unaccounted,
+}
+
+/// Status of an active Artifact element's physical materialization drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum PhysicalAccountability {
+    /// Resolved physical materialization exactly matches the accounted baseline materialization.
+    Current,
+    /// Resolved physical materialization differs from the accounted baseline materialization.
+    Modified,
+    /// Artifact has a physical locator but no physical materialization was found.
+    Missing,
+    /// Artifact has a physical locator but the backend failed to resolve it.
+    Unresolved,
 }
 
 /// Alignment baseline of an Artifact with one direct upstream authoritative element.
@@ -277,8 +301,12 @@ pub struct ArtifactAccountability {
     pub artifact_type_id: String,
     /// Title property if present.
     pub title: Option<String>,
-    /// Accountability status.
-    pub status: ArtifactAccountabilityStatus,
+    /// Locator property if present.
+    pub locator: Option<String>,
+    /// Semantic accountability status.
+    pub semantic: SemanticAccountability,
+    /// Physical accountability status.
+    pub physical: Option<PhysicalAccountability>,
     /// Detailed baseline records for direct accountability relationships.
     pub baselines: Vec<ArtifactBaseline>,
 }
@@ -287,9 +315,14 @@ pub struct ArtifactAccountability {
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactAccountabilitySummary {
     pub total: usize,
-    pub current: usize,
-    pub stale: usize,
-    pub unaccounted: usize,
+    pub semantic_current: usize,
+    pub semantic_stale: usize,
+    pub semantic_unaccounted: usize,
+    pub physical_current: usize,
+    pub physical_modified: usize,
+    pub physical_missing: usize,
+    pub physical_unresolved: usize,
+    pub physical_not_physical: usize,
 }
 
 /// Comprehensive report produced by `analyze_artifact_accountability`.
@@ -1166,7 +1199,21 @@ pub fn resolve_relationship_baseline_version(
     repository: &Repository,
     relationship_id: RelationshipId,
     target_element_id: ElementId,
+    draft_ops: &[crate::domain::operation::Operation],
 ) -> Result<ObjectId, QueryError> {
+    for op in draft_ops.iter().rev() {
+        if let crate::domain::operation::Operation::AccountArtifact {
+            reconciliations, ..
+        } = op
+        {
+            for recon in reconciliations {
+                if recon.relationship_id == relationship_id {
+                    return Ok(recon.reconciled_target_version);
+                }
+            }
+        }
+    }
+
     let entries = history(repository)?;
 
     // `entries` is ordered from accepted head (newest) to oldest.
@@ -1223,29 +1270,115 @@ pub fn resolve_relationship_baseline_version(
     Ok(elem_entry.version)
 }
 
-/// Evaluates artifact accountability across all active `kat.core/artifact` elements
-/// in the repository's current accepted state $S_n$.
 pub fn analyze_artifact_accountability(
     repository: &Repository,
+    context: Option<AccountabilityContext<'_>>,
 ) -> Result<ArtifactAccountabilityReport, QueryError> {
-    let accepted = repository.ref_store().read_accepted()?;
-    let state = match load_typed(
-        repository.object_store(),
-        accepted.state,
-        ObjectKind::SemanticState,
-    )?
-    .payload
-    {
-        CanonicalPayload::SemanticState(s) => s,
-        _ => unreachable!("kind verified by load_typed"),
+    use crate::domain::workspace::MaterializationResolution;
+
+    let backend_opt = match &context {
+        Some(AccountabilityContext::Workspace(b, _)) => Some(*b),
+        Some(AccountabilityContext::Revision(b, _)) => Some(*b),
+        None => None,
     };
 
-    let mut artifact_records = Vec::new();
+    let mut draft_ops: Vec<crate::domain::operation::Operation> = Vec::new();
+    let mut session_opt = None;
 
-    for elem_entry in &state.elements {
+    if let Some(AccountabilityContext::Workspace(_, _)) = &context {
+        if let Ok(session) = crate::repository::session::read_draft_session(repository.root_dir()) {
+            if session.status == crate::repository::session::DraftSessionState::Open {
+                session_opt = Some(session);
+            }
+        }
+    }
+
+    let state = if let Some(session) = &session_opt {
+        draft_ops = session.operations.clone();
+        session.working_state.clone()
+    } else {
+        let state_id = match &context {
+            Some(AccountabilityContext::Workspace(_, ws)) => {
+                let rev = match load_typed(
+                    repository.object_store(),
+                    ws.base_revision.as_object_id(),
+                    ObjectKind::RepositoryRevision,
+                )?
+                .payload
+                {
+                    CanonicalPayload::RepositoryRevision(r) => r,
+                    _ => unreachable!(),
+                };
+                rev.semantic_state
+            }
+            Some(AccountabilityContext::Revision(_, rev)) => rev.semantic_state,
+            None => crate::domain::identity::SemanticStateId::from_object_id(
+                repository.ref_store().read_accepted()?.state,
+            ),
+        };
+        match load_typed(
+            repository.object_store(),
+            state_id.as_object_id(),
+            ObjectKind::SemanticState,
+        )?
+        .payload
+        {
+            CanonicalPayload::SemanticState(s) => s,
+            _ => unreachable!(),
+        }
+    };
+
+    let snapshot_id_opt = match &context {
+        Some(AccountabilityContext::Workspace(_, ws)) => {
+            let rev = match load_typed(
+                repository.object_store(),
+                ws.base_revision.as_object_id(),
+                ObjectKind::RepositoryRevision,
+            )?
+            .payload
+            {
+                CanonicalPayload::RepositoryRevision(r) => r,
+                _ => unreachable!(),
+            };
+            Some(rev.workspace_snapshot)
+        }
+        Some(AccountabilityContext::Revision(_, rev)) => Some(rev.workspace_snapshot.clone()),
+        None => None,
+    };
+
+    let mut staged_elements_map = std::collections::HashMap::new();
+    let mut staged_relationships_map = std::collections::HashMap::new();
+    if let Some(session) = &session_opt {
+        for v in &session.staged_element_versions {
+            let obj = crate::encoding::object::CanonicalObject {
+                payload: crate::encoding::object::CanonicalPayload::KnowledgeElementVersion(
+                    v.clone(),
+                ),
+            };
+            if let Ok(id) = canonical_object_id(&obj) {
+                staged_elements_map.insert(id, v.clone());
+            }
+        }
+        for v in &session.staged_relationship_versions {
+            let obj = crate::encoding::object::CanonicalObject {
+                payload: crate::encoding::object::CanonicalPayload::RelationshipVersion(v.clone()),
+            };
+            if let Ok(id) = canonical_object_id(&obj) {
+                staged_relationships_map.insert(id, v.clone());
+            }
+        }
+    }
+
+    let get_element_version = |version_id: &ObjectId| -> Result<
+        crate::domain::element::KnowledgeElementVersion,
+        QueryError,
+    > {
+        if let Some(v) = staged_elements_map.get(version_id) {
+            return Ok(v.clone());
+        }
         let el_version = match load_typed(
             repository.object_store(),
-            elem_entry.version,
+            *version_id,
             ObjectKind::KnowledgeElementVersion,
         )?
         .payload
@@ -1253,6 +1386,33 @@ pub fn analyze_artifact_accountability(
             CanonicalPayload::KnowledgeElementVersion(v) => v,
             _ => unreachable!("kind verified by load_typed"),
         };
+        Ok(el_version)
+    };
+
+    let get_relationship_version = |version_id: &ObjectId| -> Result<
+        crate::domain::relationship::RelationshipVersion,
+        QueryError,
+    > {
+        if let Some(v) = staged_relationships_map.get(version_id) {
+            return Ok(v.clone());
+        }
+        let rel_version = match load_typed(
+            repository.object_store(),
+            *version_id,
+            ObjectKind::RelationshipVersion,
+        )?
+        .payload
+        {
+            CanonicalPayload::RelationshipVersion(v) => v,
+            _ => unreachable!("kind verified by load_typed"),
+        };
+        Ok(rel_version)
+    };
+
+    let mut artifact_records = Vec::new();
+
+    for elem_entry in &state.elements {
+        let el_version = get_element_version(&elem_entry.version)?;
         if el_version.lifecycle != Lifecycle::Active {
             continue;
         }
@@ -1275,19 +1435,28 @@ pub fn analyze_artifact_accountability(
                 _ => None,
             });
 
+        let locator = el_version
+            .properties
+            .iter()
+            .find(|(k, _)| k == "kat.core/locator")
+            .and_then(|(_, v)| match v {
+                PropertyValue::Text(t) => Some(t.clone()),
+                _ => None,
+            });
+
+        let baseline_mat_id_prop = el_version
+            .properties
+            .iter()
+            .find(|(k, _)| k == "kat.core/materialization-id")
+            .and_then(|(_, v)| match v {
+                PropertyValue::Bytes(b) => Some(b.clone()),
+                _ => None,
+            });
+
         let mut baselines = Vec::new();
 
         for rel_entry in &state.relationships {
-            let rel_version = match load_typed(
-                repository.object_store(),
-                rel_entry.version,
-                ObjectKind::RelationshipVersion,
-            )?
-            .payload
-            {
-                CanonicalPayload::RelationshipVersion(v) => v,
-                _ => unreachable!("kind verified by load_typed"),
-            };
+            let rel_version = get_relationship_version(&rel_entry.version)?;
             if rel_version.source_element_id != el_version.element_id {
                 continue;
             }
@@ -1304,63 +1473,138 @@ pub fn analyze_artifact_accountability(
                 continue;
             }
 
-            let target_view = show_element(repository, rel_version.target_element_id)?;
-            let current_version = target_view.version_id;
+            let current_target_version = state
+                .elements
+                .iter()
+                .find(|e| e.element_id == rel_version.target_element_id)
+                .map(|e| e.version)
+                .unwrap_or(ObjectId::from_bytes([0; 32]));
+
+            let target_el_version =
+                get_element_version(&current_target_version).unwrap_or_else(|_| {
+                    crate::domain::element::KnowledgeElementVersion {
+                        element_id: rel_version.target_element_id,
+                        type_id: "unknown".to_string(),
+                        lifecycle: Lifecycle::Deprecated,
+                        properties: Vec::new(),
+                    }
+                });
+
+            let current_version = current_target_version;
 
             let baseline_version = resolve_relationship_baseline_version(
                 repository,
                 rel_version.relationship_id,
                 rel_version.target_element_id,
+                &draft_ops,
             )?;
 
             let is_stale = current_version != baseline_version
-                || target_view.element.lifecycle != Lifecycle::Active;
+                || target_el_version.lifecycle != Lifecycle::Active;
 
             baselines.push(ArtifactBaseline {
                 relationship_id: rel_version.relationship_id,
                 relationship_type: rel_version.relationship_type.clone(),
                 upstream_element_id: rel_version.target_element_id,
-                upstream_type_id: target_view.element.type_id.clone(),
+                upstream_type_id: target_el_version.type_id.clone(),
                 baseline_version,
                 current_version,
                 is_stale,
             });
         }
 
-        let status = if baselines.is_empty() {
-            ArtifactAccountabilityStatus::Unaccounted
+        let semantic_status = if baselines.is_empty() {
+            SemanticAccountability::Unaccounted
         } else if baselines.iter().any(|b| b.is_stale) {
-            ArtifactAccountabilityStatus::Stale
+            SemanticAccountability::Stale
         } else {
-            ArtifactAccountabilityStatus::Current
+            SemanticAccountability::Current
+        };
+
+        let physical_status = if let Some(loc) = &locator {
+            let resolution_opt = if let (Some(backend), Some(snapshot_id)) =
+                (backend_opt.as_ref(), snapshot_id_opt.as_ref())
+            {
+                backend
+                    .resolve_materialization(std::path::Path::new(loc), snapshot_id)
+                    .ok()
+            } else {
+                crate::repository::workspace::fs_resolve_working_materialization(
+                    repository.root_dir(),
+                    std::path::Path::new(loc),
+                )
+                .ok()
+            };
+
+            if let Some(resolution) = resolution_opt {
+                Some(match resolution {
+                    MaterializationResolution::NotFound => PhysicalAccountability::Missing,
+                    MaterializationResolution::File(mat_id)
+                    | MaterializationResolution::Directory(mat_id)
+                    | MaterializationResolution::Symlink(mat_id) => {
+                        if let Some(baseline_bytes) = &baseline_mat_id_prop {
+                            if baseline_bytes == mat_id.as_bytes() {
+                                PhysicalAccountability::Current
+                            } else {
+                                PhysicalAccountability::Modified
+                            }
+                        } else {
+                            PhysicalAccountability::Unresolved
+                        }
+                    }
+                })
+            } else {
+                Some(PhysicalAccountability::Unresolved)
+            }
+        } else {
+            None
         };
 
         artifact_records.push(ArtifactAccountability {
             artifact_element_id: el_version.element_id,
             artifact_type_id: el_version.type_id,
             title,
-            status,
+            locator,
+            semantic: semantic_status,
+            physical: physical_status,
             baselines,
         });
     }
 
-    let mut total_current = 0;
-    let mut total_stale = 0;
-    let mut total_unaccounted = 0;
+    let mut semantic_current = 0;
+    let mut semantic_stale = 0;
+    let mut semantic_unaccounted = 0;
+    let mut physical_current = 0;
+    let mut physical_modified = 0;
+    let mut physical_missing = 0;
+    let mut physical_unresolved = 0;
+    let mut physical_not_physical = 0;
 
     for a in &artifact_records {
-        match a.status {
-            ArtifactAccountabilityStatus::Current => total_current += 1,
-            ArtifactAccountabilityStatus::Stale => total_stale += 1,
-            ArtifactAccountabilityStatus::Unaccounted => total_unaccounted += 1,
+        match a.semantic {
+            SemanticAccountability::Current => semantic_current += 1,
+            SemanticAccountability::Stale => semantic_stale += 1,
+            SemanticAccountability::Unaccounted => semantic_unaccounted += 1,
+        }
+        match a.physical {
+            Some(PhysicalAccountability::Current) => physical_current += 1,
+            Some(PhysicalAccountability::Modified) => physical_modified += 1,
+            Some(PhysicalAccountability::Missing) => physical_missing += 1,
+            Some(PhysicalAccountability::Unresolved) => physical_unresolved += 1,
+            None => physical_not_physical += 1,
         }
     }
 
     let repository_summary = ArtifactAccountabilitySummary {
         total: artifact_records.len(),
-        current: total_current,
-        stale: total_stale,
-        unaccounted: total_unaccounted,
+        semantic_current,
+        semantic_stale,
+        semantic_unaccounted,
+        physical_current,
+        physical_modified,
+        physical_missing,
+        physical_unresolved,
+        physical_not_physical,
     };
 
     Ok(ArtifactAccountabilityReport {
@@ -1381,16 +1625,17 @@ pub struct ArtifactFilter {
 /// Evaluates artifact accountability with filtering options (`stale_only`, `target_artifact_id`).
 pub fn analyze_artifact_accountability_filtered(
     repository: &Repository,
+    context: Option<AccountabilityContext<'_>>,
     filter: ArtifactFilter,
 ) -> Result<ArtifactAccountabilityReport, QueryError> {
-    let full_report = analyze_artifact_accountability(repository)?;
+    let full_report = analyze_artifact_accountability(repository, context)?;
     let repository_summary = full_report.repository_summary;
 
     let filtered_artifacts = full_report
         .artifacts
         .into_iter()
         .filter(|rec| {
-            if filter.stale_only && rec.status != ArtifactAccountabilityStatus::Stale {
+            if filter.stale_only && rec.semantic != SemanticAccountability::Stale {
                 return false;
             }
             if let Some(target_id) = filter.target_artifact_id
@@ -1435,12 +1680,22 @@ pub struct ConsistencyCounts {
 /// Breakdown of artifact accountability divergence checks.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AccountabilityCounts {
-    /// Artifacts whose baseline relationships are current.
-    pub current: usize,
-    /// Artifacts with upstream knowledge version divergence.
-    pub stale: usize,
-    /// Active artifacts with no explicit accountability evidence.
-    pub unaccounted: usize,
+    /// Artifacts whose semantic baseline relationships are current.
+    pub semantic_current: usize,
+    /// Artifacts with upstream semantic knowledge version divergence.
+    pub semantic_stale: usize,
+    /// Active artifacts with no explicit semantic accountability evidence.
+    pub semantic_unaccounted: usize,
+    /// Artifacts whose physical materialization matches the baseline exactly.
+    pub physical_current: usize,
+    /// Artifacts whose physical materialization differs from the baseline.
+    pub physical_modified: usize,
+    /// Artifacts whose physical materialization is missing.
+    pub physical_missing: usize,
+    /// Artifacts whose physical materialization could not be resolved.
+    pub physical_unresolved: usize,
+    /// Artifacts that have no locator property.
+    pub physical_not_physical: usize,
 }
 
 /// Summary of the latest accepted change revision, if any change has been published.
@@ -1522,23 +1777,19 @@ pub fn repository_status(repository: &Repository) -> Result<RepositoryStatus, Qu
         unverified_constraints: val_report.unverified_constraints.len(),
     };
 
-    let art_report = analyze_artifact_accountability(repository)?;
-    let mut current = 0;
-    let mut stale = 0;
-    let mut unaccounted = 0;
-
-    for artifact in &art_report.artifacts {
-        match artifact.status {
-            ArtifactAccountabilityStatus::Current => current += 1,
-            ArtifactAccountabilityStatus::Stale => stale += 1,
-            ArtifactAccountabilityStatus::Unaccounted => unaccounted += 1,
-        }
-    }
-
+    // Note: repository_status expects a backend to check physical drift for the current tree,
+    // but repository_status is typically purely semantic in v0.4. We'll leave physical 0ed for now if we can't fetch it,
+    // or we need to pass a context. Wait, we can just use the summary from analyze_artifact_accountability!
+    let art_report = analyze_artifact_accountability(repository, None)?;
     let accountability = AccountabilityCounts {
-        current,
-        stale,
-        unaccounted,
+        semantic_current: art_report.repository_summary.semantic_current,
+        semantic_stale: art_report.repository_summary.semantic_stale,
+        semantic_unaccounted: art_report.repository_summary.semantic_unaccounted,
+        physical_current: art_report.repository_summary.physical_current,
+        physical_modified: art_report.repository_summary.physical_modified,
+        physical_missing: art_report.repository_summary.physical_missing,
+        physical_unresolved: art_report.repository_summary.physical_unresolved,
+        physical_not_physical: art_report.repository_summary.physical_not_physical,
     };
 
     let latest_change = if accepted.change.is_some() {
@@ -2151,7 +2402,7 @@ pub fn inspect_draft_session(
         candidate_effect: effect,
         candidate_validation,
         accountability_total_artifacts: acc_report.repository_summary.total,
-        accountability_stale_artifacts: acc_report.repository_summary.stale,
+        accountability_stale_artifacts: acc_report.repository_summary.semantic_stale,
         accountability_reconciled_in_draft: reconciled_count,
     }))
 }
@@ -2194,7 +2445,9 @@ pub fn analyze_candidate_artifact_accountability(
     let mut effective_baselines: std::collections::HashMap<RelationshipId, ObjectId> =
         std::collections::HashMap::new();
     for (&rel_id, (_, _, tgt_id, _)) in &candidate_relationships {
-        if let Ok(base_ver) = resolve_relationship_baseline_version(repository, rel_id, *tgt_id) {
+        if let Ok(base_ver) =
+            resolve_relationship_baseline_version(repository, rel_id, *tgt_id, &session.operations)
+        {
             effective_baselines.insert(rel_id, base_ver);
         } else if let Some((_, tgt_ver)) = candidate_elements.get(tgt_id) {
             effective_baselines.insert(rel_id, *tgt_ver);
@@ -2267,42 +2520,51 @@ pub fn analyze_candidate_artifact_accountability(
             });
         }
 
-        let status = if !has_accountability_rel {
-            ArtifactAccountabilityStatus::Unaccounted
+        let semantic_status = if !has_accountability_rel {
+            SemanticAccountability::Unaccounted
         } else if has_stale {
-            ArtifactAccountabilityStatus::Stale
+            SemanticAccountability::Stale
         } else {
-            ArtifactAccountabilityStatus::Current
+            SemanticAccountability::Current
         };
+
+        let physical_status = None;
 
         artifact_records.push(ArtifactAccountability {
             artifact_element_id: elem_id,
             artifact_type_id: type_id.clone(),
             title,
-            status,
+            locator: None,
+            semantic: semantic_status,
+            physical: physical_status,
             baselines,
         });
     }
 
     artifact_records.sort_by_key(|a| a.artifact_element_id);
 
-    let mut total_current = 0;
-    let mut total_stale = 0;
-    let mut total_unaccounted = 0;
+    let mut semantic_current = 0;
+    let mut semantic_stale = 0;
+    let mut semantic_unaccounted = 0;
 
     for a in &artifact_records {
-        match a.status {
-            ArtifactAccountabilityStatus::Current => total_current += 1,
-            ArtifactAccountabilityStatus::Stale => total_stale += 1,
-            ArtifactAccountabilityStatus::Unaccounted => total_unaccounted += 1,
+        match a.semantic {
+            SemanticAccountability::Current => semantic_current += 1,
+            SemanticAccountability::Stale => semantic_stale += 1,
+            SemanticAccountability::Unaccounted => semantic_unaccounted += 1,
         }
     }
 
     let repository_summary = ArtifactAccountabilitySummary {
         total: artifact_records.len(),
-        current: total_current,
-        stale: total_stale,
-        unaccounted: total_unaccounted,
+        semantic_current,
+        semantic_stale,
+        semantic_unaccounted,
+        physical_current: 0,
+        physical_modified: 0,
+        physical_missing: 0,
+        physical_unresolved: artifact_records.len(),
+        physical_not_physical: 0,
     };
 
     Ok(ArtifactAccountabilityReport {

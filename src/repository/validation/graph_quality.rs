@@ -174,7 +174,7 @@ pub fn run_check(repository: &Repository) -> Result<CheckReport, QueryError> {
     let mechanical_validation = validate_repository(repository)?;
     let repository_clean = mechanical_validation.violations.is_empty();
     let graph_quality = analyze_graph_quality(repository)?;
-    let artifact_accountability = analyze_artifact_accountability(repository).ok();
+    let artifact_accountability = analyze_artifact_accountability(repository, None).ok();
 
     Ok(CheckReport {
         repository_clean,

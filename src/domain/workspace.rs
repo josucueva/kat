@@ -7,14 +7,25 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct WorkspaceId(pub String);
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SemanticWorkspaceState {
+    Clean,
+    Modified,
+    BaseMismatch(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PhysicalWorkspaceState {
+    Clean,
+    Modified,
+}
+
 /// The overall combined divergence status of a workspace.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum WorkspaceStatus {
-    Clean,
-    SemanticModified,
-    PhysicalModified,
-    CombinedModified,
-    BackendMismatch(String),
+pub struct WorkspaceStatus {
+    pub semantic: SemanticWorkspaceState,
+    pub physical: PhysicalWorkspaceState,
+    pub backend_consistency: BackendConsistency,
 }
 
 /// The core domain entity for a workspace, representing its immutable base revision.
@@ -130,7 +141,13 @@ pub trait WorkspaceBackend {
     fn resolve_materialization(
         &self,
         path: &Path,
-        snapshot: &WorkspaceSnapshotId,
+        snapshot_id: &WorkspaceSnapshotId,
+    ) -> Result<MaterializationResolution, WorkspaceBackendError>;
+
+    /// Resolves the canonical identity of a specific path in the current mutable working tree.
+    fn resolve_working_materialization(
+        &self,
+        path: &Path,
     ) -> Result<MaterializationResolution, WorkspaceBackendError>;
 
     /// Verifies the internal structural integrity of the referenced snapshot.

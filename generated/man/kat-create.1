@@ -4,7 +4,7 @@
 .SH NAME
 create \- Create a knowledge element (prefer kat author for normal authoring)
 .SH SYNOPSIS
-\fBcreate\fR <\fB\-\-title\fR> [\fB\-\-description\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_TYPE\fR> 
+\fBcreate\fR <\fB\-\-title\fR> [\fB\-\-description\fR] [\fB\-\-locator\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIELEMENT_TYPE\fR> 
 .SH DESCRIPTION
 Create a knowledge element (prefer kat author for normal authoring)
 .SH OPTIONS
@@ -18,6 +18,9 @@ Title of the knowledge element
 .TP
 \fB\-\-description\fR \fI<DESCRIPTION>\fR
 Optional detailed description
+.TP
+\fB\-\-locator\fR \fI<LOCATOR>\fR
+Optional physical locator path
 .TP
 <\fIELEMENT_TYPE\fR>
 Type of element to create (e.g. requirement, constraint, design\-decision, implementation, artifact)

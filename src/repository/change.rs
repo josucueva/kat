@@ -104,6 +104,8 @@ pub enum PreconditionError {
     },
     /// No active draft session was found.
     DraftNotFound,
+    /// The physical locator provided could not be resolved to a valid workspace materialization.
+    MissingMaterialization(String),
     /// Attempted to commit a draft change transaction with no staged operations.
     EmptyDraftCommit,
     /// The loaded relationship object's ID does not match the requested relationship ID.
@@ -1303,6 +1305,7 @@ pub fn apply_account_artifact(
             repository,
             rec.relationship_id,
             rec.target_element_id,
+            &[],
         );
 
         if baseline_version.ok() != Some(rec.reconciled_target_version) {
@@ -2949,6 +2952,10 @@ pub fn stage_batch_operations_into_session(
     for (index, input) in inputs.into_iter().enumerate() {
         let op = match stage_operation_in_memory(repository, &mut working_session, input) {
             Ok(op) => op,
+            Err(ChangeError::Precondition(PreconditionError::NoEffectiveChange)) => {
+                // Ignore no-op operations
+                continue;
+            }
             Err(err) => {
                 // Atomic rollback: original_session remains unchanged, session.json on disk is untouched.
                 return Err(ChangeError::BatchStagingFailed {
@@ -3224,6 +3231,9 @@ impl std::fmt::Display for PreconditionError {
                 f,
                 "no open draft change transaction found at .kat/work/change/session.json"
             ),
+            Self::MissingMaterialization(e0) => {
+                write!(f, "missing materialization for locator '{e0}'")
+            }
             Self::EmptyDraftCommit => write!(
                 f,
                 "cannot commit a draft change transaction with zero staged operations"

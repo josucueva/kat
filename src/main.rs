@@ -25,11 +25,11 @@ use kat::repository::init::init_repository;
 use kat::repository::object_store::ObjectStore;
 use kat::repository::open::{Repository, open_repository};
 use kat::repository::query::{
-    ArtifactAccountabilityReport, ArtifactAccountabilityStatus, ArtifactFilter, ElementView,
-    HistoryEntry, ImpactResult, ListFilter, QueryError, RepositoryStatus, TraceResult,
-    TraceTreeNode, TraversalDirection, analyze_artifact_accountability_filtered, analyze_impact,
-    history, history_entry_touches_element, inspect_draft_session, list_elements,
-    repository_status, show_element, trace_origin,
+    ArtifactAccountabilityReport, ArtifactFilter, ElementView, HistoryEntry, ImpactResult,
+    ListFilter, QueryError, RepositoryStatus, TraceResult, TraceTreeNode, TraversalDirection,
+    analyze_artifact_accountability_filtered, analyze_impact, history,
+    history_entry_touches_element, inspect_draft_session, list_elements, repository_status,
+    show_element, trace_origin,
 };
 use kat::repository::resolve::{
     ResolveError, resolve_element_id, resolve_element_in_state, resolve_relationship_id,
@@ -80,12 +80,15 @@ fn main() -> ExitCode {
             element_type,
             title,
             description,
-        } => run_create(element_type, title, description),
+            locator,
+        } => run_create(element_type, title, description, locator),
         Command::Update {
             element_id,
             title,
             description,
-        } => run_update(element_id, title, description),
+            locator,
+            clear_locator,
+        } => run_update(element_id, title, description, locator, clear_locator),
         Command::Deprecate { element_id } => run_deprecate(element_id),
         Command::Supersede {
             existing_element_id,
@@ -215,7 +218,7 @@ fn run_status(compact: bool, json: bool) -> ExitCode {
 }
 
 fn print_repository_status_compact(status: &RepositoryStatus) {
-    let stale = status.accountability.stale;
+    let stale = status.accountability.semantic_stale;
     let stale_suffix = if stale == 1 { "artifact" } else { "artifacts" };
     println!(
         "{} elements · {} relationships · {} violations · {} stale {}",
@@ -538,12 +541,27 @@ fn format_lifecycle(lifecycle: Lifecycle) -> &'static str {
     }
 }
 
-/// Formats artifact accountability status in lowercase.
-fn format_accountability_status(status: ArtifactAccountabilityStatus) -> &'static str {
+/// Formats artifact semantic accountability status in lowercase.
+fn format_semantic_accountability(
+    status: kat::repository::query::SemanticAccountability,
+) -> &'static str {
     match status {
-        ArtifactAccountabilityStatus::Current => "current",
-        ArtifactAccountabilityStatus::Stale => "stale",
-        ArtifactAccountabilityStatus::Unaccounted => "unaccounted",
+        kat::repository::query::SemanticAccountability::Current => "current",
+        kat::repository::query::SemanticAccountability::Stale => "stale",
+        kat::repository::query::SemanticAccountability::Unaccounted => "unaccounted",
+    }
+}
+
+/// Formats artifact physical accountability status in lowercase.
+fn format_physical_accountability(
+    status: Option<kat::repository::query::PhysicalAccountability>,
+) -> &'static str {
+    match status {
+        Some(kat::repository::query::PhysicalAccountability::Current) => "current",
+        Some(kat::repository::query::PhysicalAccountability::Modified) => "modified",
+        Some(kat::repository::query::PhysicalAccountability::Missing) => "missing",
+        Some(kat::repository::query::PhysicalAccountability::Unresolved) => "unresolved",
+        None => "not-physical",
     }
 }
 
@@ -600,9 +618,18 @@ fn print_repository_status(status: &RepositoryStatus) {
 
     println!();
     println!("Accountability");
-    println!("  current:      {}", status.accountability.current);
-    println!("  stale:        {}", status.accountability.stale);
-    println!("  unaccounted:  {}", status.accountability.unaccounted);
+    println!(
+        "  semantic current:      {}",
+        status.accountability.semantic_current
+    );
+    println!(
+        "  semantic stale:        {}",
+        status.accountability.semantic_stale
+    );
+    println!(
+        "  semantic unaccounted:  {}",
+        status.accountability.semantic_unaccounted
+    );
 }
 
 /// Maps a CLI type argument to a canonical element type ID.
@@ -712,7 +739,12 @@ fn execute_mutation(
     }
 }
 
-fn run_create(type_arg: String, title: String, description: Option<String>) -> ExitCode {
+fn run_create(
+    type_arg: String,
+    title: String,
+    description: Option<String>,
+    locator: Option<String>,
+) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -735,6 +767,28 @@ fn run_create(type_arg: String, title: String, description: Option<String>) -> E
     let mut properties = vec![("title".to_string(), PropertyValue::Text(title))];
     if let Some(desc) = description {
         properties.push(("description".to_string(), PropertyValue::Text(desc)));
+    }
+    if let Some(loc) = locator {
+        let mat_id = match kat::repository::workspace::fs_resolve_working_materialization(
+            repository.root_dir(),
+            std::path::Path::new(&loc),
+        ) {
+            Ok(kat::domain::workspace::MaterializationResolution::File(id))
+            | Ok(kat::domain::workspace::MaterializationResolution::Directory(id))
+            | Ok(kat::domain::workspace::MaterializationResolution::Symlink(id)) => id,
+            _ => {
+                eprintln!("kat create: missing materialization for locator '{loc}'");
+                return ExitCode::FAILURE;
+            }
+        };
+        properties.push((
+            kat::domain::property::PROPERTY_ARTIFACT_LOCATOR.to_string(),
+            PropertyValue::Text(loc),
+        ));
+        properties.push((
+            kat::domain::property::PROPERTY_ARTIFACT_MATERIALIZATION_ID.to_string(),
+            PropertyValue::Bytes(mat_id.into_bytes().to_vec()),
+        ));
     }
     let input = StagedOperationInput::CreateElement(CreateElementInput {
         element_id,
@@ -771,10 +825,12 @@ fn run_update(
     element_id_str: String,
     title: Option<String>,
     description: Option<String>,
+    locator: Option<String>,
+    clear_locator: bool,
 ) -> ExitCode {
-    if title.is_none() && description.is_none() {
+    if title.is_none() && description.is_none() && locator.is_none() && !clear_locator {
         eprintln!(
-            "kat update: at least one property flag (--title, --description) must be supplied"
+            "kat update: at least one property flag (--title, --description, --locator, --clear-locator) must be supplied"
         );
         return ExitCode::FAILURE;
     }
@@ -835,6 +891,38 @@ fn run_update(
     }
     if let Some(d) = description {
         properties.push(("description".to_string(), PropertyValue::Text(d)));
+    }
+    if let Some(loc) = locator {
+        let mat_id = match kat::repository::workspace::fs_resolve_working_materialization(
+            repository.root_dir(),
+            std::path::Path::new(&loc),
+        ) {
+            Ok(kat::domain::workspace::MaterializationResolution::File(id))
+            | Ok(kat::domain::workspace::MaterializationResolution::Directory(id))
+            | Ok(kat::domain::workspace::MaterializationResolution::Symlink(id)) => id,
+            _ => {
+                eprintln!("kat update: missing materialization for locator '{loc}'");
+                return ExitCode::FAILURE;
+            }
+        };
+        properties.push((
+            kat::domain::property::PROPERTY_ARTIFACT_LOCATOR.to_string(),
+            PropertyValue::Text(loc),
+        ));
+        properties.push((
+            kat::domain::property::PROPERTY_ARTIFACT_MATERIALIZATION_ID.to_string(),
+            PropertyValue::Bytes(mat_id.into_bytes().to_vec()),
+        ));
+    }
+    if clear_locator {
+        properties.push((
+            kat::domain::property::PROPERTY_ARTIFACT_LOCATOR.to_string(),
+            PropertyValue::Null,
+        ));
+        properties.push((
+            kat::domain::property::PROPERTY_ARTIFACT_MATERIALIZATION_ID.to_string(),
+            PropertyValue::Null,
+        ));
     }
 
     let input = StagedOperationInput::UpdateElement(UpdateElementInput {
@@ -1249,38 +1337,246 @@ fn run_account(artifact_id_str: String, description: Option<String>) -> ExitCode
         Ok(id) => id,
         Err(code) => return code,
     };
-    let input = StagedOperationInput::AccountArtifact(AccountArtifactInput { artifact_id });
+    let mut staged_inputs = Vec::new();
+    let expected_version = if kat::repository::session::has_draft_session(repository.root_dir()) {
+        let session = match kat::repository::session::read_draft_session(repository.root_dir()) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("kat account: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+        match session
+            .working_state
+            .elements
+            .iter()
+            .find(|e| e.element_id == artifact_id)
+        {
+            Some(e) => e.version,
+            None => {
+                eprintln!("kat account: element {artifact_id} not found in base state");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        let context = match prepare_change(&repository) {
+            Ok(c) => c,
+            Err(err) => return fail_mutation("account", err),
+        };
+        match context
+            .base_state
+            .elements
+            .iter()
+            .find(|e| e.element_id == artifact_id)
+        {
+            Some(e) => e.version,
+            None => {
+                eprintln!("kat account: element {artifact_id} not found in the base state");
+                return ExitCode::FAILURE;
+            }
+        }
+    };
 
-    execute_mutation(
-        &repository,
-        input,
-        description,
-        "account",
-        |op, count| {
+    let (mut staged_properties, current_locator, current_properties) =
+        if kat::repository::session::has_draft_session(repository.root_dir()) {
+            let session =
+                kat::repository::session::read_draft_session(repository.root_dir()).unwrap();
+            let (props, _) = session
+                .staged_element_versions
+                .iter()
+                .find(|ev| ev.element_id == artifact_id)
+                .map(|ev| (ev.properties.clone(), true))
+                .unwrap_or_else(|| {
+                    let base_version_id = session
+                        .working_state
+                        .elements
+                        .iter()
+                        .find(|e| e.element_id == artifact_id)
+                        .map(|e| e.version)
+                        .unwrap();
+                    let bytes = repository.object_store().get(base_version_id).unwrap();
+                    let obj = kat::encoding::decode_canonical(&bytes).unwrap();
+                    if let kat::encoding::object::CanonicalPayload::KnowledgeElementVersion(ev) =
+                        obj.payload
+                    {
+                        (ev.properties, false)
+                    } else {
+                        (Vec::new(), false)
+                    }
+                });
+            let loc = props
+                .iter()
+                .find(|(k, _)| k == kat::domain::property::PROPERTY_ARTIFACT_LOCATOR)
+                .and_then(|(_, v)| {
+                    if let PropertyValue::Text(s) = v {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                });
+            (props.clone(), loc, props)
+        } else {
+            let context = kat::repository::change::prepare_change(&repository).unwrap();
+            let base_version_id = context
+                .base_state
+                .elements
+                .iter()
+                .find(|e| e.element_id == artifact_id)
+                .map(|e| e.version)
+                .unwrap();
+            let bytes = repository.object_store().get(base_version_id).unwrap();
+            let obj = kat::encoding::decode_canonical(&bytes).unwrap();
+            if let kat::encoding::object::CanonicalPayload::KnowledgeElementVersion(ev) =
+                obj.payload
+            {
+                let loc = ev
+                    .properties
+                    .iter()
+                    .find(|(k, _)| k == kat::domain::property::PROPERTY_ARTIFACT_LOCATOR)
+                    .and_then(|(_, v)| {
+                        if let PropertyValue::Text(s) = v {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    });
+                (ev.properties.clone(), loc, ev.properties)
+            } else {
+                (Vec::new(), None, Vec::new())
+            }
+        };
+
+    if let Some(loc) = current_locator {
+        let mat_id = match kat::repository::workspace::fs_resolve_working_materialization(
+            repository.root_dir(),
+            std::path::Path::new(&loc),
+        ) {
+            Ok(kat::domain::workspace::MaterializationResolution::File(id))
+            | Ok(kat::domain::workspace::MaterializationResolution::Directory(id))
+            | Ok(kat::domain::workspace::MaterializationResolution::Symlink(id)) => id,
+            _ => {
+                eprintln!("kat account: missing materialization for locator '{loc}'");
+                return ExitCode::FAILURE;
+            }
+        };
+        // Update the materialization-id
+        let new_val = PropertyValue::Bytes(mat_id.into_bytes().to_vec());
+        if let Some((_, v)) = staged_properties
+            .iter_mut()
+            .find(|(k, _)| k == kat::domain::property::PROPERTY_ARTIFACT_MATERIALIZATION_ID)
+        {
+            *v = new_val;
+        } else {
+            staged_properties.push((
+                kat::domain::property::PROPERTY_ARTIFACT_MATERIALIZATION_ID.to_string(),
+                new_val,
+            ));
+            staged_properties.sort_by(|a, b| a.0.len().cmp(&b.0.len()).then_with(|| a.0.cmp(&b.0)));
+        }
+        let mut properties_changed = staged_properties.len() != current_properties.len();
+        if !properties_changed {
+            for (k, v) in &staged_properties {
+                if let Some((_, old_v)) = current_properties.iter().find(|(ok, _)| ok == k) {
+                    if v != old_v {
+                        properties_changed = true;
+                        break;
+                    }
+                } else {
+                    properties_changed = true;
+                    break;
+                }
+            }
+        }
+
+        if properties_changed {
+            staged_inputs.push(StagedOperationInput::UpdateElement(UpdateElementInput {
+                element_id: artifact_id,
+                expected_version,
+                properties: staged_properties,
+            }));
+        }
+    }
+
+    staged_inputs.push(StagedOperationInput::AccountArtifact(
+        AccountArtifactInput { artifact_id },
+    ));
+
+    // In a batch context, we have to stage these using the session manually since execute_mutation takes a single StagedOperationInput.
+    // Let's implement batch execution for account.
+    if kat::repository::session::has_draft_session(repository.root_dir()) {
+        let mut session = match kat::repository::session::read_draft_session(repository.root_dir())
+        {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("kat account: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let initial_len = session.operations.len();
+        for input in staged_inputs {
+            match kat::repository::change::stage_operation_into_session(
+                &repository,
+                &mut session,
+                input,
+            ) {
+                Ok(_) => {}
+                Err(kat::repository::change::ChangeError::Precondition(
+                    kat::repository::change::PreconditionError::NoEffectiveChange,
+                )) => {}
+                Err(err) => return fail_mutation("account", err),
+            }
+        }
+        if session.operations.len() == initial_len {
+            println!(
+                "artifact {} is already up to date (no effective change)",
+                artifact_id
+            );
+        } else {
             println!("staged account artifact");
             println!("  artifact_id:       {artifact_id}");
-            if let Operation::AccountArtifact {
-                reconciliations, ..
-            } = op
-            {
-                println!("  reconciliations:   {}", reconciliations.len());
+            println!("  change operations: {}", session.operations.len());
+        }
+        ExitCode::SUCCESS
+    } else {
+        let _ = match kat::repository::session::begin_draft_session(&repository, None) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("kat account: {err}");
+                return ExitCode::FAILURE;
             }
-            println!("  change operations: {count}");
-        },
-        |op, published| {
-            let prepared = &published.persisted.prepared;
-            println!("artifact_id: {artifact_id}");
-            if let Operation::AccountArtifact {
-                reconciliations, ..
-            } = op
-            {
-                println!("reconciliations: {}", reconciliations.len());
+        };
+        let mut session = match kat::repository::change::stage_batch_operations_into_session(
+            &repository,
+            staged_inputs,
+        ) {
+            Ok((_, updated_session)) => updated_session,
+            Err(err) => {
+                let _ = kat::repository::session::abort_draft_session(repository.root_dir());
+                return fail_mutation("account", err);
             }
-            println!("state_id: {}", prepared.state_id);
-            println!("change_id: {}", prepared.change.change_id);
-            println!("change_revision_id: {}", prepared.change_revision_id);
-        },
-    )
+        };
+        if session.operations.is_empty() {
+            let _ = kat::repository::session::abort_draft_session(repository.root_dir());
+            println!(
+                "artifact {} is already up to date (no effective change)",
+                artifact_id
+            );
+            return ExitCode::SUCCESS;
+        }
+        session.description = description;
+        let published = match kat::repository::change::commit_session_direct(&repository, &session)
+        {
+            Ok(p) => p,
+            Err(err) => return fail_mutation("account", err),
+        };
+        let prepared = &published.published_change.persisted.prepared;
+        println!("artifact_id: {artifact_id}");
+        println!("state_id: {}", prepared.state_id);
+        println!("change_id: {}", prepared.change.change_id);
+        println!("change_revision_id: {}", prepared.change_revision_id);
+        let _ = kat::repository::session::abort_draft_session(repository.root_dir());
+        ExitCode::SUCCESS
+    }
 }
 
 fn run_show(element_id_str: String, compact: bool, json: bool) -> ExitCode {
@@ -2546,7 +2842,24 @@ fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool, json: 
         target_artifact_id: target_id,
     };
 
-    match analyze_artifact_accountability_filtered(&repository, filter) {
+    use kat::repository::query::AccountabilityContext;
+    use kat::repository::workspace::git::GitWorkspaceBackend;
+    use kat::repository::workspace::open_workspace;
+    let backend = GitWorkspaceBackend::open(
+        &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    )
+    .ok();
+    let ws =
+        open_workspace(&std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")))
+            .ok();
+
+    let context_opt = if let (Some(b), Some(w)) = (&backend, &ws) {
+        Some(AccountabilityContext::Workspace(b, w))
+    } else {
+        None
+    };
+
+    match analyze_artifact_accountability_filtered(&repository, context_opt, filter) {
         Ok(report) => {
             if json {
                 MachinePresenter::present_success(&repository, &report);
@@ -2558,8 +2871,11 @@ fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool, json: 
                 print_artifact_accountability_report(&report, stale);
             }
             let has_stale_or_unaccounted = report.artifacts.iter().any(|a| {
-                a.status == ArtifactAccountabilityStatus::Stale
-                    || a.status == ArtifactAccountabilityStatus::Unaccounted
+                use kat::repository::query::{PhysicalAccountability, SemanticAccountability};
+                a.semantic == SemanticAccountability::Stale
+                    || a.semantic == SemanticAccountability::Unaccounted
+                    || a.physical == Some(PhysicalAccountability::Modified)
+                    || a.physical == Some(PhysicalAccountability::Missing)
             });
             if has_stale_or_unaccounted {
                 ExitCode::FAILURE
@@ -2583,11 +2899,13 @@ fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool, json: 
 }
 
 fn print_artifact_accountability_report_compact(report: &ArtifactAccountabilityReport) {
-    println!("STATUS       ARTIFACT");
+    println!("{:<25} ARTIFACT", "STATUS (SEM / PHYS)");
     for item in &report.artifacts {
-        let status_str = format_accountability_status(item.status);
+        let sem = format_semantic_accountability(item.semantic);
+        let phys = format_physical_accountability(item.physical);
+        let status_str = format!("{}/{}", sem, phys);
         let title = item.title.as_deref().unwrap_or("none");
-        println!("{status_str:<11}  {title}");
+        println!("{status_str:<25} {title}");
     }
 }
 
@@ -2605,7 +2923,14 @@ fn print_artifact_accountability_detail(report: &ArtifactAccountabilityReport, q
         if let Some(ref title) = a.title {
             println!("  title:       \"{title}\"");
         }
-        println!("  status:      {}", format_accountability_status(a.status));
+        println!(
+            "  semantic:    {}",
+            format_semantic_accountability(a.semantic)
+        );
+        println!(
+            "  physical:    {}",
+            format_physical_accountability(a.physical)
+        );
         println!();
         println!("ACCOUNTABILITY BASELINES ({})", a.baselines.len());
         if a.baselines.is_empty() {
@@ -2654,10 +2979,42 @@ fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport, s
         }
         println!();
         println!("Repository summary");
-        println!("  total:        {}", report.repository_summary.total);
-        println!("  current:      {}", report.repository_summary.current);
-        println!("  stale:        {}", report.repository_summary.stale);
-        println!("  unaccounted:  {}", report.repository_summary.unaccounted);
+        println!(
+            "  total:                 {}",
+            report.repository_summary.total
+        );
+        println!(
+            "  semantic current:      {}",
+            report.repository_summary.semantic_current
+        );
+        println!(
+            "  semantic stale:        {}",
+            report.repository_summary.semantic_stale
+        );
+        println!(
+            "  semantic unaccounted:  {}",
+            report.repository_summary.semantic_unaccounted
+        );
+        println!(
+            "  physical current:      {}",
+            report.repository_summary.physical_current
+        );
+        println!(
+            "  physical modified:     {}",
+            report.repository_summary.physical_modified
+        );
+        println!(
+            "  physical missing:      {}",
+            report.repository_summary.physical_missing
+        );
+        println!(
+            "  physical unresolved:   {}",
+            report.repository_summary.physical_unresolved
+        );
+        println!(
+            "  physical not-physical: {}",
+            report.repository_summary.physical_not_physical
+        );
         println!();
         println!(
             "Note: KAT accountability evaluates semantic target-version alignment; physical file contents are not verified."
@@ -2675,8 +3032,12 @@ fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport, s
         println!();
 
         println!(
-            "    status:      {}",
-            format_accountability_status(a.status)
+            "    semantic:    {}",
+            format_semantic_accountability(a.semantic)
+        );
+        println!(
+            "    physical:    {}",
+            format_physical_accountability(a.physical)
         );
 
         if a.baselines.is_empty() {
@@ -2698,9 +3059,18 @@ fn print_artifact_accountability_report(report: &ArtifactAccountabilityReport, s
     println!();
     println!("Repository summary");
     println!("  total:        {}", report.repository_summary.total);
-    println!("  current:      {}", report.repository_summary.current);
-    println!("  stale:        {}", report.repository_summary.stale);
-    println!("  unaccounted:  {}", report.repository_summary.unaccounted);
+    println!(
+        "  semantic current:      {}",
+        report.repository_summary.semantic_current
+    );
+    println!(
+        "  semantic stale:        {}",
+        report.repository_summary.semantic_stale
+    );
+    println!(
+        "  semantic unaccounted:  {}",
+        report.repository_summary.semantic_unaccounted
+    );
     println!();
     println!(
         "Note: KAT accountability evaluates semantic target-version alignment; physical file contents are not verified."
@@ -3089,9 +3459,9 @@ fn print_human_check_report(report: &kat::repository::validation::graph_quality:
     // 3. ARTIFACT ACCOUNTABILITY
     println!("ARTIFACT ACCOUNTABILITY");
     if let Some(ref account) = report.artifact_accountability {
-        let cur = account.repository_summary.current;
-        let stale = account.repository_summary.stale;
-        let unacc = account.repository_summary.unaccounted;
+        let cur = account.repository_summary.semantic_current;
+        let stale = account.repository_summary.semantic_stale;
+        let unacc = account.repository_summary.semantic_unaccounted;
 
         println!("  current:      {cur}");
         println!("  stale:         {stale}");
@@ -3100,7 +3470,7 @@ fn print_human_check_report(report: &kat::repository::validation::graph_quality:
         let stale_artifacts: Vec<_> = account
             .artifacts
             .iter()
-            .filter(|a| a.status == kat::repository::query::ArtifactAccountabilityStatus::Stale)
+            .filter(|a| a.semantic == kat::repository::query::SemanticAccountability::Stale)
             .collect();
         if !stale_artifacts.is_empty() {
             println!();
@@ -3115,9 +3485,7 @@ fn print_human_check_report(report: &kat::repository::validation::graph_quality:
         let unacc_artifacts: Vec<_> = account
             .artifacts
             .iter()
-            .filter(|a| {
-                a.status == kat::repository::query::ArtifactAccountabilityStatus::Unaccounted
-            })
+            .filter(|a| a.semantic == kat::repository::query::SemanticAccountability::Unaccounted)
             .collect();
         if !unacc_artifacts.is_empty() {
             println!();
@@ -3173,9 +3541,9 @@ fn print_compact_check_report(report: &kat::repository::validation::graph_qualit
     let (art_cur, art_stale, art_unacc) = if let Some(ref account) = report.artifact_accountability
     {
         (
-            account.repository_summary.current,
-            account.repository_summary.stale,
-            account.repository_summary.unaccounted,
+            account.repository_summary.semantic_current,
+            account.repository_summary.semantic_stale,
+            account.repository_summary.semantic_unaccounted,
         )
     } else {
         (0, 0, 0)

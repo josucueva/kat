@@ -5305,9 +5305,9 @@ fn draft_candidate_accountability_preview_cases_a_b_c_d() {
 
     // Initial state: 1 CURRENT artifact
     let repo_clean = open_repository(root).unwrap();
-    let acc_clean = kat::repository::analyze_artifact_accountability(&repo_clean).unwrap();
-    assert_eq!(acc_clean.repository_summary.current, 1);
-    assert_eq!(acc_clean.repository_summary.stale, 0);
+    let acc_clean = kat::repository::analyze_artifact_accountability(&repo_clean, None).unwrap();
+    assert_eq!(acc_clean.repository_summary.semantic_current, 1);
+    assert_eq!(acc_clean.repository_summary.semantic_stale, 0);
 
     // --- Case D: Update unrelated element -> Candidate remains CURRENT ---
     let repo_d = open_repository(root).unwrap();

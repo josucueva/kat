@@ -183,6 +183,7 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
         'kat;create' {
             [CompletionResult]::new('--title', '--title', [CompletionResultType]::ParameterName, 'Title of the knowledge element')
             [CompletionResult]::new('--description', '--description', [CompletionResultType]::ParameterName, 'Optional detailed description')
+            [CompletionResult]::new('--locator', '--locator', [CompletionResultType]::ParameterName, 'Optional physical locator path')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
@@ -190,6 +191,8 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
         'kat;update' {
             [CompletionResult]::new('--title', '--title', [CompletionResultType]::ParameterName, 'New title for the element')
             [CompletionResult]::new('--description', '--description', [CompletionResultType]::ParameterName, 'New description for the element')
+            [CompletionResult]::new('--locator', '--locator', [CompletionResultType]::ParameterName, 'New physical locator path')
+            [CompletionResult]::new('--clear-locator', '--clear-locator', [CompletionResultType]::ParameterName, 'Clear the physical locator path')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break

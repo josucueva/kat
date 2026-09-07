@@ -6,6 +6,9 @@ use std::fmt;
 use crate::domain::identity::ElementId;
 use crate::domain::property::PropertyValue;
 
+pub const PROPERTY_LOCATOR: &str = "kat.core/locator";
+pub const PROPERTY_MATERIALIZATION_ID: &str = "kat.core/materialization-id";
+
 /// Lifecycle of a knowledge element version.
 ///
 /// The canonical numeric values (`0` active, `1` deprecated, `2` superseded)
