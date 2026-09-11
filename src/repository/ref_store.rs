@@ -12,7 +12,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::domain::identity::ObjectId;
+use crate::domain::identity::{ObjectId, RepositoryRevisionId};
 
 /// Process-global counter for unique temporary ref file names.
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -115,10 +115,61 @@ impl FileRefStore {
         self.refs_dir().join("accepted.lock")
     }
 
+    fn resolve_ref_path(&self, name: &str) -> Result<PathBuf, RefStoreError> {
+        if name.is_empty() {
+            return Err(RefStoreError::Parse("ref name cannot be empty".into()));
+        }
+        for segment in name.split('/') {
+            if segment.is_empty() {
+                return Err(RefStoreError::Parse(format!(
+                    "invalid ref name: empty segment in {}",
+                    name
+                )));
+            }
+            if segment == "." || segment == ".." {
+                return Err(RefStoreError::Parse(format!(
+                    "invalid ref name: traversing segment in {}",
+                    name
+                )));
+            }
+            for c in segment.chars() {
+                if !c.is_ascii_alphanumeric() && c != '.' && c != '_' && c != '-' {
+                    return Err(RefStoreError::Parse(format!(
+                        "invalid character in ref name: {}",
+                        name
+                    )));
+                }
+            }
+        }
+        Ok(self.refs_dir().join(name))
+    }
+
+    fn lock_path_for(&self, name: &str) -> Result<PathBuf, RefStoreError> {
+        let mut path = self.resolve_ref_path(name)?;
+        let mut ext = path.extension().unwrap_or_default().to_os_string();
+        ext.push(".lock");
+        path.set_extension(ext);
+        Ok(path)
+    }
+
     /// Acquires the accepted-ref lock (exclusive create), serializing CAS
     /// writers. Returns `Conflict` if another publication holds the lock.
     fn acquire_lock(&self) -> Result<LockGuard, RefStoreError> {
         let path = self.lock_path();
+        fs::create_dir_all(path.parent().expect("refs dir has a parent"))?;
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => Ok(LockGuard { path }),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(RefStoreError::Conflict),
+            Err(e) => Err(RefStoreError::Io(e)),
+        }
+    }
+
+    fn acquire_lock_for(&self, name: &str) -> Result<LockGuard, RefStoreError> {
+        let path = self.lock_path_for(name)?;
         fs::create_dir_all(path.parent().expect("refs dir has a parent"))?;
         match fs::OpenOptions::new()
             .write(true)
@@ -205,6 +256,179 @@ impl FileRefStore {
         }
         fs::rename(&tmp_path, self.accepted_path())?;
         Ok(())
+    }
+
+    pub fn read_ref(&self, name: &str) -> Result<RepositoryRevisionId, RefStoreError> {
+        let path = self.resolve_ref_path(name)?;
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(RefStoreError::NotFound);
+            }
+            Err(e) => return Err(RefStoreError::Io(e)),
+        };
+        let text = text.trim();
+        text.parse::<RepositoryRevisionId>().map_err(|_| {
+            RefStoreError::Parse(format!("invalid RepositoryRevisionId in ref {}", name))
+        })
+    }
+
+    pub fn compare_and_swap_ref(
+        &self,
+        name: &str,
+        expected: Option<RepositoryRevisionId>,
+        new: RepositoryRevisionId,
+    ) -> Result<(), RefStoreError> {
+        let _lock = self.acquire_lock_for(name)?;
+
+        let current = self.read_ref(name);
+        match (expected, current) {
+            (None, Err(RefStoreError::NotFound)) => {}
+            (Some(exp), Ok(curr)) if exp == curr => {}
+            _ => return Err(RefStoreError::Conflict),
+        }
+
+        let tmp_path = self.refs_dir().join(format!(
+            "ref.tmp-{}-{}",
+            std::process::id(),
+            NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+
+        let path = self.resolve_ref_path(name)?;
+        fs::create_dir_all(path.parent().unwrap())?;
+
+        {
+            let mut file = fs::File::create(&tmp_path)?;
+            file.write_all(new.to_string().as_bytes())?;
+            file.write_all(b"\n")?;
+            file.sync_all()?;
+        }
+        fs::rename(&tmp_path, path)?;
+        Ok(())
+    }
+
+    pub fn delete_ref(
+        &self,
+        name: &str,
+        expected: RepositoryRevisionId,
+    ) -> Result<(), RefStoreError> {
+        let _lock = self.acquire_lock_for(name)?;
+
+        let current = self.read_ref(name)?;
+        if current != expected {
+            return Err(RefStoreError::Conflict);
+        }
+
+        let path = self.resolve_ref_path(name)?;
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    pub fn list_local_refs(
+        &self,
+    ) -> Result<Vec<crate::domain::reference::NamedReference>, RefStoreError> {
+        let mut refs = Vec::new();
+        let local_dir = self.refs_dir().join("local");
+        if !local_dir.exists() {
+            return Ok(refs);
+        }
+
+        let mut stack = vec![local_dir.clone()];
+        while let Some(dir) = stack.pop() {
+            let entries = match fs::read_dir(&dir) {
+                Ok(rd) => rd,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(RefStoreError::Io(e)),
+            };
+            for entry in entries {
+                let entry = entry?;
+                let path = entry.path();
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                if file_name.ends_with(".lock") || file_name.starts_with('.') {
+                    continue;
+                }
+
+                let metadata = entry.metadata()?;
+                if metadata.is_dir() {
+                    stack.push(path);
+                } else if metadata.is_file() {
+                    let rel_path = path
+                        .strip_prefix(&local_dir)
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string();
+                    let name = format!("local/{}", rel_path);
+                    if let Ok(target) = self.read_ref(&name) {
+                        refs.push(crate::domain::reference::NamedReference {
+                            name: rel_path,
+                            target,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(refs)
+    }
+
+    pub fn list_remote_refs(
+        &self,
+    ) -> Result<Vec<crate::domain::reference::RemoteReference>, RefStoreError> {
+        let mut refs = Vec::new();
+        let remotes_dir = self.refs_dir().join("remotes");
+        if !remotes_dir.exists() {
+            return Ok(refs);
+        }
+
+        // Structure is .kat/refs/remotes/<remote>/<name>
+        for remote_entry in fs::read_dir(&remotes_dir)? {
+            let remote_entry = remote_entry?;
+            let remote_name = remote_entry.file_name().to_string_lossy().to_string();
+            if remote_name.starts_with('.') {
+                continue;
+            }
+            if !remote_entry.metadata()?.is_dir() {
+                continue;
+            }
+
+            let remote_dir = remote_entry.path();
+            let mut stack = vec![remote_dir.clone()];
+            while let Some(dir) = stack.pop() {
+                let entries = match fs::read_dir(&dir) {
+                    Ok(rd) => rd,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(RefStoreError::Io(e)),
+                };
+                for entry in entries {
+                    let entry = entry?;
+                    let path = entry.path();
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+                    if file_name.ends_with(".lock") || file_name.starts_with('.') {
+                        continue;
+                    }
+
+                    let metadata = entry.metadata()?;
+                    if metadata.is_dir() {
+                        stack.push(path);
+                    } else if metadata.is_file() {
+                        let rel_path = path
+                            .strip_prefix(&remote_dir)
+                            .unwrap()
+                            .to_string_lossy()
+                            .to_string();
+                        let name = format!("remotes/{}/{}", remote_name, rel_path);
+                        if let Ok(target) = self.read_ref(&name) {
+                            refs.push(crate::domain::reference::RemoteReference {
+                                remote: remote_name.clone(),
+                                name: rel_path,
+                                target,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(refs)
     }
 }
 

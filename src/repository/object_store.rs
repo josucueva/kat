@@ -147,7 +147,29 @@ impl ObjectStore {
 
     /// Checks whether `objects/<id>` exists, without reading or hashing it.
     pub fn exists(&self, id: ObjectId) -> Result<bool, ObjectStoreError> {
-        Ok(self.path_for(id).try_exists()?)
+        Ok(self.path_for(id).exists())
+    }
+
+    /// Finds all ObjectIds that start with the given hex prefix.
+    pub fn find_by_prefix(&self, prefix: &str) -> Result<Vec<ObjectId>, ObjectStoreError> {
+        let mut matches = Vec::new();
+        let dir = self.objects_dir();
+        if !dir.exists() {
+            return Ok(matches);
+        }
+
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            #[allow(clippy::collapsible_if)]
+            if name.starts_with(prefix) && name.len() == 64 {
+                if let Ok(id) = name.parse::<ObjectId>() {
+                    matches.push(id);
+                }
+            }
+        }
+        Ok(matches)
     }
 }
 

@@ -11,6 +11,7 @@ pub mod open;
 pub mod query;
 pub mod ref_store;
 pub mod resolve;
+pub mod selector;
 pub mod session;
 pub mod validation;
 pub mod workspace;

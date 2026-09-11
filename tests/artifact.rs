@@ -151,7 +151,7 @@ fn get_draft_session_operations(dir: &TempDir) -> Vec<serde_json::Value> {
     session
         .get("operations")
         .and_then(|ops| ops.as_array())
-        .map(|arr| arr.clone())
+        .cloned()
         .unwrap_or_default()
 }
 

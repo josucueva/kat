@@ -2845,7 +2845,7 @@ fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool, json: 
     use kat::repository::query::AccountabilityContext;
     use kat::repository::workspace::git::GitWorkspaceBackend;
     use kat::repository::workspace::open_workspace;
-    let backend = GitWorkspaceBackend::open(
+    let _backend = GitWorkspaceBackend::open(
         &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
     )
     .ok();

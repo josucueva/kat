@@ -8,6 +8,7 @@ pub mod machine;
 pub mod ontology;
 pub mod operation;
 pub mod property;
+pub mod reference;
 pub mod relationship;
 pub mod revision;
 pub mod state;
