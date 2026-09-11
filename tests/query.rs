@@ -40,9 +40,8 @@ use kat::repository::init::init_repository;
 use kat::repository::object_store::ObjectStoreError;
 use kat::repository::open::open_repository;
 use kat::repository::query::{
-    ListFilter, QueryError, TraversalDirection,
-    analyze_artifact_accountability, analyze_impact, history, list_elements, repository_status,
-    show_element, trace_origin,
+    ListFilter, QueryError, TraversalDirection, analyze_artifact_accountability, analyze_impact,
+    history, list_elements, repository_status, show_element, trace_origin,
 };
 use kat::repository::ref_store::AcceptedRef;
 use kat::repository::validation::repository::{ValidationViolationKind, validate_repository};

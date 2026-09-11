@@ -170,11 +170,14 @@ pub fn analyze_graph_quality(repository: &Repository) -> Result<GraphQualityRepo
 }
 
 /// Performs comprehensive mechanical repository check and advisory graph quality analysis.
-pub fn run_check(repository: &Repository) -> Result<CheckReport, QueryError> {
+pub fn run_check(
+    repository: &Repository,
+    context: Option<crate::repository::query::AccountabilityContext>,
+) -> Result<CheckReport, QueryError> {
     let mechanical_validation = validate_repository(repository)?;
     let repository_clean = mechanical_validation.violations.is_empty();
     let graph_quality = analyze_graph_quality(repository)?;
-    let artifact_accountability = analyze_artifact_accountability(repository, None).ok();
+    let artifact_accountability = analyze_artifact_accountability(repository, context).ok();
 
     Ok(CheckReport {
         repository_clean,
@@ -195,7 +198,7 @@ mod tests {
         let _repo = init_repository(dir.path()).unwrap();
         let opened = crate::repository::open::open_repository(dir.path()).unwrap();
 
-        let report = run_check(&opened).unwrap();
+        let report = run_check(&opened, None).unwrap();
         assert!(report.repository_clean);
         assert_eq!(report.graph_quality.total_findings, 0);
     }

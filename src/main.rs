@@ -2852,9 +2852,12 @@ fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool, json: 
     let ws =
         open_workspace(&std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")))
             .ok();
-
-    let context_opt = if let (Some(b), Some(w)) = (&backend, &ws) {
-        Some(AccountabilityContext::Workspace(b, w))
+    let context_opt = if let Some(w) = &ws {
+        Some(AccountabilityContext::Workspace(w))
+    } else if let Ok(accepted) = repository.ref_store().read_accepted() {
+        Some(AccountabilityContext::WorkingTree {
+            base_state: kat::domain::identity::SemanticStateId::from_object_id(accepted.state),
+        })
     } else {
         None
     };
@@ -3370,7 +3373,18 @@ fn run_check(compact: bool, json: bool) -> ExitCode {
         }
     };
 
-    match kat::repository::validation::graph_quality::run_check(&repository) {
+    let workspace_res = kat::repository::workspace::open_workspace(repository.root_dir());
+    let context = if let Ok(ref ws) = workspace_res {
+        Some(kat::repository::query::AccountabilityContext::Workspace(ws))
+    } else if let Ok(accepted) = repository.ref_store().read_accepted() {
+        Some(kat::repository::query::AccountabilityContext::WorkingTree {
+            base_state: kat::domain::identity::SemanticStateId::from_object_id(accepted.state),
+        })
+    } else {
+        None
+    };
+
+    match kat::repository::validation::graph_quality::run_check(&repository, context) {
         Ok(report) => {
             if json {
                 MachinePresenter::present_success(&repository, &report);

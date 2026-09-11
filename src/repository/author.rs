@@ -12,7 +12,6 @@ use std::collections::HashMap;
 use crate::domain::identity::ElementId;
 use crate::domain::property::PropertyValue;
 use crate::domain::property::{PROPERTY_ARTIFACT_LOCATOR, PROPERTY_ARTIFACT_MATERIALIZATION_ID};
-use crate::domain::workspace::MaterializationResolution;
 use crate::repository::change::{
     AccountArtifactInput, ChangeError, CreateElementInput, DeprecateElementInput, LinkElementInput,
     StagedOperationInput, SupersedeElementInput, UnlinkElementInput, UpdateElementInput,
@@ -23,7 +22,6 @@ use crate::repository::resolve::{resolve_element_in_draft_session, resolve_relat
 use crate::repository::session::{
     begin_draft_session, has_draft_session, read_draft_session, write_draft_session_atomic,
 };
-use crate::repository::workspace::fs_resolve_working_materialization;
 
 /// Declarative claim supported by the authoring compiler.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -320,26 +318,20 @@ pub fn compile_and_stage_claims(
                     properties.push(("description".to_string(), PropertyValue::Text(desc.clone())));
                 }
                 if let Some(loc) = locator.as_ref() {
-                    let mat_id = match fs_resolve_working_materialization(
-                        repository.root_dir(),
-                        std::path::Path::new(loc),
-                    ) {
-                        Ok(MaterializationResolution::File(id))
-                        | Ok(MaterializationResolution::Directory(id))
-                        | Ok(MaterializationResolution::Symlink(id)) => id,
-                        _ => return Err(ChangeError::Precondition(
+                    // Validate locator format but DO NOT require existence
+                    if loc.starts_with(".kat")
+                        || loc.contains("..")
+                        || std::path::Path::new(loc).is_absolute()
+                    {
+                        return Err(ChangeError::Precondition(
                             crate::repository::change::PreconditionError::MissingMaterialization(
                                 loc.clone(),
                             ),
-                        )),
-                    };
+                        ));
+                    }
                     properties.push((
                         PROPERTY_ARTIFACT_LOCATOR.to_string(),
                         PropertyValue::Text(loc.clone()),
-                    ));
-                    properties.push((
-                        PROPERTY_ARTIFACT_MATERIALIZATION_ID.to_string(),
-                        PropertyValue::Bytes(mat_id.into_bytes().to_vec()),
                     ));
                 }
 
@@ -425,29 +417,21 @@ pub fn compile_and_stage_claims(
                                 ),
                             )
                         })?;
-                    let mat_id = match fs_resolve_working_materialization(
-                        repository.root_dir(),
-                        std::path::Path::new(&artifact_path),
-                    ) {
-                        Ok(MaterializationResolution::File(id))
-                        | Ok(MaterializationResolution::Directory(id))
-                        | Ok(MaterializationResolution::Symlink(id)) => id,
-                        _ => return Err(ChangeError::Precondition(
+                    // Validate locator format but DO NOT require existence
+                    if artifact_path.starts_with(".kat")
+                        || artifact_path.contains("..")
+                        || std::path::Path::new(&artifact_path).is_absolute()
+                    {
+                        return Err(ChangeError::Precondition(
                             crate::repository::change::PreconditionError::MissingMaterialization(
                                 artifact_path.clone(),
                             ),
-                        )),
-                    };
-                    let properties = vec![
-                        (
-                            PROPERTY_ARTIFACT_LOCATOR.to_string(),
-                            PropertyValue::Text(artifact_path.clone()),
-                        ),
-                        (
-                            PROPERTY_ARTIFACT_MATERIALIZATION_ID.to_string(),
-                            PropertyValue::Bytes(mat_id.into_bytes().to_vec()),
-                        ),
-                    ];
+                        ));
+                    }
+                    let properties = vec![(
+                        PROPERTY_ARTIFACT_LOCATOR.to_string(),
+                        PropertyValue::Text(artifact_path.clone()),
+                    )];
                     staged_inputs.push(StagedOperationInput::UpdateElement(UpdateElementInput {
                         element_id: artifact_id,
                         expected_version: elem_entry.version,
@@ -493,26 +477,20 @@ pub fn compile_and_stage_claims(
                     properties.push(("description".to_string(), PropertyValue::Text(d.clone())));
                 }
                 if let Some(loc) = locator.as_ref() {
-                    let mat_id = match fs_resolve_working_materialization(
-                        repository.root_dir(),
-                        std::path::Path::new(loc),
-                    ) {
-                        Ok(MaterializationResolution::File(id))
-                        | Ok(MaterializationResolution::Directory(id))
-                        | Ok(MaterializationResolution::Symlink(id)) => id,
-                        _ => return Err(ChangeError::Precondition(
+                    // Validate locator format but DO NOT require existence
+                    if loc.starts_with(".kat")
+                        || loc.contains("..")
+                        || std::path::Path::new(loc).is_absolute()
+                    {
+                        return Err(ChangeError::Precondition(
                             crate::repository::change::PreconditionError::MissingMaterialization(
                                 loc.clone(),
                             ),
-                        )),
-                    };
+                        ));
+                    }
                     properties.push((
                         PROPERTY_ARTIFACT_LOCATOR.to_string(),
                         PropertyValue::Text(loc.clone()),
-                    ));
-                    properties.push((
-                        PROPERTY_ARTIFACT_MATERIALIZATION_ID.to_string(),
-                        PropertyValue::Bytes(mat_id.into_bytes().to_vec()),
                     ));
                 }
                 if let Some(true) = clear_locator {

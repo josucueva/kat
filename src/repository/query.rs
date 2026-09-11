@@ -244,7 +244,11 @@ use crate::domain::workspace::{Workspace, WorkspaceBackend};
 /// Execution context for resolving physical materializations during artifact accountability.
 pub enum AccountabilityContext<'a> {
     /// Evaluate against the active mutable workspace physical tree
-    Workspace(&'a dyn WorkspaceBackend, &'a Workspace),
+    Workspace(&'a Workspace),
+    /// Evaluate against the active mutable physical tree, but bound semantically without a DraftSession
+    WorkingTree {
+        base_state: crate::domain::identity::SemanticStateId,
+    },
     /// Evaluate against a frozen repository revision (no mutable state)
     Revision(&'a dyn WorkspaceBackend, &'a RepositoryRevision),
 }
@@ -1276,16 +1280,10 @@ pub fn analyze_artifact_accountability(
 ) -> Result<ArtifactAccountabilityReport, QueryError> {
     use crate::domain::workspace::MaterializationResolution;
 
-    let backend_opt = match &context {
-        Some(AccountabilityContext::Workspace(b, _)) => Some(*b),
-        Some(AccountabilityContext::Revision(b, _)) => Some(*b),
-        None => None,
-    };
-
     let mut draft_ops: Vec<crate::domain::operation::Operation> = Vec::new();
     let mut session_opt = None;
 
-    if let Some(AccountabilityContext::Workspace(_, _)) = &context {
+    if matches!(&context, Some(AccountabilityContext::Workspace(_))) {
         if let Ok(session) = crate::repository::session::read_draft_session(repository.root_dir()) {
             if session.status == crate::repository::session::DraftSessionState::Open {
                 session_opt = Some(session);
@@ -1298,7 +1296,7 @@ pub fn analyze_artifact_accountability(
         session.working_state.clone()
     } else {
         let state_id = match &context {
-            Some(AccountabilityContext::Workspace(_, ws)) => {
+            Some(AccountabilityContext::Workspace(ws)) => {
                 let rev = match load_typed(
                     repository.object_store(),
                     ws.base_revision.as_object_id(),
@@ -1311,6 +1309,7 @@ pub fn analyze_artifact_accountability(
                 };
                 rev.semantic_state
             }
+            Some(AccountabilityContext::WorkingTree { base_state }) => *base_state,
             Some(AccountabilityContext::Revision(_, rev)) => rev.semantic_state,
             None => crate::domain::identity::SemanticStateId::from_object_id(
                 repository.ref_store().read_accepted()?.state,
@@ -1326,24 +1325,6 @@ pub fn analyze_artifact_accountability(
             CanonicalPayload::SemanticState(s) => s,
             _ => unreachable!(),
         }
-    };
-
-    let snapshot_id_opt = match &context {
-        Some(AccountabilityContext::Workspace(_, ws)) => {
-            let rev = match load_typed(
-                repository.object_store(),
-                ws.base_revision.as_object_id(),
-                ObjectKind::RepositoryRevision,
-            )?
-            .payload
-            {
-                CanonicalPayload::RepositoryRevision(r) => r,
-                _ => unreachable!(),
-            };
-            Some(rev.workspace_snapshot)
-        }
-        Some(AccountabilityContext::Revision(_, rev)) => Some(rev.workspace_snapshot.clone()),
-        None => None,
     };
 
     let mut staged_elements_map = std::collections::HashMap::new();
@@ -1522,18 +1503,19 @@ pub fn analyze_artifact_accountability(
         };
 
         let physical_status = if let Some(loc) = &locator {
-            let resolution_opt = if let (Some(backend), Some(snapshot_id)) =
-                (backend_opt.as_ref(), snapshot_id_opt.as_ref())
-            {
-                backend
-                    .resolve_materialization(std::path::Path::new(loc), snapshot_id)
+            let resolution_opt = match &context {
+                Some(AccountabilityContext::Revision(backend, rev)) => backend
+                    .resolve_materialization(std::path::Path::new(loc), &rev.workspace_snapshot)
+                    .ok(),
+                Some(AccountabilityContext::Workspace(_))
+                | Some(AccountabilityContext::WorkingTree { .. }) => {
+                    crate::repository::workspace::fs_resolve_working_materialization(
+                        repository.root_dir(),
+                        std::path::Path::new(loc),
+                    )
                     .ok()
-            } else {
-                crate::repository::workspace::fs_resolve_working_materialization(
-                    repository.root_dir(),
-                    std::path::Path::new(loc),
-                )
-                .ok()
+                }
+                None => None, // Explicitly no physical resolution when context is None
             };
 
             if let Some(resolution) = resolution_opt {

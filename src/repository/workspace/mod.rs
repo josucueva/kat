@@ -196,9 +196,9 @@ fn collect_fs_tree(
         let metadata = entry.metadata().map_err(WorkspaceBackendError::Io)?;
         if metadata.is_symlink() {
             let target = std::fs::read_link(entry.path()).map_err(WorkspaceBackendError::Io)?;
-            let target_str = target.to_str().ok_or_else(|| {
-                WorkspaceBackendError::UnsupportedPathEncoding(target.clone())
-            })?;
+            let target_str = target
+                .to_str()
+                .ok_or_else(|| WorkspaceBackendError::UnsupportedPathEncoding(target.clone()))?;
             let mat_id = crate::encoding::hash::hash_symlink_materialization(target_str.as_bytes());
             entries.push((path_str, b'S', mat_id));
         } else if metadata.is_dir() {

@@ -141,6 +141,40 @@ fn get_artifact_status(dir: &TempDir) -> (String, String) {
     (sem, phy)
 }
 
+fn get_draft_session_operations(dir: &TempDir) -> Vec<serde_json::Value> {
+    let session_path = dir.path().join(".kat/work/change/session.json");
+    if !session_path.exists() {
+        return vec![];
+    }
+    let data = std::fs::read_to_string(session_path).unwrap();
+    let session: serde_json::Value = serde_json::from_str(&data).unwrap();
+    session
+        .get("operations")
+        .and_then(|ops| ops.as_array())
+        .map(|arr| arr.clone())
+        .unwrap_or_default()
+}
+
+fn get_draft_operations_count(dir: &TempDir) -> usize {
+    get_draft_session_operations(dir).len()
+}
+
+fn get_artifact_materialization_id(dir: &TempDir) -> Option<String> {
+    let list = run_kat_json(dir, &["list"]);
+    let el = list["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["element"]["type_id"] == "kat.core/artifact")
+        .unwrap();
+    el["element"]["properties"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p[0] == "kat.core/materialization-id")
+        .map(|p| serde_json::to_string(&p[1]["Bytes"]).unwrap())
+}
+
 fn setup_base(dir: &TempDir, with_locator: bool) -> String {
     let locator = if with_locator {
         fs::write(dir.path().join("source.rs"), "fn main() {}").unwrap();
@@ -230,13 +264,29 @@ fn test_art_04_unrelated_semantic_change_remains_current() {
 }
 
 #[test]
-fn test_art_05_no_accounting_baseline_is_current() {
+fn test_art_05a_implicit_introduction_baseline_is_current() {
     let dir = setup_repo();
     setup_base(&dir, true);
     // Do NOT account
 
     let (sem, _) = get_artifact_status(&dir);
     assert_eq!(sem, "Current");
+}
+
+#[test]
+fn test_art_05_missing_semantic_baseline_unaccounted() {
+    let dir = setup_repo();
+    let claims = r#"
+    [
+      { "kind": "create_element", "type_id": "kat.core/artifact", "title": "Art", "handle": "@art" }
+    ]
+    "#;
+    let claims_file = write_claims(&dir, claims);
+    run_kat_json(&dir, &["author", &claims_file]);
+    run_kat_text(&dir, &["commit"]);
+
+    let (sem, _) = get_artifact_status(&dir);
+    assert_eq!(sem, "Unaccounted");
 }
 
 #[test]
@@ -324,20 +374,40 @@ fn test_art_09_physical_path_removed_missing() {
 }
 
 #[test]
-fn test_art_10_invalid_locator_unresolved() {
+fn test_art_x4_x5_locator_missing_file_behavior() {
     let dir = setup_repo();
 
-    // Create artifact pointing to something that doesn't exist
     let claims = r#"
     [
       { "kind": "create_element", "type_id": "kat.core/requirement", "title": "Req", "handle": "@req" },
-      { "kind": "create_element", "type_id": "kat.core/artifact", "title": "Art", "handle": "@art", "locator": "invalid_path.txt" },
+      { "kind": "create_element", "type_id": "kat.core/artifact", "title": "Art", "handle": "@art", "locator": "missing.txt" },
       { "kind": "link_element", "source_ref": "@art", "relationship_type_id": "kat.core/derived-from", "target_ref": "@req" }
     ]
     "#;
     let claims_file = write_claims(&dir, claims);
-    let out = run_kat_fail(&dir, &["author", &claims_file]);
+
+    // ART-X4: kat author succeeds, declaring locator while target is absent
+    run_kat_json(&dir, &["author", &claims_file]);
+    run_kat_text(&dir, &["commit"]);
+
+    let (_, phy) = get_artifact_status(&dir);
+    assert_eq!(phy, "Missing"); // physical Missing
+
+    let art_id = get_artifact_id(&dir);
+
+    // Check initial ops count
+    let ops_before = get_draft_operations_count(&dir);
+
+    // ART-X5: account on missing locator -> precondition failure (must be atomic)
+    let out = run_kat_fail(&dir, &["account", &art_id]);
     assert!(out.contains("missing materialization"));
+
+    // Verify DraftSession didn't change
+    let ops_after = get_draft_operations_count(&dir);
+    assert_eq!(
+        ops_before, ops_after,
+        "DraftSession operations count must not change on account failure"
+    );
 }
 
 #[test]
@@ -403,17 +473,44 @@ fn test_art_14_re_account_establishes_new_materialization_id() {
     run_kat_text(&dir, &["account", &art_id]);
     run_kat_text(&dir, &["commit"]);
 
+    let mat_id_before = get_artifact_materialization_id(&dir);
+    assert!(mat_id_before.is_some());
+
     fs::write(dir.path().join("source.rs"), "modified").unwrap();
 
     let (_, phy) = get_artifact_status(&dir);
     assert_eq!(phy, "Modified");
 
-    // Re-account
+    // Re-account inside a draft session so it stages the operations instead of auto-committing
+    run_kat_text(&dir, &["change", "begin"]);
     run_kat_text(&dir, &["account", &art_id]);
+
+    let status = run_kat_json(&dir, &["status"]);
+    println!(
+        "DEBUG STATUS: {}",
+        serde_json::to_string_pretty(&status).unwrap()
+    );
+
+    // ART-X9: Assert DraftSession contains exactly 1 operation (the UpdateElement for materialization-id).
+    // Note: AccountArtifact is skipped since there was no semantic drift.
+    let ops = get_draft_session_operations(&dir);
+    assert_eq!(
+        ops.len(),
+        1,
+        "DraftSession must contain exactly 1 operation (UpdateElement for materialization-id)"
+    );
+
     run_kat_text(&dir, &["commit"]);
 
-    let (_, phy) = get_artifact_status(&dir);
-    assert_eq!(phy, "Current");
+    let (_, phy_after) = get_artifact_status(&dir);
+    assert_eq!(phy_after, "Current");
+
+    let mat_id_after = get_artifact_materialization_id(&dir);
+    assert!(mat_id_after.is_some());
+    assert_ne!(
+        mat_id_before, mat_id_after,
+        "materialization-id must be updated on re-account"
+    );
 }
 
 #[test]
@@ -497,24 +594,6 @@ fn test_art_19_no_locator() {
 
     let (_, phy) = get_artifact_status(&dir);
     assert_eq!(phy, "");
-}
-
-#[test]
-fn test_art_20_account_with_locator_whose_target_is_missing() {
-    let dir = setup_repo();
-    // Create artifact with a locator that does not exist
-    let claims = r#"
-    [
-      { "kind": "create_element", "type_id": "kat.core/requirement", "title": "Req", "handle": "@req" },
-      { "kind": "create_element", "type_id": "kat.core/artifact", "title": "Art", "handle": "@art", "locator": "missing.txt" },
-      { "kind": "link_element", "source_ref": "@art", "relationship_type_id": "kat.core/derived-from", "target_ref": "@req" }
-    ]
-    "#;
-    let claims_file = write_claims(&dir, claims);
-
-    // kat author fails at staging if the locator does not exist!
-    let out = run_kat_fail(&dir, &["author", &claims_file]);
-    assert!(out.contains("missing materialization"));
 }
 
 #[test]
