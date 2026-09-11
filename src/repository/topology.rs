@@ -28,9 +28,12 @@ fn load_revision(
     store: &ObjectStore,
     id: RepositoryRevisionId,
 ) -> Result<RepositoryRevision, QueryError> {
-    let bytes = store
-        .get(id.as_object_id())
-        .map_err(QueryError::ObjectStore)?;
+    let bytes = store.get(id.as_object_id()).map_err(|e| match e {
+        crate::repository::object_store::ObjectStoreError::NotFound(_) => {
+            QueryError::MissingTopologyObject(id.as_object_id())
+        }
+        other => QueryError::ObjectStore(other),
+    })?;
     let canonical = decode_canonical(&bytes).map_err(QueryError::Decoding)?;
     if canonical.object_kind() != ObjectKind::RepositoryRevision {
         return Err(QueryError::UnexpectedObjectKind {

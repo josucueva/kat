@@ -345,6 +345,8 @@ pub enum QueryError {
     RefStore(RefStoreError),
     /// An object store failure while loading a referenced object.
     ObjectStore(ObjectStoreError),
+    /// A referenced topology object (e.g. parent revision) is missing from the store.
+    MissingTopologyObject(crate::domain::identity::ObjectId),
     /// A referenced object failed strict canonical decoding.
     Decoding(DecodingError),
     /// A referenced object has a different canonical kind than expected.
@@ -2826,6 +2828,7 @@ impl std::fmt::Display for QueryError {
         match self {
             Self::RefStore(e0) => write!(f, "ref store error: {e0}"),
             Self::ObjectStore(e0) => write!(f, "object store error: {e0}"),
+            Self::MissingTopologyObject(e0) => write!(f, "missing topology object: {e0}"),
             Self::Decoding(e0) => write!(f, "decoding error: {e0}"),
             Self::UnexpectedObjectKind {
                 expected, actual, ..
