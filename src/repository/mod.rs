@@ -13,6 +13,7 @@ pub mod ref_store;
 pub mod resolve;
 pub mod selector;
 pub mod session;
+pub mod topology;
 pub mod validation;
 pub mod workspace;
 
