@@ -510,18 +510,25 @@ Handle physical merge and conflict state.
 ### Goal
 Provide CLI tools for collaboration.
 ### Design inputs
-- `collaboration-workflow.md`
+- `collaboration-workflow.md`, `collaboration-porcelain.md`
 ### Traceability
-- Adherence to v0.4 porcelain architecture.
+- Adherence to v0.4 porcelain architecture and POR-01 through POR-12 invariants.
 ### Preconditions
 - Phase 9 complete.
 ### Design constraints
-- Conform to existing CLI philosophy.
+- Conform to existing CLI philosophy and the strict command surface area (reconcile != publish).
 ### Implementation work
-- Evaluate and expose: `status`, `commit`, `switch`, `reconcile`.
-- Define and validate porcelain contracts for `sync`/`push`.
-- Implement local commands fully.
-- For every porcelain action, specify: human output, `--json` output, preconditions, failure diagnostics, atomic boundary, interaction with dirty workspace.
+- 10.1 Reconciliation session/workspace state model.
+- 10.2 Collaboration status/query APIs (`kat status` updates).
+- 10.3 Reconcile porcelain (`kat reconcile`).
+- 10.4 Inspect conflicts (`kat conflicts`).
+- 10.5 Candidate materialization (applying physical conflicts to working tree).
+- 10.6 Semantic/physical resolution workflows (`kat resolve`).
+- 10.7 Abort workflow (`kat abort`).
+- 10.8 Finalize/accept workflows (`kat finalize` or `kat accept`).
+- 10.9 Switch/advance workflows (`kat switch`, explicit advance).
+- 10.10 JSON machine interfaces.
+- 10.11 Full E2E collaboration tests.
 ### Tests
 - Local end-to-end usability scenarios mirroring real workflow.
 ### Regression checks
