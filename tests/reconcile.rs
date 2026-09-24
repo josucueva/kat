@@ -10,8 +10,8 @@ use kat::domain::workspace::WorkspaceId;
 use kat::encoding::object::{CanonicalObject, CanonicalPayload};
 use kat::repository::object_store::ObjectStore;
 use kat::repository::reconcile::{
-    CandidateLoadError, load_reconciliation_candidate, reconcile_semantic,
-    save_reconciliation_candidate,
+    SessionLoadError, load_reconciliation_session, reconcile_semantic,
+    save_reconciliation_session,
 };
 
 fn object_id(byte: u8) -> ObjectId {
@@ -293,22 +293,18 @@ fn rec_08_persistence_survives_restart() {
 
     let candidate = call_reconcile(&store, &base, &local, &other);
     let backend = kat::repository::workspace::fake::FakeWorkspaceBackend::new();
-    save_reconciliation_candidate(dir.path(), &candidate.workspace_id, &candidate, &backend)
+    save_reconciliation_session(dir.path(), &candidate.workspace_id, &kat::repository::reconcile::ReconciliationSession { version: 1, workspace_id: candidate.workspace_id.clone(), base_revision: candidate.local_revision.clone(), target_revision: candidate.other_revision.clone(), state: kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate: candidate.clone() } }, &backend)
         .unwrap();
-    let loaded = load_reconciliation_candidate(
-        dir.path(),
-        &WorkspaceId("ws-test".to_string()),
-        mock_repo_rev(1),
-        mock_repo_rev(2),
-        mock_repo_rev(3),
+    let loaded = load_reconciliation_session(
+        dir.path(), &WorkspaceId("ws-test".to_string()), mock_repo_rev(2), mock_repo_rev(3),
     )
     .unwrap()
     .unwrap();
 
     assert_eq!(loaded.workspace_id, candidate.workspace_id);
-    assert_eq!(loaded.base_revision, candidate.base_revision);
+    assert_eq!(loaded.base_revision, candidate.local_revision);
     assert_eq!(
-        loaded.proposed_semantic_state,
+        match &loaded.state { kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate } => candidate.proposed_semantic_state.clone(), _ => panic!("Expected Conflicted") },
         candidate.proposed_semantic_state
     );
 }
@@ -439,14 +435,14 @@ fn rec_09_persistence_moves_no_ref() {
     // Saving candidate should not update any git refs or workspaces.
     // In our simplified test, we just ensure no side-effects occur outside the candidate file.
     let backend = kat::repository::workspace::fake::FakeWorkspaceBackend::new();
-    save_reconciliation_candidate(dir.path(), &candidate.workspace_id, &candidate, &backend)
+    save_reconciliation_session(dir.path(), &candidate.workspace_id, &kat::repository::reconcile::ReconciliationSession { version: 1, workspace_id: candidate.workspace_id.clone(), base_revision: candidate.local_revision.clone(), target_revision: candidate.other_revision.clone(), state: kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate: candidate.clone() } }, &backend)
         .unwrap();
     let path = dir
         .path()
         .join(".kat")
         .join("workspaces")
         .join(&candidate.workspace_id.0)
-        .join("reconciliation_candidate.json");
+        .join("reconciliation_session.json");
     assert!(path.exists());
 
     // (If we had a `Workspace` state to verify, we'd check it hasn't mutated its base_revision).
@@ -493,20 +489,16 @@ fn rec_11_stale_candidate_rejection() {
     let base = mock_state(ontology_id);
     let candidate = call_reconcile(&store, &base, &base, &base);
     let backend = kat::repository::workspace::fake::FakeWorkspaceBackend::new();
-    save_reconciliation_candidate(dir.path(), &candidate.workspace_id, &candidate, &backend)
+    save_reconciliation_session(dir.path(), &candidate.workspace_id, &kat::repository::reconcile::ReconciliationSession { version: 1, workspace_id: candidate.workspace_id.clone(), base_revision: candidate.local_revision.clone(), target_revision: candidate.other_revision.clone(), state: kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate: candidate.clone() } }, &backend)
         .unwrap();
 
     // Simulate active workspace moving its base (from mock_repo_rev(1) to mock_repo_rev(9))
-    let result = load_reconciliation_candidate(
-        dir.path(),
-        &WorkspaceId("ws-test".to_string()),
-        mock_repo_rev(9), // Expected base differs from candidate
-        mock_repo_rev(2),
-        mock_repo_rev(3),
+    let result = load_reconciliation_session(
+        dir.path(), &WorkspaceId("ws-test".to_string()), mock_repo_rev(9), mock_repo_rev(3),
     );
 
     match result {
-        Err(CandidateLoadError::StaleBase) => {}
+        Err(SessionLoadError::StaleBase) => {}
         _ => panic!("Expected StaleBase error"),
     }
 }
@@ -516,29 +508,26 @@ fn rec_unsupported_candidate_version() {
     let (dir, store) = setup();
     let ontology_id = put_mock_ontology(&store);
     let base = mock_state(ontology_id);
-    let mut candidate = call_reconcile(&store, &base, &base, &base);
+    let candidate = call_reconcile(&store, &base, &base, &base);
+    let mut session = kat::repository::reconcile::ReconciliationSession { version: 1, workspace_id: candidate.workspace_id.clone(), base_revision: candidate.local_revision.clone(), target_revision: candidate.other_revision.clone(), state: kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate: candidate.clone() } };
 
     // Manually serialize with a future version
-    candidate.version = 2;
+    session.version = 2;
     let path = dir
         .path()
         .join(".kat")
         .join("workspaces")
         .join(&candidate.workspace_id.0);
     std::fs::create_dir_all(&path).unwrap();
-    let json = serde_json::to_string_pretty(&candidate).unwrap();
-    std::fs::write(path.join("reconciliation_candidate.json"), json).unwrap();
+    let json = serde_json::to_string_pretty(&session).unwrap();
+    std::fs::write(path.join("reconciliation_session.json"), json).unwrap();
 
-    let result = load_reconciliation_candidate(
-        dir.path(),
-        &WorkspaceId("ws-test".to_string()),
-        mock_repo_rev(1),
-        mock_repo_rev(2),
-        mock_repo_rev(3),
+    let result = load_reconciliation_session(
+        dir.path(), &WorkspaceId("ws-test".to_string()), mock_repo_rev(1), mock_repo_rev(3),
     );
 
     match result {
-        Err(CandidateLoadError::UnsupportedVersion(2)) => {}
+        Err(SessionLoadError::UnsupportedVersion(2)) => {}
         _ => panic!("Expected UnsupportedVersion(2) error"),
     }
 }

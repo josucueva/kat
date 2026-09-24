@@ -14,13 +14,23 @@ use crate::repository::object_store::ObjectStore;
 use crate::repository::query::{QueryError, load_typed};
 use crate::repository::validation::validate_repository_state;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ReconciliationSession {
+    pub version: u32,
+    pub workspace_id: WorkspaceId,
+    pub base_revision: RepositoryRevisionId,
+    pub target_revision: RepositoryRevisionId,
+    pub state: ReconciliationSessionState,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[allow(clippy::large_enum_variant)]
-pub enum ReconciliationResult {
+pub enum ReconciliationSessionState {
     /// Both semantic and physical reconciliation succeeded with no conflicts or findings.
     /// The proposed state and new physical snapshot are ready to be committed.
-    Clean { revision: RepositoryRevisionId },
+    PreparedClean { revision: RepositoryRevisionId },
     /// Conflicts or findings were found in either domain.
-    Conflicted(ReconciliationCandidate),
+    Conflicted { candidate: ReconciliationCandidate },
 }
 
 /// A candidate produced by attempting semantic reconciliation.
@@ -39,20 +49,18 @@ pub struct ReconciliationCandidate {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum CandidateLoadError {
+pub enum SessionLoadError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("Unsupported candidate format version: {0}")]
+    #[error("Unsupported session format version: {0}")]
     UnsupportedVersion(u32),
-    #[error("Stale candidate: base revision mismatch")]
+    #[error("Stale session: base revision mismatch")]
     StaleBase,
-    #[error("Stale candidate: local revision mismatch")]
-    StaleLocal,
-    #[error("Stale candidate: other revision mismatch")]
-    StaleOther,
-    #[error("Stale candidate: workspace ID mismatch")]
+    #[error("Stale session: target revision mismatch")]
+    StaleTarget,
+    #[error("Stale session: workspace ID mismatch")]
     StaleWorkspace,
 }
 
@@ -223,50 +231,50 @@ pub fn reconcile_semantic(
 }
 
 // Helper for the persistence path
-fn candidate_path(repo_root: &Path, workspace_id: &WorkspaceId) -> PathBuf {
+fn session_path(repo_root: &Path, workspace_id: &WorkspaceId) -> PathBuf {
     repo_root
         .join(".kat")
         .join("workspaces")
         .join(&workspace_id.0)
-        .join("reconciliation_candidate.json")
+        .join("reconciliation_session.json")
 }
 
-pub fn save_reconciliation_candidate(
+pub fn save_reconciliation_session(
     repo_root: &Path,
     workspace_id: &WorkspaceId,
-    candidate: &ReconciliationCandidate,
+    session: &ReconciliationSession,
     backend: &dyn WorkspaceBackend,
 ) -> std::io::Result<()> {
-    let path = candidate_path(repo_root, workspace_id);
+    let path = session_path(repo_root, workspace_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
 
     // 1. Construct physical state & 2. Write backend candidate atomically
-    if let Some(phys) = &candidate.physical_candidate {
-        backend
-            .persist_physical_candidate(workspace_id, phys)
-            .map_err(std::io::Error::other)?;
-        // 3. Verify it can be reopened (the API doesn't expose it generically yet, but backend has done the durable write)
-        // If it was GitWorkspaceBackend, it would load_physical_candidate. We can just rely on the durable write success.
-    }
+    if let ReconciliationSessionState::Conflicted { candidate } = &session.state
+        && let Some(phys) = &candidate.physical_candidate {
+            backend
+                .persist_physical_candidate(workspace_id, phys)
+                .map_err(std::io::Error::other)?;
+            // 3. Verify it can be reopened (the API doesn't expose it generically yet, but backend has done the durable write)
+            // If it was GitWorkspaceBackend, it would load_physical_candidate. We can just rely on the durable write success.
+        }
 
-    // 4. Write reconciliation_candidate.json atomically
+    // 4. Write reconciliation_session.json atomically
     let temp_path = path.with_extension("tmp");
-    let json = serde_json::to_string_pretty(candidate).map_err(std::io::Error::other)?;
+    let json = serde_json::to_string_pretty(session).map_err(std::io::Error::other)?;
     fs::write(&temp_path, json)?;
     fs::rename(temp_path, path)?;
     Ok(())
 }
 
-pub fn load_reconciliation_candidate(
+pub fn load_reconciliation_session(
     repo_root: &Path,
     workspace_id: &WorkspaceId,
     expected_base: RepositoryRevisionId,
-    expected_local: RepositoryRevisionId,
-    expected_other: RepositoryRevisionId,
-) -> Result<Option<ReconciliationCandidate>, CandidateLoadError> {
-    let path = candidate_path(repo_root, workspace_id);
+    expected_target: RepositoryRevisionId,
+) -> Result<Option<ReconciliationSession>, SessionLoadError> {
+    let path = session_path(repo_root, workspace_id);
     if !path.exists() {
         return Ok(None);
     }
@@ -276,35 +284,32 @@ pub fn load_reconciliation_candidate(
     let parsed: serde_json::Value = serde_json::from_str(&json)?;
     if let Some(version) = parsed.get("version").and_then(|v| v.as_u64()) {
         if version != 1 {
-            return Err(CandidateLoadError::UnsupportedVersion(version as u32));
+            return Err(SessionLoadError::UnsupportedVersion(version as u32));
         }
     } else {
-        return Err(CandidateLoadError::UnsupportedVersion(0));
+        return Err(SessionLoadError::UnsupportedVersion(0));
     }
 
-    let candidate: ReconciliationCandidate = serde_json::from_value(parsed)?;
+    let session: ReconciliationSession = serde_json::from_value(parsed)?;
 
-    if candidate.workspace_id != *workspace_id {
-        return Err(CandidateLoadError::StaleWorkspace);
+    if session.workspace_id != *workspace_id {
+        return Err(SessionLoadError::StaleWorkspace);
     }
-    if candidate.base_revision != expected_base {
-        return Err(CandidateLoadError::StaleBase);
+    if session.base_revision != expected_base {
+        return Err(SessionLoadError::StaleBase);
     }
-    if candidate.local_revision != expected_local {
-        return Err(CandidateLoadError::StaleLocal);
-    }
-    if candidate.other_revision != expected_other {
-        return Err(CandidateLoadError::StaleOther);
+    if session.target_revision != expected_target {
+        return Err(SessionLoadError::StaleTarget);
     }
 
-    Ok(Some(candidate))
+    Ok(Some(session))
 }
 
 /// Orchestrates both semantic and physical reconciliation.
 ///
-/// If both domains are clean, returns `ReconciliationResult::Clean` with the ready-to-commit state.
-/// If either domain produces conflicts or validation findings, returns a `ReconciliationResult::Conflicted`
-/// candidate that must be persisted for manual resolution.
+/// If both domains are clean, returns a `ReconciliationSession` in the `PreparedClean` state.
+/// If either domain produces conflicts or validation findings, returns a `ReconciliationSession`
+/// in the `Conflicted` state.
 #[allow(clippy::too_many_arguments)]
 pub fn reconcile(
     store: &ObjectStore,
@@ -319,11 +324,11 @@ pub fn reconcile(
     base_state: &SemanticState,
     local_state: &SemanticState,
     other_state: &SemanticState,
-) -> Result<ReconciliationResult, QueryError> {
+) -> Result<ReconciliationSession, QueryError> {
     // 1. Semantic Reconciliation
     let mut candidate = reconcile_semantic(
         store,
-        workspace_id,
+        workspace_id.clone(),
         base_rev_id,
         local_rev_id,
         other_rev_id,
@@ -386,8 +391,14 @@ pub fn reconcile(
                 let rev_obj_id = store.put(&rev_bytes).map_err(QueryError::ObjectStore)?;
                 let revision_id = RepositoryRevisionId::from_object_id(rev_obj_id);
 
-                return Ok(ReconciliationResult::Clean {
-                    revision: revision_id,
+                return Ok(ReconciliationSession {
+                    version: 1,
+                    workspace_id,
+                    base_revision: local_rev_id,
+                    target_revision: other_rev_id,
+                    state: ReconciliationSessionState::PreparedClean {
+                        revision: revision_id,
+                    },
                 });
             }
         }
@@ -398,7 +409,13 @@ pub fn reconcile(
     }
 
     // Either semantic conflicts/findings exist, or physical conflicts exist (or both).
-    Ok(ReconciliationResult::Conflicted(candidate))
+    Ok(ReconciliationSession {
+        version: 1,
+        workspace_id,
+        base_revision: local_rev_id,
+        target_revision: other_rev_id,
+        state: ReconciliationSessionState::Conflicted { candidate },
+    })
 }
 
 fn collect_element_ids(
