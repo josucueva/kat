@@ -2,7 +2,7 @@ use git2::Repository;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::domain::identity::{MaterializationId, WorkspaceSnapshotId};
+use crate::domain::identity::{MaterializationId, PhysicalCandidateId, WorkspaceSnapshotId};
 use crate::domain::workspace::{
     BackendConsistency, MaterializationResolution, PhysicalChanges, WorkingState, WorkspaceBackend,
     WorkspaceBackendError,
@@ -13,11 +13,41 @@ use crate::domain::workspace::{
 pub struct BackendSnapshotRepresentation {
     pub commit: git2::Oid,
 }
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GitPhysicalCandidateState {
+    pub version: u32,
+    pub base_snapshot: String,
+    pub local_snapshot: String,
+    pub other_snapshot: String,
+    pub provisional_tree: String,
+    pub conflicts: Vec<GitConflictReconstructionData>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GitConflictReconstructionData {
+    pub kind: crate::domain::conflict::MaterializationConflictKind,
+    pub paths: Vec<PathBuf>,
+    pub base: Option<GitCandidateEntry>,
+    pub local: Option<GitCandidateEntry>,
+    pub other: Option<GitCandidateEntry>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GitCandidateEntry {
+    pub path: PathBuf,
+    pub oid: String,
+    pub mode: u32,
+}
 
 /// A WorkspaceBackend that uses a Git repository stored inside `.kat/physical/git/`.
 pub struct GitWorkspaceBackend {
     _repo: Repository,
     _project_root: PathBuf,
+    transient_candidates: std::sync::RwLock<
+        std::collections::HashMap<PhysicalCandidateId, GitPhysicalCandidateState>,
+    >,
 }
 
 impl GitWorkspaceBackend {
@@ -50,6 +80,7 @@ impl GitWorkspaceBackend {
         Ok(Self {
             _repo: repo,
             _project_root: project_root.to_path_buf(),
+            transient_candidates: std::sync::RwLock::new(std::collections::HashMap::new()),
         })
     }
 
@@ -73,6 +104,7 @@ impl GitWorkspaceBackend {
         Ok(Self {
             _repo: repo,
             _project_root: project_root.to_path_buf(),
+            transient_candidates: std::sync::RwLock::new(std::collections::HashMap::new()),
         })
     }
 
@@ -161,6 +193,7 @@ impl GitWorkspaceBackend {
         Ok(Self {
             _repo: repo,
             _project_root: project_root.to_path_buf(),
+            transient_candidates: std::sync::RwLock::new(std::collections::HashMap::new()),
         })
     }
 
@@ -900,6 +933,433 @@ impl WorkspaceBackend for GitWorkspaceBackend {
         }
         Ok(true)
     }
+
+    fn reconcile_physical(
+        &self,
+        base: &WorkspaceSnapshotId,
+        local: &WorkspaceSnapshotId,
+        other: &WorkspaceSnapshotId,
+    ) -> Result<crate::domain::workspace::PhysicalReconciliationResult, WorkspaceBackendError> {
+        use crate::domain::conflict::{MaterializationConflict, MaterializationConflictKind};
+        use crate::domain::identity::PhysicalCandidateId;
+        use crate::domain::workspace::{
+            PhysicalReconciliationCandidate, PhysicalReconciliationResult,
+        };
+        use std::collections::{BTreeMap, BTreeSet};
+        use std::path::PathBuf;
+
+        let b_reps = Self::get_snapshot_representations(&self._project_root, base);
+        let l_reps = Self::get_snapshot_representations(&self._project_root, local);
+        let o_reps = Self::get_snapshot_representations(&self._project_root, other);
+
+        let b_commit = self
+            ._repo
+            .find_commit(
+                b_reps
+                    .first()
+                    .ok_or_else(|| WorkspaceBackendError::SnapshotNotFound(base.clone()))?
+                    .commit,
+            )
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let l_commit = self
+            ._repo
+            .find_commit(
+                l_reps
+                    .first()
+                    .ok_or_else(|| WorkspaceBackendError::SnapshotNotFound(local.clone()))?
+                    .commit,
+            )
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let o_commit = self
+            ._repo
+            .find_commit(
+                o_reps
+                    .first()
+                    .ok_or_else(|| WorkspaceBackendError::SnapshotNotFound(other.clone()))?
+                    .commit,
+            )
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+        let b_tree = b_commit
+            .tree()
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let l_tree = l_commit
+            .tree()
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let o_tree = o_commit
+            .tree()
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+        let mut merge_opts = git2::MergeOptions::new();
+        merge_opts.find_renames(false);
+        let index = self
+            ._repo
+            .merge_trees(&b_tree, &l_tree, &o_tree, Some(&merge_opts))
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+        let mut entries_to_keep = BTreeMap::new();
+        let mut conflicts = Vec::new();
+        let mut state_conflicts = Vec::new();
+        let mut paths_handled = BTreeSet::new();
+
+        if index.has_conflicts() {
+            let index_conflicts = index
+                .conflicts()
+                .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+            for c in index_conflicts {
+                let conflict =
+                    c.map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+                let path_bytes = conflict
+                    .our
+                    .as_ref()
+                    .or(conflict.their.as_ref())
+                    .or(conflict.ancestor.as_ref())
+                    .unwrap()
+                    .path
+                    .clone();
+                let path = PathBuf::from(std::str::from_utf8(&path_bytes).unwrap());
+
+                paths_handled.insert(path.clone());
+
+                let kind = match (&conflict.ancestor, &conflict.our, &conflict.their) {
+                    (Some(_), None, Some(_)) | (Some(_), Some(_), None) => {
+                        MaterializationConflictKind::DeleteModify
+                    }
+                    (Some(_), None, None) => {
+                        continue;
+                    }
+                    (_, Some(l), Some(o)) => {
+                        if l.mode != o.mode {
+                            MaterializationConflictKind::TypeChange
+                        } else {
+                            MaterializationConflictKind::Content
+                        }
+                    }
+                    (None, Some(l), None) => {
+                        // Libgit2 emitted a conflict due to a D/F collision with another path.
+                        // According to Kat semantics, this is a clean add by local. We let the
+                        // subsequent PathCollision logic detect the D/F conflict naturally.
+                        entries_to_keep.insert(path.clone(), (l.id, l.mode as i32));
+                        continue;
+                    }
+                    (None, None, Some(o)) => {
+                        // Same as above, clean add by other.
+                        entries_to_keep.insert(path.clone(), (o.id, o.mode as i32));
+                        continue;
+                    }
+                    _ => MaterializationConflictKind::Content,
+                };
+
+                conflicts.push(MaterializationConflict {
+                    kind: kind.clone(),
+                    paths: vec![path.clone()],
+                });
+
+                let entry_state = |e: &Option<git2::IndexEntry>| {
+                    e.as_ref().map(|x| GitCandidateEntry {
+                        path: path.clone(),
+                        oid: x.id.to_string(),
+                        mode: x.mode,
+                    })
+                };
+
+                state_conflicts.push(GitConflictReconstructionData {
+                    kind: kind.clone(),
+                    paths: vec![path.clone()],
+                    base: entry_state(&conflict.ancestor),
+                    local: entry_state(&conflict.our),
+                    other: entry_state(&conflict.their),
+                });
+
+                if let Some(base_entry) = conflict.ancestor {
+                    entries_to_keep.insert(path, (base_entry.id, base_entry.mode as i32));
+                }
+            }
+        }
+
+        for entry in index.iter() {
+            // Unconflicted entries have stage == 0, which corresponds to bits 12-13 being 0
+            if (entry.flags & 0x3000) == 0 {
+                let path = PathBuf::from(std::str::from_utf8(&entry.path).unwrap());
+                if !paths_handled.contains(&path) {
+                    entries_to_keep.insert(path, (entry.id, entry.mode as i32));
+                }
+            }
+        }
+
+        let mut clean_paths: Vec<_> = entries_to_keep.keys().cloned().collect();
+        clean_paths.sort();
+
+        let mut paths_to_remove = BTreeSet::new();
+        for i in 0..clean_paths.len() {
+            let p1 = &clean_paths[i];
+            for j in (i + 1)..clean_paths.len() {
+                let p2 = &clean_paths[j];
+                if p2.starts_with(p1) {
+                    conflicts.push(MaterializationConflict {
+                        kind: MaterializationConflictKind::PathCollision,
+                        paths: vec![p1.clone(), p2.clone()],
+                    });
+
+                    let b1 = b_tree.get_path(p1).ok().map(|e| GitCandidateEntry {
+                        path: p1.clone(),
+                        oid: e.id().to_string(),
+                        mode: e.filemode() as u32,
+                    });
+                    let l1 = l_tree.get_path(p1).ok().map(|e| GitCandidateEntry {
+                        path: p1.clone(),
+                        oid: e.id().to_string(),
+                        mode: e.filemode() as u32,
+                    });
+                    let o1 = o_tree.get_path(p1).ok().map(|e| GitCandidateEntry {
+                        path: p1.clone(),
+                        oid: e.id().to_string(),
+                        mode: e.filemode() as u32,
+                    });
+
+                    let b2 = b_tree.get_path(p2).ok().map(|e| GitCandidateEntry {
+                        path: p2.clone(),
+                        oid: e.id().to_string(),
+                        mode: e.filemode() as u32,
+                    });
+                    let l2 = l_tree.get_path(p2).ok().map(|e| GitCandidateEntry {
+                        path: p2.clone(),
+                        oid: e.id().to_string(),
+                        mode: e.filemode() as u32,
+                    });
+                    let o2 = o_tree.get_path(p2).ok().map(|e| GitCandidateEntry {
+                        path: p2.clone(),
+                        oid: e.id().to_string(),
+                        mode: e.filemode() as u32,
+                    });
+
+                    state_conflicts.push(GitConflictReconstructionData {
+                        kind: MaterializationConflictKind::PathCollision,
+                        paths: vec![p1.clone(), p2.clone()],
+                        base: b1,
+                        local: l1,
+                        other: o1,
+                    });
+                    state_conflicts.push(GitConflictReconstructionData {
+                        kind: MaterializationConflictKind::PathCollision,
+                        paths: vec![p1.clone(), p2.clone()],
+                        base: b2,
+                        local: l2,
+                        other: o2,
+                    });
+
+                    paths_to_remove.insert(p1.clone());
+                    paths_to_remove.insert(p2.clone());
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if !paths_to_remove.is_empty() {
+            for p in paths_to_remove {
+                entries_to_keep.remove(&p);
+                if let Ok(b_entry) = b_tree.get_path(&p) {
+                    entries_to_keep.insert(p.clone(), (b_entry.id(), b_entry.filemode()));
+                }
+            }
+        }
+
+        let prov_tree_oid =
+            build_git_tree_recursive(&self._repo, &entries_to_keep, std::path::Path::new(""))?;
+
+        if conflicts.is_empty() {
+            let prov_tree = self
+                ._repo
+                .find_tree(prov_tree_oid)
+                .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+            let mut entries = Vec::new();
+            collect_git_tree(
+                &self._repo,
+                &prov_tree,
+                std::path::Path::new(""),
+                &mut entries,
+            )?;
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            let new_snapshot_id = crate::domain::identity::WorkspaceSnapshotId::new(
+                crate::encoding::hash::hash_workspace_snapshot(&entries).into_bytes(),
+            );
+
+            let sig = self
+                ._repo
+                .signature()
+                .unwrap_or_else(|_| git2::Signature::now("kat", "kat@kat").unwrap());
+            self._repo
+                .commit(
+                    None, // Do not update HEAD or references
+                    &sig,
+                    &sig,
+                    "KAT Reconciliation Clean",
+                    &prov_tree,
+                    &[&l_commit, &o_commit],
+                )
+                .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+            Ok(PhysicalReconciliationResult::Clean {
+                snapshot: new_snapshot_id,
+            })
+        } else {
+            conflicts.sort_by(|a, b| a.paths.cmp(&b.paths).then_with(|| a.kind.cmp(&b.kind)));
+
+            let phys_id = PhysicalCandidateId::new();
+
+            let state = GitPhysicalCandidateState {
+                version: 1,
+                base_snapshot: base.to_hex(),
+                local_snapshot: local.to_hex(),
+                other_snapshot: other.to_hex(),
+                provisional_tree: prov_tree_oid.to_string(),
+                conflicts: state_conflicts,
+            };
+
+            self.transient_candidates
+                .write()
+                .unwrap()
+                .insert(phys_id, state);
+
+            Ok(PhysicalReconciliationResult::Conflicted(
+                PhysicalReconciliationCandidate {
+                    base: base.clone(),
+                    local: local.clone(),
+                    other: other.clone(),
+                    conflicts,
+                    provisional: phys_id,
+                },
+            ))
+        }
+    }
+    fn persist_physical_candidate(
+        &self,
+        workspace_id: &crate::domain::workspace::WorkspaceId,
+        candidate: &crate::domain::workspace::PhysicalReconciliationCandidate,
+    ) -> Result<(), WorkspaceBackendError> {
+        let candidates_dir = self
+            ._project_root
+            .join(".kat/workspaces")
+            .join(&workspace_id.0)
+            .join("physical-reconciliation")
+            .join(candidate.provisional.to_string());
+        std::fs::create_dir_all(&candidates_dir).map_err(WorkspaceBackendError::Io)?;
+        let state_path = candidates_dir.join("git.json");
+        let state = self
+            .transient_candidates
+            .read()
+            .unwrap()
+            .get(&candidate.provisional)
+            .cloned()
+            .ok_or_else(|| {
+                WorkspaceBackendError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Transient candidate state not found",
+                ))
+            })?;
+
+        let json = serde_json::to_string_pretty(&state)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        std::fs::write(&state_path, json.as_bytes()).map_err(WorkspaceBackendError::Io)?;
+
+        let prov_tree_oid = git2::Oid::from_str(&state.provisional_tree)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let prov_tree = self
+            ._repo
+            .find_tree(prov_tree_oid)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+        let sig = self
+            ._repo
+            .signature()
+            .unwrap_or_else(|_| git2::Signature::now("kat", "kat@kat").unwrap());
+        let commit_oid = self
+            ._repo
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "KAT Provisional Tree Protection",
+                &prov_tree,
+                &[],
+            )
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+        let ref_name = format!("refs/kat/candidates/{}", candidate.provisional);
+        self._repo
+            .reference(
+                &ref_name,
+                commit_oid,
+                true,
+                "KAT physical candidate protection",
+            )
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+        Ok(())
+    }
+}
+
+impl GitWorkspaceBackend {
+    pub fn get_candidate_state(
+        &self,
+        workspace_id: &crate::domain::workspace::WorkspaceId,
+        id: &crate::domain::identity::PhysicalCandidateId,
+    ) -> Result<GitPhysicalCandidateState, WorkspaceBackendError> {
+        let state_path = self
+            ._project_root
+            .join(".kat/workspaces")
+            .join(&workspace_id.0)
+            .join("physical-reconciliation")
+            .join(id.to_string())
+            .join("git.json");
+        let json =
+            std::fs::read_to_string(&state_path).map_err(WorkspaceBackendError::Io)?;
+        serde_json::from_str(&json).map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))
+    }
+}
+
+fn build_git_tree_recursive(
+    repo: &git2::Repository,
+    entries: &std::collections::BTreeMap<std::path::PathBuf, (git2::Oid, i32)>,
+    current_prefix: &std::path::Path,
+) -> Result<git2::Oid, WorkspaceBackendError> {
+    let mut tb = repo
+        .treebuilder(None)
+        .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+    let mut groups: std::collections::BTreeMap<
+        std::ffi::OsString,
+        std::collections::BTreeMap<std::path::PathBuf, (git2::Oid, i32)>,
+    > = std::collections::BTreeMap::new();
+
+    for (path, val) in entries {
+        let rel_path = path.strip_prefix(current_prefix).unwrap();
+        let mut components = rel_path.components();
+        if let Some(comp) = components.next() {
+            let comp_os = comp.as_os_str().to_os_string();
+            if components.next().is_none() {
+                tb.insert(comp_os.to_str().unwrap(), val.0, val.1)
+                    .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+            } else {
+                groups
+                    .entry(comp_os)
+                    .or_default()
+                    .insert(path.clone(), *val);
+            }
+        }
+    }
+
+    for (dir_name, sub_entries) in groups {
+        let subtree_oid =
+            build_git_tree_recursive(repo, &sub_entries, &current_prefix.join(&dir_name))?;
+        tb.insert(dir_name.to_str().unwrap(), subtree_oid, 0o040000)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+    }
+
+    tb.write()
+        .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))
 }
 
 pub fn collect_git_tree(

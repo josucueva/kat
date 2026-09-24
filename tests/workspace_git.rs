@@ -328,3 +328,115 @@ fn git_reopen_persistence() {
         );
     }
 }
+
+#[test]
+fn phy_17_clean_non_mutation() {
+    let (_dir, root) = setup_temp_project("phy_17");
+    kat::repository::workspace::git::GitWorkspaceBackend::init(&root).unwrap();
+    let backend = kat::repository::workspace::git::GitWorkspaceBackend::open(&root).unwrap();
+
+    let create_snap = |file: &str, content: &str| {
+        fs::write(root.join(file), content).unwrap();
+        backend.create_snapshot(&[PathBuf::from(file)]).unwrap()
+    };
+
+    let base = create_snap("a.txt", "A");
+    let local = create_snap("b.txt", "B");
+
+    fs::remove_file(root.join("b.txt")).unwrap();
+    let other = create_snap("c.txt", "C");
+
+    // materializing other changed working tree. Let's make the working tree distinct
+    fs::write(root.join("untracked.txt"), "untracked").unwrap();
+
+    // Capture state
+    let repo = git2::Repository::open(root.join(".kat/physical/git")).unwrap();
+    let head_before = repo.head().unwrap().target().unwrap();
+    let mut index = repo.index().unwrap();
+    let index_oid_before = index.write_tree().unwrap();
+    let active_lineage_before =
+        kat::repository::workspace::git::GitWorkspaceBackend::read_active_lineage_for_test(&root);
+
+    // Reconcile
+    let res = backend.reconcile_physical(&base, &local, &other).unwrap();
+    match res {
+        kat::domain::workspace::PhysicalReconciliationResult::Clean { .. } => {}
+        _ => panic!("Expected clean merge"),
+    }
+
+    // Verify non-mutation
+    let head_after = repo.head().unwrap().target().unwrap();
+    assert_eq!(head_before, head_after, "HEAD mutated");
+
+    let mut index_after = repo.index().unwrap();
+    let index_oid_after = index_after.write_tree().unwrap();
+    assert_eq!(index_oid_before, index_oid_after, "Index mutated");
+    let active_lineage_after =
+        kat::repository::workspace::git::GitWorkspaceBackend::read_active_lineage_for_test(&root);
+    assert_eq!(
+        active_lineage_before, active_lineage_after,
+        "Active lineage mutated"
+    );
+
+    assert!(root.join("untracked.txt").exists(), "Working tree mutated");
+    assert_eq!(
+        fs::read_to_string(root.join("c.txt")).unwrap(),
+        "C",
+        "Working tree mutated"
+    );
+    assert!(!root.join("b.txt").exists(), "Working tree mutated");
+}
+
+#[test]
+fn phy_18_conflict_non_mutation() {
+    let (_dir, root) = setup_temp_project("phy_18");
+    kat::repository::workspace::git::GitWorkspaceBackend::init(&root).unwrap();
+    let backend = kat::repository::workspace::git::GitWorkspaceBackend::open(&root).unwrap();
+
+    let create_snap = |file: &str, content: &str| {
+        fs::write(root.join(file), content).unwrap();
+        backend.create_snapshot(&[PathBuf::from(file)]).unwrap()
+    };
+
+    let base = create_snap("a.txt", "A");
+    let local = create_snap("a.txt", "A_local");
+
+    let other = create_snap("a.txt", "A_other");
+
+    fs::write(root.join("untracked.txt"), "untracked").unwrap();
+
+    let repo = git2::Repository::open(root.join(".kat/physical/git")).unwrap();
+    let head_before = repo.head().unwrap().target().unwrap();
+    let mut index = repo.index().unwrap();
+    let index_oid_before = index.write_tree().unwrap();
+    let active_lineage_before =
+        kat::repository::workspace::git::GitWorkspaceBackend::read_active_lineage_for_test(&root);
+
+    // Reconcile
+    let res = backend.reconcile_physical(&base, &local, &other).unwrap();
+    match res {
+        kat::domain::workspace::PhysicalReconciliationResult::Conflicted { .. } => {}
+        _ => panic!("Expected conflicted merge"),
+    }
+
+    // Verify non-mutation
+    let head_after = repo.head().unwrap().target().unwrap();
+    assert_eq!(head_before, head_after, "HEAD mutated");
+
+    let mut index_after = repo.index().unwrap();
+    let index_oid_after = index_after.write_tree().unwrap();
+    assert_eq!(index_oid_before, index_oid_after, "Index mutated");
+    let active_lineage_after =
+        kat::repository::workspace::git::GitWorkspaceBackend::read_active_lineage_for_test(&root);
+    assert_eq!(
+        active_lineage_before, active_lineage_after,
+        "Active lineage mutated"
+    );
+
+    assert!(root.join("untracked.txt").exists(), "Working tree mutated");
+    assert_eq!(
+        fs::read_to_string(root.join("a.txt")).unwrap(),
+        "A_other",
+        "Working tree mutated"
+    );
+}

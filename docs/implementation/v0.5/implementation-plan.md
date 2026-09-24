@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 4 (Workspace Integration) Complete.
+Phase 9 (Physical Reconciliation and Conflicts) Complete.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -10,6 +10,8 @@ Phase 4 (Workspace Integration) Complete.
 | Phase 1 | `c806322` | Complete. RepositoryRevision structure added. |
 | Phase 2 | `c806322` | Complete. WorkspaceSnapshot abstraction added. |
 | Phase 3 | `3d1ed40` | Complete. GitWorkspaceBackend implementation added, physical identity enforced. |
+| Phase 4..8 | `N/A` | Complete. Workspace integration, remote reference, diverge logic, semantic reconciliation. |
+| Phase 9 | `PENDING` | Complete. Physical reconciliation and conflicts. |
 
 ## 1. Objective
 

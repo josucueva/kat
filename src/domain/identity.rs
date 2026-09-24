@@ -241,7 +241,9 @@ impl MaterializationId {
 /// Phase 2 will implement the actual derivation of this identity. It will NOT
 /// be a Git commit hash, but rather a deterministic KAT digest of the workspace.
 /// The backend metadata will map this digest to physical commit hashes.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct WorkspaceSnapshotId(Vec<u8>);
 
 impl WorkspaceSnapshotId {
@@ -270,6 +272,11 @@ impl WorkspaceSnapshotId {
         out
     }
 }
+
+define_uuid_semantic_id!(
+    /// Unique identity of a backend-specific provisional physical reconciliation candidate.
+    PhysicalCandidateId
+);
 
 impl fmt::Display for ObjectId {
     /// Always writes exactly 64 lowercase hexadecimal characters.

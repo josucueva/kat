@@ -2,6 +2,7 @@
 //! ontology, changes, states, and canonical property values.
 
 pub mod change;
+pub mod conflict;
 pub mod element;
 pub mod identity;
 pub mod machine;

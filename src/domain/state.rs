@@ -3,7 +3,9 @@
 use crate::domain::identity::{ElementId, ObjectId, RelationshipId};
 
 /// Logical mapping of one active element to its current version.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct ElementStateEntry {
     /// Stable element identity.
     pub element_id: ElementId,
@@ -12,7 +14,9 @@ pub struct ElementStateEntry {
 }
 
 /// Logical mapping of one active relationship to its current version.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct RelationshipStateEntry {
     /// Stable relationship identity.
     pub relationship_id: RelationshipId,
@@ -26,7 +30,9 @@ pub struct RelationshipStateEntry {
 /// rather than maps, so that malformed input such as unsorted or duplicate
 /// entries remains observable to the canonical validator instead of being
 /// silently normalized at construction.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct SemanticState {
     /// ObjectId of the OntologyVersion used to interpret this state.
     pub ontology_version: ObjectId,

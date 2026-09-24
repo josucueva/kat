@@ -21,7 +21,7 @@ fn put_mock_revision(
     mut parents: Vec<RepositoryRevisionId>,
 ) -> RepositoryRevisionId {
     parents.sort_by_key(|id| id.to_string());
-    
+
     let rev = RepositoryRevision {
         parents,
         semantic_state: SemanticStateId::from_object_id(object_id(byte)),
@@ -173,13 +173,19 @@ fn top_08_multi_parent_ancestry() {
     let base = put_mock_revision(&store, 1, vec![]);
     let a = put_mock_revision(&store, 2, vec![base]);
     let b = put_mock_revision(&store, 3, vec![base]);
-    
+
     // M merges A and B
     let m = put_mock_revision(&store, 4, vec![a, b]);
-    
+
     // Compare M with its parents
-    assert_eq!(compare_ancestry(&store, m, a).unwrap(), DivergenceState::LocalAhead);
-    assert_eq!(compare_ancestry(&store, m, b).unwrap(), DivergenceState::LocalAhead);
+    assert_eq!(
+        compare_ancestry(&store, m, a).unwrap(),
+        DivergenceState::LocalAhead
+    );
+    assert_eq!(
+        compare_ancestry(&store, m, b).unwrap(),
+        DivergenceState::LocalAhead
+    );
 }
 
 #[test]
@@ -190,8 +196,14 @@ fn top_09_already_reconciled_history() {
     let r = put_mock_revision(&store, 3, vec![a]);
     let m = put_mock_revision(&store, 4, vec![l, r]);
 
-    assert_eq!(compare_ancestry(&store, m, l).unwrap(), DivergenceState::LocalAhead);
-    assert_eq!(compare_ancestry(&store, m, r).unwrap(), DivergenceState::LocalAhead);
+    assert_eq!(
+        compare_ancestry(&store, m, l).unwrap(),
+        DivergenceState::LocalAhead
+    );
+    assert_eq!(
+        compare_ancestry(&store, m, r).unwrap(),
+        DivergenceState::LocalAhead
+    );
 
     let revs = vec![l, r, m];
     let heads = find_graph_heads(&store, &revs).unwrap();
@@ -220,33 +232,35 @@ fn top_11_workspace_reference_integration() {
     // This test proves that computing divergence from the DAG does not
     // implicitly move workspace bases or named references.
     let (dir, store) = setup();
-    
+
     // Create RefStore and Workspace manually for the test
     let ref_store = kat::repository::ref_store::FileRefStore::new(dir.path());
-    
+
     let base = put_mock_revision(&store, 1, vec![]);
     let r_local = put_mock_revision(&store, 2, vec![base]);
     let r_other = put_mock_revision(&store, 3, vec![base]);
-    
+
     // Initialize Workspace pointing to r_local
     let ws = kat::domain::workspace::Workspace {
         id: kat::domain::workspace::WorkspaceId("default".to_string()),
         base_revision: r_local,
     };
-    
+
     // Initialize NamedReference pointing to r_other
-    ref_store.compare_and_swap_ref("local/main", None, r_other).unwrap();
-    
+    ref_store
+        .compare_and_swap_ref("local/main", None, r_other)
+        .unwrap();
+
     // Resolve IDs
     let local_id = ws.base_revision;
     let other_id = ref_store.read_ref("local/main").unwrap();
-    
+
     // Compute divergence
     assert_eq!(
         compare_ancestry(&store, local_id, other_id).unwrap(),
         DivergenceState::Diverged { common_base: base }
     );
-    
+
     // Pointers remain unchanged
     assert_eq!(ws.base_revision, r_local);
     assert_eq!(ref_store.read_ref("local/main").unwrap(), r_other);

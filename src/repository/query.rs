@@ -369,6 +369,8 @@ pub enum QueryError {
         /// ObjectId the ChangeRevision actually results in.
         actual: ObjectId,
     },
+    /// A failure returned by the physical workspace backend.
+    WorkspaceBackend(crate::domain::workspace::WorkspaceBackendError),
     /// The ChangeRevision dependency graph contains a cycle. Content-addressed
     /// storage makes a genuine cycle unconstructible through the normal store
     /// (each dependency ObjectId is the hash of its target's content), so this
@@ -632,7 +634,7 @@ pub fn list_elements(
 
 /// Loads `id` from the store (hash verified by `ObjectStore::get`), decodes
 /// it canonically, and requires exactly `expected` kind.
-fn load_typed(
+pub(crate) fn load_typed(
     store: &ObjectStore,
     id: ObjectId,
     expected: ObjectKind,
@@ -2852,6 +2854,7 @@ impl std::fmt::Display for QueryError {
                 "ontology type query '{query}' is ambiguous (matches: {matches:?})"
             ),
             Self::InvalidMaxDepth(e0) => write!(f, "max depth must be greater than 0, got {e0}"),
+            Self::WorkspaceBackend(e0) => write!(f, "workspace backend error: {e0}"),
         }
     }
 }
@@ -2862,6 +2865,7 @@ impl std::error::Error for QueryError {
             Self::RefStore(err) => Some(err),
             Self::ObjectStore(err) => Some(err),
             Self::Decoding(err) => Some(err),
+            Self::WorkspaceBackend(err) => Some(err),
             _ => None,
         }
     }

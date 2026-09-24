@@ -107,6 +107,26 @@ pub struct WorkingState {
     pub backend_consistency: BackendConsistency,
 }
 
+/// A provisional physical reconciliation result that contains conflicts.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PhysicalReconciliationCandidate {
+    pub base: WorkspaceSnapshotId,
+    pub local: WorkspaceSnapshotId,
+    pub other: WorkspaceSnapshotId,
+    pub conflicts: Vec<crate::domain::conflict::MaterializationConflict>,
+    /// Backend-specific opaque handle to the provisional merge result.
+    pub provisional: crate::domain::identity::PhysicalCandidateId,
+}
+
+/// The result of a physical reconciliation operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PhysicalReconciliationResult {
+    /// The backend successfully created a merged physical snapshot without conflicts.
+    Clean { snapshot: WorkspaceSnapshotId },
+    /// The backend encountered physical conflicts and produced a provisional state.
+    Conflicted(PhysicalReconciliationCandidate),
+}
+
 /// The required capabilities of a physical workspace backend independent of Git.
 ///
 /// Implementations (e.g., GitWorkspaceBackend or FakeWorkspaceBackend) satisfy
@@ -155,4 +175,22 @@ pub trait WorkspaceBackend {
         &self,
         id: &WorkspaceSnapshotId,
     ) -> Result<bool, WorkspaceBackendError>;
+
+    /// Attempts to physically reconcile `other` into `local` using `base` as the common ancestor.
+    /// This should not modify KAT semantic state or heads. If successful, produces a new physical
+    /// snapshot representing the merge. If conflicted, returns the `MaterializationConflict` details.
+    fn reconcile_physical(
+        &self,
+        base: &WorkspaceSnapshotId,
+        local: &WorkspaceSnapshotId,
+        other: &WorkspaceSnapshotId,
+    ) -> Result<PhysicalReconciliationResult, WorkspaceBackendError>;
+
+    /// Persists the physical candidate state to durable storage under the workspace boundary,
+    /// and establishes any backend-specific GC protections (e.g. Git refs).
+    fn persist_physical_candidate(
+        &self,
+        workspace_id: &WorkspaceId,
+        candidate: &PhysicalReconciliationCandidate,
+    ) -> Result<(), WorkspaceBackendError>;
 }
