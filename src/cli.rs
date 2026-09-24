@@ -94,6 +94,12 @@ pub enum Command {
         target: String,
     },
 
+    /// List active conflicts in the current reconciliation session
+    ///
+    /// Outputs semantic and physical conflicts that block finalization.
+    #[command(next_help_heading = "Collaboration")]
+    Conflicts,
+
     /// Retrieve bounded semantic development context around elements
     ///
     /// Context is a deterministic, categorized semantic projection over accepted state

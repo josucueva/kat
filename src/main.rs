@@ -55,6 +55,7 @@ fn main() -> ExitCode {
         Command::Init => cmd_init(),
         Command::Status { compact, json } => run_status(compact, json),
         Command::Reconcile { target } => run_reconcile(target),
+        Command::Conflicts => run_conflicts(),
         Command::Context {
             roots,
             direction,
@@ -302,7 +303,72 @@ fn run_reconcile(target: String) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn print_repository_status_compact(status: &RepositoryStatus) {
+
+fn run_conflicts() -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(error) => {
+            eprintln!("kat conflicts: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let ws = match kat::repository::workspace::open_workspace(repository.root_dir()) {
+        Ok(ws) => ws,
+        Err(e) => {
+            eprintln!("kat conflicts: Workspace not found: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let session = match kat::repository::reconcile::load_reconciliation_session(repository.root_dir(), &ws.id, ws.base_revision) {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            eprintln!("kat conflicts: No active reconciliation session.");
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("kat conflicts: Failed to load session: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match session.state {
+        kat::repository::reconcile::ReconciliationSessionState::PreparedClean { .. } => {
+            println!("No conflicts. The session is clean and ready to finalize.");
+        }
+        kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate } => {
+            if !candidate.semantic_conflicts.is_empty() {
+                println!("Semantic Conflicts ({}):", candidate.semantic_conflicts.len());
+                for (i, c) in candidate.semantic_conflicts.iter().enumerate() {
+                    println!("  {}. {:?}", i + 1, c);
+                }
+            } else {
+                println!("Semantic Conflicts: None");
+            }
+            
+            println!("");
+
+            if let Some(phys) = &candidate.physical_candidate {
+                if !phys.conflicts.is_empty() {
+                    println!("Physical Conflicts ({}):", phys.conflicts.len());
+                    for (i, c) in phys.conflicts.iter().enumerate() {
+                        println!("  {}. {:?}", i + 1, c);
+                    }
+                } else {
+                    println!("Physical Conflicts: None");
+                }
+            } else {
+                println!("Physical Conflicts: None");
+            }
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn print_repository_status_compact
+(status: &RepositoryStatus) {
     let stale = status.accountability.semantic_stale;
     let stale_suffix = if stale == 1 { "artifact" } else { "artifacts" };
     println!(
