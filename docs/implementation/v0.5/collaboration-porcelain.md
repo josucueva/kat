@@ -18,6 +18,9 @@ These invariants govern all Phase 10 porcelain implementation:
 *   **POR-10**: Machine output is deterministic and versioned.
 *   **POR-11**: User references resolve to stable `RepositoryRevision` identities before mutation.
 *   **POR-12**: No porcelain command invokes Git as a user-visible version-control authority.
+*   **POR-13**: Finalization moves `Workspace.base_revision` but never implicitly moves a `NamedReference`.
+*   **POR-14**: A `ReconciliationSession` is bound to immutable revision identities; later movement of the reference originally used as the target does not alter the active session.
+*   **POR-15**: Finalize is permitted only for a `PreparedClean` session. Conflict resolution must produce a prepared immutable revision before authority can move.
 
 ## 2. Core Workflows
 
@@ -65,10 +68,18 @@ prepared Rmerge   ReconciliationCandidate
 
 ### 2.2 Reconcile Session
 
-A workspace may hold an active reconciliation session. This handles the requirement that both clean and conflicted preparations are persistent and resumable:
+A workspace may hold an active reconciliation session. This ensures both clean and conflicted preparations are persistent, resumable, and bound to stable historical targets.
 
 ```rust
-pub enum ReconciliationSession {
+pub struct ReconciliationSession {
+    pub version: u32,
+    pub workspace_id: WorkspaceId,
+    pub base_revision: RepositoryRevisionId,
+    pub target_revision: RepositoryRevisionId,
+    pub state: ReconciliationSessionState,
+}
+
+pub enum ReconciliationSessionState {
     /// Reconciliation resulted in a clean `RepositoryRevision` but is unpublished.
     PreparedClean { 
         revision: RepositoryRevisionId 
@@ -80,25 +91,79 @@ pub enum ReconciliationSession {
 }
 ```
 
-This ensures `kat reconcile` is safely resumable and `kat abort` deterministically clears the state regardless of whether conflicts were present.
+This enforces POR-14 (session bounded to immutable identities) and POR-15 (`kat finalize` operates exclusively on a `PreparedClean` state).
 
-### 2.3 Fast-forward / Advance vs. Switch
+### 2.3 Session State Transitions
 
-We strictly distinguish:
-*   **Switching the workspace context:** `kat switch <workspace-id>` or `kat switch-revision <revision-id>` inside a workspace.
-*   **Advancing the workspace:** If the target is strictly ahead of the workspace base (`OtherAhead`), we do not produce a multi-parent merge. The user performs an explicit "advance" or "fast-forward" to move the workspace base to the descendant revision.
+```text
+NONE
+ |
+ | kat reconcile
+ v
+ +-----------------------------+
+ |                             |
+ v                             v
+PREPARED_CLEAN             CONFLICTED
+ |                             |
+ | kat finalize                | kat materialize
+ |                             v
+ |                        CONFLICTED_MATERIALIZED
+ |                             |
+ |                        kat resolve
+ |                             |
+ |                     +-------+-------+
+ |                     |               |
+ |                 unresolved       resolved
+ |                     |               |
+ |                     v               v
+ |                 CONFLICTED      PREPARED_CLEAN
+ |                                     |
+ +-------------------------------------+
+                   |
+              kat finalize
+                   |
+                   v
+                  NONE
+
+Any active state
+      |
+   kat abort
+      |
+      v
+     NONE
+```
+
+### 2.4 Reconcile Divergence Handling
+
+`kat reconcile` is strictly semantic preparation for diverged histories.
+
+*   `Same` -> reports already synchronized.
+*   `LocalAhead` -> reports no incoming reconciliation required.
+*   `OtherAhead` -> does not create a session; suggests `kat advance <target>`.
+*   `Diverged { one common ancestor }` -> reconciliation permitted.
+*   `AmbiguousMergeBase` -> reconciliation rejected with explicit bases.
+*   `Unrelated` -> reconciliation rejected.
+
+### 2.5 Fast-forward / Advance vs. Switch
+
+We strictly distinguish three workspace movement vectors:
+*   **Switching workspaces:** `kat workspace switch <workspace-id>` changes `.kat/current-workspace` only.
+*   **Switching revisions:** `kat switch <revision-or-ref>` changes the revision of the current workspace, demanding a clean current state.
+*   **Advancing the workspace:** `kat advance <revision-or-ref>` is a restricted form of movement where the target is a strict descendant of the current base.
 
 ## 3. Command Surface Area
 
-The minimal Phase 10 porcelain surface is:
+The formal Phase 10 porcelain vocabulary is:
 
-*   **`kat status`**: Summarizes the explicit multi-dimensional state (Workspace ID, Base, Semantic state, Physical state, Backend status, and Collaboration/Reconciliation status).
-*   **`kat switch <revision-or-ref>`**: Moves the workspace base to a completely different revision, demanding a clean current state. (Not to be confused with switching workspaces).
-*   **`kat reconcile <target>`**: Resolves the target, asserts `Diverged` (rejecting `Same` or prompting advance for `OtherAhead`), computes common ancestors, invokes the engine, and saves a `ReconciliationSession`.
+*   **`kat status`**: Summarizes the explicit multi-dimensional state (Workspace ID, Base, Semantic, Physical, Backend, and Collaboration/Reconciliation status).
+*   **`kat reconcile <target>`**: Resolves the target, asserts `Diverged` (rejecting `Same` or prompting advance for `OtherAhead`), invokes the engine, and saves a `ReconciliationSession`.
 *   **`kat conflicts`**: Lists active conflicts in the current `ReconciliationSession`.
-*   **`kat resolve semantic/physical <id>`**: Modifies the provisional candidate state.
+*   **`kat materialize`**: Exposes provisional physical state for human resolution.
+*   **`kat resolve semantic <id>` / `kat resolve physical <id>`**: Modifies the provisional candidate state.
+*   **`kat finalize`**: Consumes a `PreparedClean` session, advancing the `Workspace.base_revision`. It does *not* implicitly move named references.
 *   **`kat abort`**: Discards the current `ReconciliationSession` and its backend physical candidate, reverting cleanly to the workspace base.
-*   **`kat finalize`** (or `kat accept`/`kat commit`): Consumes a cleanly prepared or fully resolved `ReconciliationSession`, moving the workspace base and updating any associated references.
+*   **`kat advance <target>`**: Moves workspace base to a strict descendant.
+*   **`kat switch <target>`**: Moves workspace to another revision under clean-state rules.
 
 ## 4. Implementation Phasing
 
