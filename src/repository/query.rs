@@ -1716,6 +1716,8 @@ pub struct RepositoryStatus {
     pub consistency: ConsistencyCounts,
     /// Artifact accountability counts.
     pub accountability: AccountabilityCounts,
+    /// Workspace status (if running inside a Kat workspace)
+    pub workspace: Option<crate::repository::workspace::WorkspaceSummary>,
 }
 
 /// Computes a concise, read-only summary of the repository's current accepted state.
@@ -1811,6 +1813,8 @@ pub fn repository_status(repository: &Repository) -> Result<RepositoryStatus, Qu
         None
     };
 
+    let workspace = crate::repository::workspace::workspace_status(repository.root_dir()).ok();
+
     Ok(RepositoryStatus {
         repository_id: repository.metadata.repository_id,
         software_id: repository.metadata.software_id,
@@ -1821,6 +1825,7 @@ pub fn repository_status(repository: &Repository) -> Result<RepositoryStatus, Qu
         knowledge,
         consistency,
         accountability,
+        workspace,
     })
 }
 

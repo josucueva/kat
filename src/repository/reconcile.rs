@@ -14,7 +14,7 @@ use crate::repository::object_store::ObjectStore;
 use crate::repository::query::{QueryError, load_typed};
 use crate::repository::validation::validate_repository_state;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ReconciliationSession {
     pub version: u32,
     pub workspace_id: WorkspaceId,
@@ -23,7 +23,7 @@ pub struct ReconciliationSession {
     pub state: ReconciliationSessionState,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[allow(clippy::large_enum_variant)]
 pub enum ReconciliationSessionState {
     /// Both semantic and physical reconciliation succeeded with no conflicts or findings.
@@ -34,7 +34,7 @@ pub enum ReconciliationSessionState {
 }
 
 /// A candidate produced by attempting semantic reconciliation.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ReconciliationCandidate {
     pub version: u32,
     pub workspace_id: WorkspaceId,
@@ -272,7 +272,6 @@ pub fn load_reconciliation_session(
     repo_root: &Path,
     workspace_id: &WorkspaceId,
     expected_base: RepositoryRevisionId,
-    expected_target: RepositoryRevisionId,
 ) -> Result<Option<ReconciliationSession>, SessionLoadError> {
     let path = session_path(repo_root, workspace_id);
     if !path.exists() {
@@ -297,9 +296,6 @@ pub fn load_reconciliation_session(
     }
     if session.base_revision != expected_base {
         return Err(SessionLoadError::StaleBase);
-    }
-    if session.target_revision != expected_target {
-        return Err(SessionLoadError::StaleTarget);
     }
 
     Ok(Some(session))

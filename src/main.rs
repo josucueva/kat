@@ -630,6 +630,44 @@ fn print_repository_status(status: &RepositoryStatus) {
         "  semantic unaccounted:  {}",
         status.accountability.semantic_unaccounted
     );
+
+    if let Some(ws) = &status.workspace {
+        println!();
+        println!("Workspace");
+        println!("  id:          {}", ws.id.0);
+        println!("  base:        {}", short_object_id(&ws.base_revision.as_object_id()));
+        
+        let sem_str = match &ws.status.semantic {
+            kat::domain::workspace::SemanticWorkspaceState::Clean => "clean".to_string(),
+            kat::domain::workspace::SemanticWorkspaceState::Modified => "modified".to_string(),
+            kat::domain::workspace::SemanticWorkspaceState::BaseMismatch(msg) => format!("base mismatch ({})", msg),
+        };
+        println!("  semantic:    {}", sem_str);
+
+        let phys_str = match ws.status.physical {
+            kat::domain::workspace::PhysicalWorkspaceState::Clean => "clean",
+            kat::domain::workspace::PhysicalWorkspaceState::Modified => "modified",
+        };
+        println!("  physical:    {}", phys_str);
+
+        let backend_str = match &ws.status.backend_consistency {
+            kat::domain::workspace::BackendConsistency::Consistent => "consistent".to_string(),
+            kat::domain::workspace::BackendConsistency::Mismatch(msg) => format!("mismatch ({})", msg),
+        };
+        println!("  backend:     {}", backend_str);
+
+        if let Some(rec) = &ws.reconciliation {
+            println!("  reconciliation:");
+            println!("    target:    {}", short_object_id(&rec.target_revision.as_object_id()));
+            let rec_state = match &rec.state {
+                kat::repository::reconcile::ReconciliationSessionState::PreparedClean { .. } => "prepared clean",
+                kat::repository::reconcile::ReconciliationSessionState::Conflicted { .. } => "conflicted",
+            };
+            println!("    state:     {}", rec_state);
+        } else {
+            println!("  reconciliation: none");
+        }
+    }
 }
 
 /// Maps a CLI type argument to a canonical element type ID.

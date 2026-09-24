@@ -81,8 +81,16 @@ pub fn open_workspace(repo_root: &Path) -> Result<Workspace, WorkspaceError> {
     Ok(ws)
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceSummary {
+    pub id: WorkspaceId,
+    pub base_revision: crate::domain::identity::RepositoryRevisionId,
+    pub status: WorkspaceStatus,
+    pub reconciliation: Option<crate::repository::reconcile::ReconciliationSession>,
+}
+
 /// Computes the combined status of the workspace relative to its base_revision.
-pub fn workspace_status(repo_root: &Path) -> Result<WorkspaceStatus, WorkspaceError> {
+pub fn workspace_status(repo_root: &Path) -> Result<WorkspaceSummary, WorkspaceError> {
     let ws = open_workspace(repo_root)?;
     let repo = open_repository(repo_root)?;
     let revision = repo.read_revision(ws.base_revision)?;
@@ -114,10 +122,27 @@ pub fn workspace_status(repo_root: &Path) -> Result<WorkspaceStatus, WorkspaceEr
         PhysicalWorkspaceState::Modified
     };
 
-    Ok(WorkspaceStatus {
+    let status = WorkspaceStatus {
         semantic,
         physical,
         backend_consistency: state.backend_consistency,
+    };
+
+    // Load reconciliation session if any
+    let mut reconciliation = None;
+    if let Ok(Some(session)) = crate::repository::reconcile::load_reconciliation_session(
+        repo_root,
+        &ws.id,
+        ws.base_revision,
+    ) {
+        reconciliation = Some(session);
+    }
+
+    Ok(WorkspaceSummary {
+        id: ws.id,
+        base_revision: ws.base_revision,
+        status,
+        reconciliation,
     })
 }
 

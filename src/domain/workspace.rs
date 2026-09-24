@@ -7,21 +7,21 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct WorkspaceId(pub String);
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SemanticWorkspaceState {
     Clean,
     Modified,
     BaseMismatch(String),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PhysicalWorkspaceState {
     Clean,
     Modified,
 }
 
 /// The overall combined divergence status of a workspace.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WorkspaceStatus {
     pub semantic: SemanticWorkspaceState,
     pub physical: PhysicalWorkspaceState,
@@ -61,7 +61,7 @@ pub enum WorkspaceBackendError {
 }
 
 /// Information about a materialized entity (file, directory, or symlink) inside a snapshot.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MaterializationResolution {
     /// A regular file and its identity.
     File(MaterializationId),
@@ -74,7 +74,7 @@ pub enum MaterializationResolution {
 }
 
 /// Represents the alignment between the underlying Git repository state and the KAT base.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BackendConsistency {
     /// The backend matches the expected KAT physical base.
     Consistent,
@@ -82,7 +82,7 @@ pub enum BackendConsistency {
     Mismatch(String),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PhysicalChanges {
     pub added: Vec<PathBuf>,
     pub modified: Vec<PathBuf>,
@@ -101,7 +101,7 @@ impl PhysicalChanges {
 }
 
 /// Represents the physical working state diff against the snapshot.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WorkingState {
     pub changes: PhysicalChanges,
     pub backend_consistency: BackendConsistency,
@@ -119,7 +119,7 @@ pub struct PhysicalReconciliationCandidate {
 }
 
 /// The result of a physical reconciliation operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PhysicalReconciliationResult {
     /// The backend successfully created a merged physical snapshot without conflicts.
     Clean { snapshot: WorkspaceSnapshotId },
