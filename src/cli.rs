@@ -80,6 +80,20 @@ pub enum Command {
         json: bool,
     },
 
+    // -----------------------------------------------------------------------
+    // Collaboration
+    // -----------------------------------------------------------------------
+    /// Prepare semantic and physical histories for collaboration
+    ///
+    /// Reconcile computes a 3-way merge between the workspace's local base
+    /// and a target revision. This does not change the workspace's base
+    /// automatically.
+    #[command(next_help_heading = "Collaboration")]
+    Reconcile {
+        /// Target revision (can be an object ID or reference like @main)
+        target: String,
+    },
+
     /// Retrieve bounded semantic development context around elements
     ///
     /// Context is a deterministic, categorized semantic projection over accepted state

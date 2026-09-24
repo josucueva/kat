@@ -54,6 +54,7 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Init => cmd_init(),
         Command::Status { compact, json } => run_status(compact, json),
+        Command::Reconcile { target } => run_reconcile(target),
         Command::Context {
             roots,
             direction,
@@ -215,6 +216,90 @@ fn run_status(compact: bool, json: bool) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn run_reconcile(target: String) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(error) => {
+            eprintln!("kat reconcile: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let ws = match kat::repository::workspace::open_workspace(repository.root_dir()) {
+        Ok(ws) => ws,
+        Err(e) => {
+            eprintln!("kat reconcile: Workspace not found: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let target_rev = match std::str::FromStr::from_str(&target) {
+        Ok(id) => id,
+        Err(_) => {
+            // For now, only 64-char hex is supported.
+            eprintln!("kat reconcile: Invalid target revision ID format (expected 64-char hex): {}", target);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let div = match kat::repository::topology::compare_ancestry(repository.object_store(), ws.base_revision, target_rev) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("kat reconcile: Topology comparison failed: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match div {
+        kat::repository::topology::DivergenceState::Same => {
+            eprintln!("kat reconcile: Target is the same as the workspace base. Nothing to reconcile.");
+            return ExitCode::FAILURE;
+        }
+        kat::repository::topology::DivergenceState::LocalAhead => {
+            eprintln!("kat reconcile: Workspace base is already ahead of the target.");
+            return ExitCode::FAILURE;
+        }
+        kat::repository::topology::DivergenceState::OtherAhead => {
+            eprintln!("kat reconcile: Target is strictly ahead of the workspace base. Use `kat advance` instead of `kat reconcile`.");
+            return ExitCode::FAILURE;
+        }
+        kat::repository::topology::DivergenceState::Diverged { .. } => {
+            // Proceed
+        }
+        _ => {
+            eprintln!("kat reconcile: Unrelated or ambiguous histories.");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let session = match kat::repository::reconcile::reconcile_workspace(repository.root_dir(), &ws.id, target_rev) {
+        Ok(session) => session,
+        Err(e) => {
+            eprintln!("kat reconcile: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match session.state {
+        kat::repository::reconcile::ReconciliationSessionState::PreparedClean { .. } => {
+            println!("Reconciliation prepared cleanly without conflicts.");
+            println!("Run `kat finalize` to complete the reconciliation.");
+        }
+        kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate } => {
+            println!("Reconciliation resulted in conflicts.");
+            if !candidate.semantic_conflicts.is_empty() {
+                println!("  Semantic conflicts: {}", candidate.semantic_conflicts.len());
+            }
+            if let Some(phys) = &candidate.physical_candidate {
+                println!("  Physical conflicts: {}", phys.conflicts.len());
+            }
+            println!("Run `kat conflicts` to inspect, then `kat resolve`.");
+        }
+    }
+
+    ExitCode::SUCCESS
 }
 
 fn print_repository_status_compact(status: &RepositoryStatus) {

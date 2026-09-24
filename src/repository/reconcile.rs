@@ -301,6 +301,79 @@ pub fn load_reconciliation_session(
     Ok(Some(session))
 }
 
+
+
+
+pub fn reconcile_workspace(
+    repo_root: &Path,
+    workspace_id: &WorkspaceId,
+    target_rev_id: RepositoryRevisionId,
+) -> Result<ReconciliationSession, QueryError> {
+    let repo = crate::repository::open::open_repository(repo_root)
+        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+    let store = repo.object_store();
+
+    let ws = crate::repository::workspace::open_workspace(repo_root)
+        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+
+    let base_rev = crate::repository::topology::compare_ancestry(store, ws.base_revision, target_rev_id)?;
+    let common_base_id = match base_rev {
+        crate::repository::topology::DivergenceState::Diverged { common_base } => common_base,
+        _ => return Err(QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32])))),
+    };
+
+    let base_revision = repo.read_revision(common_base_id)
+        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+    let local_revision = repo.read_revision(ws.base_revision)
+        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+    let target_revision = repo.read_revision(target_rev_id)
+        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+
+    let base_state_obj = store.get(base_revision.semantic_state.as_object_id())
+        .map_err(QueryError::ObjectStore)?;
+    let base_state = match crate::encoding::decode_canonical(&base_state_obj).map_err(QueryError::Decoding)?.payload {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => return Err(QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32])))),
+    };
+
+    let local_state_obj = store.get(local_revision.semantic_state.as_object_id())
+        .map_err(QueryError::ObjectStore)?;
+    let local_state = match crate::encoding::decode_canonical(&local_state_obj).map_err(QueryError::Decoding)?.payload {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => return Err(QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32])))),
+    };
+
+    let target_state_obj = store.get(target_revision.semantic_state.as_object_id())
+        .map_err(QueryError::ObjectStore)?;
+    let target_state = match crate::encoding::decode_canonical(&target_state_obj).map_err(QueryError::Decoding)?.payload {
+        CanonicalPayload::SemanticState(s) => s,
+        _ => return Err(QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32])))),
+    };
+
+    let backend = crate::repository::workspace::git::GitWorkspaceBackend::open(repo_root)
+        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+
+    let session = reconcile(
+        store,
+        &backend,
+        workspace_id.clone(),
+        common_base_id,
+        ws.base_revision,
+        target_rev_id,
+        &base_revision.workspace_snapshot,
+        &local_revision.workspace_snapshot,
+        &target_revision.workspace_snapshot,
+        &base_state,
+        &local_state,
+        &target_state,
+    )?;
+
+    save_reconciliation_session(repo_root, workspace_id, &session, &backend)
+        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+
+    Ok(session)
+}
+
 /// Orchestrates both semantic and physical reconciliation.
 ///
 /// If both domains are clean, returns a `ReconciliationSession` in the `PreparedClean` state.
