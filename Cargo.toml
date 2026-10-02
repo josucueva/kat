@@ -15,6 +15,7 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 clap_mangen = "0.2"
 git2 = "0.21.0"
+hex = "0.4.3"
 
 [dev-dependencies]
 # ObjectStore tests use real temp directories with automatic cleanup.

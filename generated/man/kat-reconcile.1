@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH reconcile 1  "reconcile " 
+.SH NAME
+reconcile \- Prepare semantic and physical histories for collaboration
+.SH SYNOPSIS
+\fBreconcile\fR [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> 
+.SH DESCRIPTION
+Prepare semantic and physical histories for collaboration
+.PP
+Reconcile computes a 3\-way merge between the workspace\*(Aqs local base and a target revision. This does not change the workspace\*(Aqs base automatically.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH COLLABORATION
+.TP
+<\fITARGET\fR>
+Target revision (can be an object ID or reference like @main)

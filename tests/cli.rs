@@ -2924,8 +2924,11 @@ fn phase14_acceptance_cli_flow_end_to_end() {
     );
     assert!(ok_stg);
 
-    let (abort_out, _, ok_ab) = run_kat(root, &["change", "abort"]);
-    assert!(ok_ab);
+    let (abort_out, abort_err, ok_ab) = run_kat(root, &["change", "abort"]);
+    assert!(
+        ok_ab,
+        "abort failed: stdout: {abort_out}, stderr: {abort_err}"
+    );
     assert!(abort_out.contains("aborted draft change transaction"));
 
     // Verify aborted staged operation was discarded
@@ -3124,8 +3127,11 @@ fn kat_change_cas_conflict_stale_session() {
     assert!(status_out.contains("status:       stale"));
 
     // 5. Verify abort cleans up stale session
-    let (abort_out, _, ok_ab) = run_kat(root, &["change", "abort"]);
-    assert!(ok_ab);
+    let (abort_out, abort_err, ok_ab) = run_kat(root, &["change", "abort"]);
+    assert!(
+        ok_ab,
+        "abort failed: stdout: {abort_out}, stderr: {abort_err}"
+    );
     assert!(abort_out.contains("aborted draft change transaction"));
 
     let (status_after, _, _) = run_kat(root, &["change", "status"]);

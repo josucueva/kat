@@ -34,6 +34,8 @@ pub enum SemanticConflictKind {
 /// A first-class conflict representing unresolved concurrent evolution.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SemanticConflict {
+    /// A stable local identifier for resolving this conflict during a session.
+    pub id: String,
     /// Elements directly involved in or affected by the conflict.
     pub affected_elements: Vec<ElementId>,
     /// Relationships directly involved in or affected by the conflict.
@@ -68,6 +70,8 @@ pub enum MaterializationConflictKind {
 /// A first-class conflict representing unresolved physical/materialization evolution.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct MaterializationConflict {
+    /// A stable local identifier for resolving this conflict during a session.
+    pub id: String,
     /// The specific category of physical incompatibility.
     pub kind: MaterializationConflictKind,
     /// Paths relative to the physical workspace root. Multiple paths may be involved (e.g., in renames).

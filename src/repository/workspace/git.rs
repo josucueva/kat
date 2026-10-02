@@ -1052,6 +1052,15 @@ impl WorkspaceBackend for GitWorkspaceBackend {
                 };
 
                 conflicts.push(MaterializationConflict {
+                    id: uuid::Uuid::from_bytes(
+                        crate::encoding::hash::object_id(
+                            format!("{:?}-{:?}", kind, path).as_bytes(),
+                        )
+                        .as_bytes()[..16]
+                            .try_into()
+                            .unwrap(),
+                    )
+                    .to_string(),
                     kind: kind.clone(),
                     paths: vec![path.clone()],
                 });
@@ -1094,10 +1103,18 @@ impl WorkspaceBackend for GitWorkspaceBackend {
         let mut paths_to_remove = BTreeSet::new();
         for i in 0..clean_paths.len() {
             let p1 = &clean_paths[i];
-            for j in (i + 1)..clean_paths.len() {
-                let p2 = &clean_paths[j];
+            for p2 in clean_paths.iter().skip(i + 1) {
                 if p2.starts_with(p1) {
                     conflicts.push(MaterializationConflict {
+                        id: uuid::Uuid::from_bytes(
+                            crate::encoding::hash::object_id(
+                                format!("PathCollision-{:?}-{:?}", p1, p2).as_bytes(),
+                            )
+                            .as_bytes()[..16]
+                                .try_into()
+                                .unwrap(),
+                        )
+                        .to_string(),
                         kind: MaterializationConflictKind::PathCollision,
                         paths: vec![p1.clone(), p2.clone()],
                     });
@@ -1299,6 +1316,105 @@ impl WorkspaceBackend for GitWorkspaceBackend {
 
         Ok(())
     }
+
+    fn materialize_candidate(
+        &self,
+        _workspace_id: &crate::domain::workspace::WorkspaceId,
+        candidate: &crate::domain::workspace::PhysicalReconciliationCandidate,
+    ) -> Result<(), WorkspaceBackendError> {
+        let b_reps = Self::get_snapshot_representations(&self._project_root, &candidate.base);
+        let l_reps = Self::get_snapshot_representations(&self._project_root, &candidate.local);
+        let o_reps = Self::get_snapshot_representations(&self._project_root, &candidate.other);
+
+        let b_commit = self
+            ._repo
+            .find_commit(
+                b_reps
+                    .first()
+                    .ok_or_else(|| WorkspaceBackendError::SnapshotNotFound(candidate.base.clone()))?
+                    .commit,
+            )
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let l_commit = self
+            ._repo
+            .find_commit(
+                l_reps
+                    .first()
+                    .ok_or_else(|| {
+                        WorkspaceBackendError::SnapshotNotFound(candidate.local.clone())
+                    })?
+                    .commit,
+            )
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let o_commit = self
+            ._repo
+            .find_commit(
+                o_reps
+                    .first()
+                    .ok_or_else(|| {
+                        WorkspaceBackendError::SnapshotNotFound(candidate.other.clone())
+                    })?
+                    .commit,
+            )
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+        let b_tree = b_commit
+            .tree()
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let l_tree = l_commit
+            .tree()
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let o_tree = o_commit
+            .tree()
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+        let mut merge_opts = git2::MergeOptions::new();
+        merge_opts.find_renames(false);
+        let mut index = self
+            ._repo
+            .merge_trees(&b_tree, &l_tree, &o_tree, Some(&merge_opts))
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout.force(); // We want to write conflict markers
+        self._repo
+            .checkout_index(Some(&mut index), Some(&mut checkout))
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+
+        Ok(())
+    }
+
+    fn clear_physical_candidate(
+        &self,
+        workspace_id: &crate::domain::workspace::WorkspaceId,
+    ) -> Result<(), WorkspaceBackendError> {
+        let physical_dir = self
+            ._project_root
+            .join(".kat/workspaces")
+            .join(&workspace_id.0)
+            .join("physical-reconciliation");
+
+        if !physical_dir.exists() {
+            return Ok(());
+        }
+
+        if let Ok(entries) = std::fs::read_dir(&physical_dir) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type()
+                    && file_type.is_dir()
+                {
+                    let provisional_id = entry.file_name().to_string_lossy().to_string();
+                    let ref_name = format!("refs/kat/candidates/{}", provisional_id);
+                    if let Ok(mut reference) = self._repo.find_reference(&ref_name) {
+                        let _ = reference.delete();
+                    }
+                }
+            }
+        }
+
+        std::fs::remove_dir_all(&physical_dir).map_err(WorkspaceBackendError::Io)?;
+        Ok(())
+    }
 }
 
 impl GitWorkspaceBackend {
@@ -1314,8 +1430,7 @@ impl GitWorkspaceBackend {
             .join("physical-reconciliation")
             .join(id.to_string())
             .join("git.json");
-        let json =
-            std::fs::read_to_string(&state_path).map_err(WorkspaceBackendError::Io)?;
+        let json = std::fs::read_to_string(&state_path).map_err(WorkspaceBackendError::Io)?;
         serde_json::from_str(&json).map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))
     }
 }

@@ -113,7 +113,10 @@ fn rec_p01_clean_semantic_clean_physical() {
     .unwrap();
 
     match res {
-        ReconciliationSession { state: ReconciliationSessionState::PreparedClean { revision, .. }, .. } => {
+        ReconciliationSession {
+            state: ReconciliationSessionState::PreparedClean { revision, .. },
+            ..
+        } => {
             let rev_obj_bytes = store.get(revision.as_object_id()).unwrap();
             let canonical_obj = decode_canonical(&rev_obj_bytes).unwrap();
             let rev = match canonical_obj.payload {
@@ -126,7 +129,12 @@ fn rec_p01_clean_semantic_clean_physical() {
             assert_eq!(rev.parents.len(), 2);
             assert!(rev.semantic_change.is_none());
         }
-        ReconciliationSession { state: ReconciliationSessionState::Conflicted { candidate: c }, .. } => panic!(
+        ReconciliationSession {
+            state:
+                ReconciliationSessionState::ConflictedMaterialized { candidate: c }
+                | ReconciliationSessionState::Conflicted { candidate: c },
+            ..
+        } => panic!(
             "Expected clean, got conflicted. Sem: {:?}, Val: {:?}, Phys: {:?}",
             c.semantic_conflicts, c.validation_findings, c.materialization_conflicts
         ),
@@ -173,7 +181,10 @@ fn rec_p02_conflicted_semantic_clean_physical() {
     .unwrap();
 
     match res {
-        ReconciliationSession { state: ReconciliationSessionState::Conflicted { candidate: candidate }, .. } => {
+        ReconciliationSession {
+            state: ReconciliationSessionState::Conflicted { candidate },
+            ..
+        } => {
             assert!(
                 !candidate.semantic_conflicts.is_empty(),
                 "Expected semantic conflicts"
@@ -187,7 +198,14 @@ fn rec_p02_conflicted_semantic_clean_physical() {
                 "No materialization conflicts expected"
             );
         }
-        ReconciliationSession { state: ReconciliationSessionState::PreparedClean { .. }, .. } => panic!("Expected conflicted, got clean"),
+        ReconciliationSession {
+            state: ReconciliationSessionState::PreparedClean { .. },
+            ..
+        } => panic!("Expected conflicted, got clean"),
+        ReconciliationSession {
+            state: ReconciliationSessionState::ConflictedMaterialized { .. },
+            ..
+        } => panic!("Expected conflicted, got materialized"),
     }
 }
 
@@ -218,7 +236,10 @@ fn rec_p03_clean_semantic_conflicted_physical() {
     .unwrap();
 
     match res {
-        ReconciliationSession { state: ReconciliationSessionState::Conflicted { candidate: candidate }, .. } => {
+        ReconciliationSession {
+            state: ReconciliationSessionState::Conflicted { candidate },
+            ..
+        } => {
             assert!(
                 candidate.semantic_conflicts.is_empty(),
                 "No semantic conflicts expected"
@@ -229,7 +250,14 @@ fn rec_p03_clean_semantic_conflicted_physical() {
             );
             assert_eq!(candidate.materialization_conflicts.len(), 1);
         }
-        ReconciliationSession { state: ReconciliationSessionState::PreparedClean { .. }, .. } => panic!("Expected conflicted, got clean"),
+        ReconciliationSession {
+            state: ReconciliationSessionState::PreparedClean { .. },
+            ..
+        } => panic!("Expected conflicted, got clean"),
+        ReconciliationSession {
+            state: ReconciliationSessionState::ConflictedMaterialized { .. },
+            ..
+        } => panic!("Expected conflicted, got materialized"),
     }
 }
 
@@ -273,7 +301,10 @@ fn rec_p04_conflicted_semantic_conflicted_physical() {
     .unwrap();
 
     match res {
-        ReconciliationSession { state: ReconciliationSessionState::Conflicted { candidate: candidate }, .. } => {
+        ReconciliationSession {
+            state: ReconciliationSessionState::Conflicted { candidate },
+            ..
+        } => {
             assert!(
                 !candidate.semantic_conflicts.is_empty(),
                 "Expected semantic conflicts"
@@ -284,7 +315,14 @@ fn rec_p04_conflicted_semantic_conflicted_physical() {
             );
             assert_eq!(candidate.materialization_conflicts.len(), 1);
         }
-        ReconciliationSession { state: ReconciliationSessionState::PreparedClean { .. }, .. } => panic!("Expected conflicted, got clean"),
+        ReconciliationSession {
+            state: ReconciliationSessionState::PreparedClean { .. },
+            ..
+        } => panic!("Expected conflicted, got clean"),
+        ReconciliationSession {
+            state: ReconciliationSessionState::ConflictedMaterialized { .. },
+            ..
+        } => panic!("Expected conflicted, got materialized"),
     }
 }
 
@@ -320,7 +358,12 @@ fn rec_p05_validation_failure() {
     .unwrap();
 
     match res {
-        ReconciliationSession { state: ReconciliationSessionState::Conflicted { candidate: c }, .. } => {
+        ReconciliationSession {
+            state:
+                ReconciliationSessionState::ConflictedMaterialized { candidate: c }
+                | ReconciliationSessionState::Conflicted { candidate: c },
+            ..
+        } => {
             assert!(
                 !c.validation_findings.is_empty(),
                 "Expected validation finding"
@@ -362,7 +405,12 @@ fn rec_p07_canonical_parent_sorting() {
     .unwrap();
 
     match res {
-        ReconciliationSession { state: ReconciliationSessionState::Conflicted { candidate }, .. } => {
+        ReconciliationSession {
+            state:
+                ReconciliationSessionState::ConflictedMaterialized { candidate }
+                | ReconciliationSessionState::Conflicted { candidate },
+            ..
+        } => {
             // REC-P07: The candidate JSON should have the exact order
             assert_eq!(candidate.base_revision, make_rev(1));
             assert_eq!(candidate.local_revision, make_rev(2));
@@ -380,9 +428,7 @@ fn rec_p07_canonical_parent_sorting() {
 
 #[test]
 fn rec_p08_unified_restart_durability() {
-    use kat::repository::reconcile::{
-        load_reconciliation_session, save_reconciliation_session,
-    };
+    use kat::repository::reconcile::{load_reconciliation_session, save_reconciliation_session};
     use kat::repository::workspace::git::GitWorkspaceBackend;
     use std::fs;
 
@@ -433,20 +479,52 @@ fn rec_p08_unified_restart_durability() {
     .unwrap();
 
     let cand = match res {
-        ReconciliationSession { state: ReconciliationSessionState::Conflicted { candidate: c }, .. } => c,
+        ReconciliationSession {
+            state:
+                ReconciliationSessionState::ConflictedMaterialized { candidate: c }
+                | ReconciliationSessionState::Conflicted { candidate: c },
+            ..
+        } => c,
         _ => panic!("Expected Conflicted merge"),
     };
 
-    save_reconciliation_session(&root, &wid, &kat::repository::reconcile::ReconciliationSession { version: 1, workspace_id: cand.workspace_id.clone(), base_revision: cand.local_revision.clone(), target_revision: cand.other_revision.clone(), state: kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate: cand.clone() } }, &git).unwrap();
+    save_reconciliation_session(
+        &root,
+        &wid,
+        &kat::repository::reconcile::ReconciliationSession {
+            version: 1,
+            workspace_id: cand.workspace_id.clone(),
+            base_revision: cand.local_revision,
+            target_revision: cand.other_revision,
+            state: kat::repository::reconcile::ReconciliationSessionState::Conflicted {
+                candidate: cand.clone(),
+            },
+        },
+        &git,
+    )
+    .unwrap();
     drop(git);
 
     let git2 = GitWorkspaceBackend::open(&root).unwrap();
-    let loaded = load_reconciliation_session(&root, &wid, make_rev(2), make_rev(3))
+    let loaded = load_reconciliation_session(&root, &wid, make_rev(2))
         .unwrap()
         .unwrap();
 
-    assert!(match &loaded.state { kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate } => candidate.physical_candidate.clone(), _ => None }.is_some());
-    let loaded_phys = match &loaded.state { kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate } => candidate.physical_candidate.clone(), _ => None }.unwrap();
+    assert!(
+        match &loaded.state {
+            kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate } =>
+                candidate.physical_candidate.clone(),
+            _ => None,
+        }
+        .is_some()
+    );
+    let loaded_phys = match &loaded.state {
+        kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate } => {
+            candidate.physical_candidate.clone()
+        }
+        _ => None,
+    }
+    .unwrap();
     assert_eq!(
         loaded_phys.provisional,
         cand.physical_candidate.as_ref().unwrap().provisional
@@ -537,7 +615,10 @@ fn rec_p06_clean_preparation_non_mutation() {
     .unwrap();
 
     match res {
-        ReconciliationSession { state: ReconciliationSessionState::PreparedClean { revision: _ }, .. } => {
+        ReconciliationSession {
+            state: ReconciliationSessionState::PreparedClean { revision: _ },
+            ..
+        } => {
             // Verify HEAD unchanged
             let head_after = repo.head().unwrap().target().unwrap();
             assert_eq!(

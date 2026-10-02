@@ -69,6 +69,8 @@ impl DraftSessionState {
 pub enum DraftSessionError {
     /// A draft session is already open in the repository.
     AlreadyExists,
+    /// A workspace conflict with an active reconciliation session.
+    WorkspaceConflict(String),
     /// No open draft session exists.
     NotFound,
     /// Attempted to modify or commit a stale session.
@@ -157,6 +159,18 @@ pub fn begin_draft_session(
     let root = repository.root_dir();
     if has_draft_session(root) {
         return Err(DraftSessionError::AlreadyExists);
+    }
+
+    if let Ok(ws) = crate::repository::workspace::state::read_workspace_state(root) {
+        if let Ok(Some(_)) = crate::repository::reconcile::load_reconciliation_session(
+            root,
+            &ws.id,
+            ws.base_revision,
+        ) {
+            return Err(DraftSessionError::WorkspaceConflict(
+                "an active reconciliation session already exists in this workspace".to_string(),
+            ));
+        }
     }
 
     let accepted = repository
@@ -589,6 +603,7 @@ impl std::fmt::Display for DraftSessionError {
                 f,
                 "a draft change transaction is already open at .kat/work/change/session.json"
             ),
+            Self::WorkspaceConflict(e0) => write!(f, "workspace conflict: {e0}"),
             Self::NotFound => write!(
                 f,
                 "no open draft change transaction found at .kat/work/change/session.json"

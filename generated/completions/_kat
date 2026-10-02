@@ -36,6 +36,110 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(reconcile)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':target -- Target revision (can be an object ID or reference like @main):_default' \
+&& ret=0
+;;
+(conflicts)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(materialize)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(resolve)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_kat__subcmd__resolve_commands" \
+"*::: :->resolve" \
+&& ret=0
+
+    case $state in
+    (resolve)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-resolve-command-$line[1]:"
+        case $line[1] in
+            (semantic)
+_arguments "${_arguments_options[@]}" : \
+'--accept=[Side to accept (base, local, other)]:ACCEPT:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+':conflict_id -- Conflict ID:_default' \
+&& ret=0
+;;
+(physical)
+_arguments "${_arguments_options[@]}" : \
+'--accept=[Side to accept (base, local, other, working)]:ACCEPT:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+':conflict_id -- Conflict ID:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_kat__subcmd__resolve__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-resolve-help-command-$line[1]:"
+        case $line[1] in
+            (semantic)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(physical)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(finalize)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(advance)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':target -- The target revision ref to advance to:_default' \
+&& ret=0
+;;
+(switch)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':target -- The target revision ref to switch to:_default' \
+&& ret=0
+;;
 (context)
 _arguments "${_arguments_options[@]}" : \
 '--direction=[Traversal direction (upstream, downstream, both)]:DIRECTION:_default' \
@@ -373,6 +477,54 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(reconcile)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(conflicts)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(materialize)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(resolve)
+_arguments "${_arguments_options[@]}" : \
+":: :_kat__subcmd__help__subcmd__resolve_commands" \
+"*::: :->resolve" \
+&& ret=0
+
+    case $state in
+    (resolve)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-help-resolve-command-$line[1]:"
+        case $line[1] in
+            (semantic)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(physical)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(finalize)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(advance)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(switch)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (context)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -522,6 +674,13 @@ esac
 _kat_commands() {
     local commands; commands=(
 'status:Show accepted repository state and current draft status' \
+'reconcile:Prepare semantic and physical histories for collaboration' \
+'conflicts:List active conflicts in the current reconciliation session' \
+'materialize:Exposes provisional physical state for human resolution' \
+'resolve:Resolve a specific semantic or physical conflict' \
+'finalize:Finalize an active reconciliation session by adopting the prepared revision' \
+'advance:Move current workspace forward to a strict descendant' \
+'switch:Move current workspace to an arbitrary revision/ref' \
 'context:Retrieve bounded semantic development context around elements' \
 'author:Stage a semantic Change from declarative JSON' \
 'check:Check consistency, evidence, accountability, and graph quality' \
@@ -557,6 +716,11 @@ _kat__subcmd__abort_commands() {
 _kat__subcmd__account_commands() {
     local commands; commands=()
     _describe -t commands 'kat account commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__advance_commands] )) ||
+_kat__subcmd__advance_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat advance commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__artifacts_commands] )) ||
 _kat__subcmd__artifacts_commands() {
@@ -645,6 +809,11 @@ _kat__subcmd__commit_commands() {
     local commands; commands=()
     _describe -t commands 'kat commit commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__conflicts_commands] )) ||
+_kat__subcmd__conflicts_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat conflicts commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__context_commands] )) ||
 _kat__subcmd__context_commands() {
     local commands; commands=()
@@ -660,10 +829,22 @@ _kat__subcmd__deprecate_commands() {
     local commands; commands=()
     _describe -t commands 'kat deprecate commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__finalize_commands] )) ||
+_kat__subcmd__finalize_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat finalize commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__help_commands] )) ||
 _kat__subcmd__help_commands() {
     local commands; commands=(
 'status:Show accepted repository state and current draft status' \
+'reconcile:Prepare semantic and physical histories for collaboration' \
+'conflicts:List active conflicts in the current reconciliation session' \
+'materialize:Exposes provisional physical state for human resolution' \
+'resolve:Resolve a specific semantic or physical conflict' \
+'finalize:Finalize an active reconciliation session by adopting the prepared revision' \
+'advance:Move current workspace forward to a strict descendant' \
+'switch:Move current workspace to an arbitrary revision/ref' \
 'context:Retrieve bounded semantic development context around elements' \
 'author:Stage a semantic Change from declarative JSON' \
 'check:Check consistency, evidence, accountability, and graph quality' \
@@ -699,6 +880,11 @@ _kat__subcmd__help__subcmd__abort_commands() {
 _kat__subcmd__help__subcmd__account_commands() {
     local commands; commands=()
     _describe -t commands 'kat help account commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__advance_commands] )) ||
+_kat__subcmd__help__subcmd__advance_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help advance commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__help__subcmd__artifacts_commands] )) ||
 _kat__subcmd__help__subcmd__artifacts_commands() {
@@ -750,6 +936,11 @@ _kat__subcmd__help__subcmd__commit_commands() {
     local commands; commands=()
     _describe -t commands 'kat help commit commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__help__subcmd__conflicts_commands] )) ||
+_kat__subcmd__help__subcmd__conflicts_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help conflicts commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__help__subcmd__context_commands] )) ||
 _kat__subcmd__help__subcmd__context_commands() {
     local commands; commands=()
@@ -764,6 +955,11 @@ _kat__subcmd__help__subcmd__create_commands() {
 _kat__subcmd__help__subcmd__deprecate_commands() {
     local commands; commands=()
     _describe -t commands 'kat help deprecate commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__finalize_commands] )) ||
+_kat__subcmd__help__subcmd__finalize_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help finalize commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__help__subcmd__help_commands] )) ||
 _kat__subcmd__help__subcmd__help_commands() {
@@ -795,6 +991,11 @@ _kat__subcmd__help__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'kat help list commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__help__subcmd__materialize_commands] )) ||
+_kat__subcmd__help__subcmd__materialize_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help materialize commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__help__subcmd__ontology_commands] )) ||
 _kat__subcmd__help__subcmd__ontology_commands() {
     local commands; commands=(
@@ -806,6 +1007,29 @@ _kat__subcmd__help__subcmd__ontology_commands() {
 _kat__subcmd__help__subcmd__ontology__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'kat help ontology show commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__reconcile_commands] )) ||
+_kat__subcmd__help__subcmd__reconcile_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help reconcile commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__resolve_commands] )) ||
+_kat__subcmd__help__subcmd__resolve_commands() {
+    local commands; commands=(
+'semantic:Resolve a semantic conflict' \
+'physical:Resolve a physical materialization conflict' \
+    )
+    _describe -t commands 'kat help resolve commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__resolve__subcmd__physical_commands] )) ||
+_kat__subcmd__help__subcmd__resolve__subcmd__physical_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help resolve physical commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__resolve__subcmd__semantic_commands] )) ||
+_kat__subcmd__help__subcmd__resolve__subcmd__semantic_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help resolve semantic commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__help__subcmd__show_commands] )) ||
 _kat__subcmd__help__subcmd__show_commands() {
@@ -821,6 +1045,11 @@ _kat__subcmd__help__subcmd__status_commands() {
 _kat__subcmd__help__subcmd__supersede_commands() {
     local commands; commands=()
     _describe -t commands 'kat help supersede commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__switch_commands] )) ||
+_kat__subcmd__help__subcmd__switch_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help switch commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__help__subcmd__trace_commands] )) ||
 _kat__subcmd__help__subcmd__trace_commands() {
@@ -867,6 +1096,11 @@ _kat__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'kat list commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__materialize_commands] )) ||
+_kat__subcmd__materialize_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat materialize commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__ontology_commands] )) ||
 _kat__subcmd__ontology_commands() {
     local commands; commands=(
@@ -898,6 +1132,54 @@ _kat__subcmd__ontology__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'kat ontology show commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__reconcile_commands] )) ||
+_kat__subcmd__reconcile_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat reconcile commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__resolve_commands] )) ||
+_kat__subcmd__resolve_commands() {
+    local commands; commands=(
+'semantic:Resolve a semantic conflict' \
+'physical:Resolve a physical materialization conflict' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'kat resolve commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__resolve__subcmd__help_commands] )) ||
+_kat__subcmd__resolve__subcmd__help_commands() {
+    local commands; commands=(
+'semantic:Resolve a semantic conflict' \
+'physical:Resolve a physical materialization conflict' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'kat resolve help commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__resolve__subcmd__help__subcmd__help_commands] )) ||
+_kat__subcmd__resolve__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat resolve help help commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__resolve__subcmd__help__subcmd__physical_commands] )) ||
+_kat__subcmd__resolve__subcmd__help__subcmd__physical_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat resolve help physical commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__resolve__subcmd__help__subcmd__semantic_commands] )) ||
+_kat__subcmd__resolve__subcmd__help__subcmd__semantic_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat resolve help semantic commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__resolve__subcmd__physical_commands] )) ||
+_kat__subcmd__resolve__subcmd__physical_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat resolve physical commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__resolve__subcmd__semantic_commands] )) ||
+_kat__subcmd__resolve__subcmd__semantic_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat resolve semantic commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__show_commands] )) ||
 _kat__subcmd__show_commands() {
     local commands; commands=()
@@ -912,6 +1194,11 @@ _kat__subcmd__status_commands() {
 _kat__subcmd__supersede_commands() {
     local commands; commands=()
     _describe -t commands 'kat supersede commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__switch_commands] )) ||
+_kat__subcmd__switch_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat switch commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__trace_commands] )) ||
 _kat__subcmd__trace_commands() {

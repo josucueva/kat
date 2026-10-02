@@ -29,6 +29,8 @@ pub enum WorkspaceError {
     Repository(#[from] RepositoryError),
     #[error("Workspace snapshot not found for revision {0:?}")]
     SnapshotNotFound(RepositoryRevisionId),
+    #[error("Invalid reconciliation session: {0}")]
+    InvalidReconciliationSession(String),
 }
 
 /// Initializes a new Workspace in the repository.
@@ -60,7 +62,10 @@ pub fn init_workspace(
 }
 
 /// Opens the existing Workspace.
-pub fn open_workspace(repo_root: &Path) -> Result<Workspace, WorkspaceError> {
+pub fn open_workspace(
+    repo_root: &Path,
+    backend: &impl WorkspaceBackend,
+) -> Result<Workspace, WorkspaceError> {
     let ws = read_workspace_state(repo_root)?;
 
     // Verify the base_revision exists
@@ -73,10 +78,27 @@ pub fn open_workspace(repo_root: &Path) -> Result<Workspace, WorkspaceError> {
         .map_err(|_| WorkspaceError::SnapshotNotFound(ws.base_revision))?;
 
     // Verify WorkspaceSnapshot exists and is structurally sound
-    let backend = GitWorkspaceBackend::open(repo_root)?;
     if !backend.verify_snapshot_integrity(&revision.workspace_snapshot)? {
         return Err(WorkspaceError::SnapshotNotFound(ws.base_revision));
     }
+
+    Ok(ws)
+}
+
+pub fn update_workspace_base(
+    repo_root: &Path,
+    workspace_id: &WorkspaceId,
+    new_base: RepositoryRevisionId,
+) -> Result<Workspace, WorkspaceError> {
+    let mut ws = read_workspace_state(repo_root)?;
+    if &ws.id != workspace_id {
+        return Err(WorkspaceError::State(WorkspaceStateError::Io(
+            std::io::Error::other("Workspace ID mismatch"),
+        )));
+    }
+
+    ws.base_revision = new_base;
+    write_workspace_state_atomic(repo_root, &ws)?;
 
     Ok(ws)
 }
@@ -86,12 +108,14 @@ pub struct WorkspaceSummary {
     pub id: WorkspaceId,
     pub base_revision: crate::domain::identity::RepositoryRevisionId,
     pub status: WorkspaceStatus,
-    pub reconciliation: Option<crate::repository::reconcile::ReconciliationSession>,
 }
 
 /// Computes the combined status of the workspace relative to its base_revision.
-pub fn workspace_status(repo_root: &Path) -> Result<WorkspaceSummary, WorkspaceError> {
-    let ws = open_workspace(repo_root)?;
+pub fn workspace_status(
+    repo_root: &Path,
+    backend: &impl WorkspaceBackend,
+) -> Result<WorkspaceSummary, WorkspaceError> {
+    let ws = open_workspace(repo_root, backend)?;
     let repo = open_repository(repo_root)?;
     let revision = repo.read_revision(ws.base_revision)?;
 
@@ -113,7 +137,6 @@ pub fn workspace_status(repo_root: &Path) -> Result<WorkspaceSummary, WorkspaceE
     }
 
     // Check physical modification
-    let backend = GitWorkspaceBackend::open(repo_root)?;
     let state = backend.inspect_working_state(&revision.workspace_snapshot)?;
 
     let physical = if state.changes.is_clean() {
@@ -122,27 +145,53 @@ pub fn workspace_status(repo_root: &Path) -> Result<WorkspaceSummary, WorkspaceE
         PhysicalWorkspaceState::Modified
     };
 
-    let status = WorkspaceStatus {
-        semantic,
-        physical,
-        backend_consistency: state.backend_consistency,
-    };
-
     // Load reconciliation session if any
-    let mut reconciliation = None;
-    if let Ok(Some(session)) = crate::repository::reconcile::load_reconciliation_session(
+    let mut reconciliation_status = crate::domain::workspace::ReconciliationStatus::None;
+    match crate::repository::reconcile::load_reconciliation_session(
         repo_root,
         &ws.id,
         ws.base_revision,
     ) {
-        reconciliation = Some(session);
+        Ok(Some(session)) => match session.state {
+            crate::repository::reconcile::ReconciliationSessionState::PreparedClean {
+                revision,
+            } => {
+                reconciliation_status =
+                    crate::domain::workspace::ReconciliationStatus::PreparedClean {
+                        base_revision: session.base_revision,
+                        target_revision: session.target_revision,
+                        prepared_revision: revision,
+                    };
+            }
+            crate::repository::reconcile::ReconciliationSessionState::Conflicted { candidate }
+            | crate::repository::reconcile::ReconciliationSessionState::ConflictedMaterialized {
+                candidate,
+            } => {
+                reconciliation_status =
+                    crate::domain::workspace::ReconciliationStatus::Conflicted {
+                        base_revision: session.base_revision,
+                        target_revision: session.target_revision,
+                        semantic_conflicts: candidate.semantic_conflicts.len(),
+                        materialization_conflicts: candidate.materialization_conflicts.len(),
+                        validation_findings: candidate.validation_findings.len(),
+                    };
+            }
+        },
+        Ok(None) => {}
+        Err(e) => return Err(WorkspaceError::InvalidReconciliationSession(e.to_string())),
     }
+
+    let status = WorkspaceStatus {
+        semantic,
+        physical,
+        backend_consistency: state.backend_consistency,
+        reconciliation: reconciliation_status,
+    };
 
     Ok(WorkspaceSummary {
         id: ws.id,
         base_revision: ws.base_revision,
         status,
-        reconciliation,
     })
 }
 

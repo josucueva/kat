@@ -20,12 +20,30 @@ pub enum PhysicalWorkspaceState {
     Modified,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum ReconciliationStatus {
+    None,
+    PreparedClean {
+        base_revision: RepositoryRevisionId,
+        target_revision: RepositoryRevisionId,
+        prepared_revision: RepositoryRevisionId,
+    },
+    Conflicted {
+        base_revision: RepositoryRevisionId,
+        target_revision: RepositoryRevisionId,
+        semantic_conflicts: usize,
+        materialization_conflicts: usize,
+        validation_findings: usize,
+    },
+}
+
 /// The overall combined divergence status of a workspace.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WorkspaceStatus {
     pub semantic: SemanticWorkspaceState,
     pub physical: PhysicalWorkspaceState,
     pub backend_consistency: BackendConsistency,
+    pub reconciliation: ReconciliationStatus,
 }
 
 /// The core domain entity for a workspace, representing its immutable base revision.
@@ -192,5 +210,18 @@ pub trait WorkspaceBackend {
         &self,
         workspace_id: &WorkspaceId,
         candidate: &PhysicalReconciliationCandidate,
+    ) -> Result<(), WorkspaceBackendError>;
+
+    /// Materializes a physical candidate (including conflict markers) into the working tree.
+    fn materialize_candidate(
+        &self,
+        workspace_id: &WorkspaceId,
+        candidate: &PhysicalReconciliationCandidate,
+    ) -> Result<(), WorkspaceBackendError>;
+
+    /// Clears any persistent state or GC protections created for the physical candidate.
+    fn clear_physical_candidate(
+        &self,
+        workspace_id: &WorkspaceId,
     ) -> Result<(), WorkspaceBackendError>;
 }

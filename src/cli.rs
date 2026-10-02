@@ -100,6 +100,49 @@ pub enum Command {
     #[command(next_help_heading = "Collaboration")]
     Conflicts,
 
+    /// Exposes provisional physical state for human resolution
+    ///
+    /// Materializes conflict markers into the working tree and transitions the session state.
+    #[command(next_help_heading = "Collaboration")]
+    Materialize,
+
+    /// Resolve a specific semantic or physical conflict
+    #[command(next_help_heading = "Collaboration")]
+    Resolve {
+        #[command(subcommand)]
+        domain: ResolveDomain,
+    },
+
+    /// Finalize an active reconciliation session by adopting the prepared revision
+    #[command(next_help_heading = "Collaboration")]
+    Finalize {
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Move current workspace forward to a strict descendant
+    #[command(next_help_heading = "Collaboration")]
+    Advance {
+        /// The target revision ref to advance to
+        target: String,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Move current workspace to an arbitrary revision/ref
+    #[command(next_help_heading = "Collaboration")]
+    Switch {
+        /// The target revision ref to switch to
+        target: String,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Retrieve bounded semantic development context around elements
     ///
     /// Context is a deterministic, categorized semantic projection over accepted state
@@ -527,6 +570,26 @@ pub enum Command {
     /// Initialize a KAT repository
     #[command(next_help_heading = "Repository")]
     Init,
+}
+
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum ResolveDomain {
+    /// Resolve a semantic conflict
+    Semantic {
+        /// Conflict ID
+        conflict_id: String,
+        /// Side to accept (base, local, other)
+        #[arg(long)]
+        accept: String,
+    },
+    /// Resolve a physical materialization conflict
+    Physical {
+        /// Conflict ID
+        conflict_id: String,
+        /// Side to accept (base, local, other, working)
+        #[arg(long)]
+        accept: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]

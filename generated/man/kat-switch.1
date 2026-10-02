@@ -1,0 +1,20 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH switch 1  "switch " 
+.SH NAME
+switch \- Move current workspace to an arbitrary revision/ref
+.SH SYNOPSIS
+\fBswitch\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> 
+.SH DESCRIPTION
+Move current workspace to an arbitrary revision/ref
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH COLLABORATION
+.TP
+\fB\-\-json\fR
+Output structured machine JSON envelope
+.TP
+<\fITARGET\fR>
+The target revision ref to switch to

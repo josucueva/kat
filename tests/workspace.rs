@@ -51,7 +51,11 @@ fn ws_01_02_initialize_and_reopen() {
     assert_eq!(ws.base_revision, rev_id);
 
     // WS-02 workspace identity/base survive reopen
-    let reopened = open_workspace(&root).unwrap();
+    let reopened = open_workspace(
+        &root,
+        &kat::repository::workspace::git::GitWorkspaceBackend::open(&root).unwrap(),
+    )
+    .unwrap();
     assert_eq!(ws.id, reopened.id);
     assert_eq!(ws.base_revision, reopened.base_revision);
 }
@@ -65,16 +69,19 @@ fn ws_03_through_08_status_derivation() {
     init_workspace(&root, rev_id).unwrap();
 
     // WS-03 clean state
-    let status = workspace_status(&root).unwrap();
-    assert_eq!(status.semantic, SemanticWorkspaceState::Clean);
-    assert_eq!(status.physical, PhysicalWorkspaceState::Clean);
-    assert_eq!(status.backend_consistency, BackendConsistency::Consistent);
+    let status = workspace_status(&root, &GitWorkspaceBackend::open(&root).unwrap()).unwrap();
+    assert_eq!(status.status.semantic, SemanticWorkspaceState::Clean);
+    assert_eq!(status.status.physical, PhysicalWorkspaceState::Clean);
+    assert_eq!(
+        status.status.backend_consistency,
+        BackendConsistency::Consistent
+    );
 
     // WS-11 empty DraftSession remains semantically clean
     let repo = kat::repository::open::open_repository(&root).unwrap();
     begin_draft_session(&repo, None).unwrap();
-    let status = workspace_status(&root).unwrap();
-    assert_eq!(status.semantic, SemanticWorkspaceState::Clean);
+    let status = workspace_status(&root, &GitWorkspaceBackend::open(&root).unwrap()).unwrap();
+    assert_eq!(status.status.semantic, SemanticWorkspaceState::Clean);
 
     // WS-04 semantic-only modified
     // Manually push an operation to make it dirty
@@ -86,18 +93,18 @@ fn ws_03_through_08_status_derivation() {
         });
     kat::repository::session::write_draft_session_atomic(&root, &session).unwrap();
 
-    let status = workspace_status(&root).unwrap();
-    assert_eq!(status.semantic, SemanticWorkspaceState::Modified);
-    assert_eq!(status.physical, PhysicalWorkspaceState::Clean);
+    let status = workspace_status(&root, &GitWorkspaceBackend::open(&root).unwrap()).unwrap();
+    assert_eq!(status.status.semantic, SemanticWorkspaceState::Modified);
+    assert_eq!(status.status.physical, PhysicalWorkspaceState::Clean);
 
     // WS-05 physical-only modified
     // Clear draft session
     session.operations.clear();
     kat::repository::session::write_draft_session_atomic(&root, &session).unwrap();
     fs::write(root.join("hello.txt"), "hello").unwrap();
-    let status = workspace_status(&root).unwrap();
-    assert_eq!(status.semantic, SemanticWorkspaceState::Clean);
-    assert_eq!(status.physical, PhysicalWorkspaceState::Modified);
+    let status = workspace_status(&root, &GitWorkspaceBackend::open(&root).unwrap()).unwrap();
+    assert_eq!(status.status.semantic, SemanticWorkspaceState::Clean);
+    assert_eq!(status.status.physical, PhysicalWorkspaceState::Modified);
 
     // WS-06 combined modified
     session
@@ -106,9 +113,9 @@ fn ws_03_through_08_status_derivation() {
             new_version: kat::domain::identity::ObjectId::from_bytes([1; 32]),
         });
     kat::repository::session::write_draft_session_atomic(&root, &session).unwrap();
-    let status = workspace_status(&root).unwrap();
-    assert_eq!(status.semantic, SemanticWorkspaceState::Modified);
-    assert_eq!(status.physical, PhysicalWorkspaceState::Modified);
+    let status = workspace_status(&root, &GitWorkspaceBackend::open(&root).unwrap()).unwrap();
+    assert_eq!(status.status.semantic, SemanticWorkspaceState::Modified);
+    assert_eq!(status.status.physical, PhysicalWorkspaceState::Modified);
 
     // Revert to clean physical
     fs::remove_file(root.join("hello.txt")).unwrap();
@@ -132,15 +139,19 @@ fn ws_09_10_backend_mismatch() {
     )
     .unwrap();
 
-    let status = workspace_status(&root).unwrap();
+    let status = workspace_status(&root, &GitWorkspaceBackend::open(&root).unwrap()).unwrap();
     // WS-09 backend mismatch detected
-    match status.backend_consistency {
+    match status.status.backend_consistency {
         BackendConsistency::Mismatch(_) => {}
         _ => panic!("Expected BackendMismatch"),
     }
 
     // WS-10 backend mismatch does not move base_revision
-    let ws = open_workspace(&root).unwrap();
+    let ws = open_workspace(
+        &root,
+        &kat::repository::workspace::git::GitWorkspaceBackend::open(&root).unwrap(),
+    )
+    .unwrap();
     assert_eq!(ws.base_revision, rev_id);
 }
 
@@ -162,12 +173,12 @@ fn ws_13_status_survives_restart() {
         });
     kat::repository::session::write_draft_session_atomic(&root, &session).unwrap();
 
-    let status1 = workspace_status(&root).unwrap();
+    let status1 = workspace_status(&root, &GitWorkspaceBackend::open(&root).unwrap()).unwrap();
 
     // Restart logic: drop repository/backend and recreate
-    let status2 = workspace_status(&root).unwrap();
+    let status2 = workspace_status(&root, &GitWorkspaceBackend::open(&root).unwrap()).unwrap();
     assert_eq!(status1, status2);
-    assert_eq!(status2.semantic, SemanticWorkspaceState::Modified);
+    assert_eq!(status2.status.semantic, SemanticWorkspaceState::Modified);
 }
 
 #[test]
@@ -186,8 +197,8 @@ fn ws_12_semantic_mismatch() {
     session.base_state_id = kat::domain::identity::ObjectId::from_bytes([0; 32]);
     kat::repository::session::write_draft_session_atomic(&root, &session).unwrap();
 
-    let status = workspace_status(&root).unwrap();
-    match status.semantic {
+    let status = workspace_status(&root, &GitWorkspaceBackend::open(&root).unwrap()).unwrap();
+    match status.status.semantic {
         SemanticWorkspaceState::BaseMismatch(_) => {}
         _ => panic!("Expected BaseMismatch"),
     }
@@ -207,7 +218,10 @@ fn ws_14_15_missing_base_fails() {
     let rev_path = root.join(".kat/objects").join(hex);
     fs::remove_file(&rev_path).unwrap();
 
-    let res = open_workspace(&root);
+    let res = open_workspace(
+        &root,
+        &kat::repository::workspace::git::GitWorkspaceBackend::open(&root).unwrap(),
+    );
     match res {
         Err(WorkspaceError::Repository(_)) => {} // Failed to read revision
         _ => panic!("Expected Repository error, got {:?}", res),
@@ -235,7 +249,10 @@ fn ws_14_15_missing_base_fails() {
     ws.base_revision = bad_rev_id;
     kat::repository::workspace::state::write_workspace_state_atomic(&root, &ws).unwrap();
 
-    let res = open_workspace(&root);
+    let res = open_workspace(
+        &root,
+        &kat::repository::workspace::git::GitWorkspaceBackend::open(&root).unwrap(),
+    );
     match res {
         Err(kat::repository::workspace::WorkspaceError::SnapshotNotFound(_))
         | Err(kat::repository::workspace::WorkspaceError::Backend(_)) => {}
@@ -259,24 +276,40 @@ fn ws_16_current_workspace_pointer_switch() {
     let w1 = init_workspace(&root, rev_id1).unwrap();
 
     // Current workspace points to W1
-    let opened = open_workspace(&root).unwrap();
+    let opened = open_workspace(
+        &root,
+        &kat::repository::workspace::git::GitWorkspaceBackend::open(&root).unwrap(),
+    )
+    .unwrap();
     assert_eq!(opened.id, w1.id);
 
     // Initialize W2 (automatically switches pointer to W2)
     let w2 = init_workspace(&root, rev_id2).unwrap();
-    let opened = open_workspace(&root).unwrap();
+    let opened = open_workspace(
+        &root,
+        &kat::repository::workspace::git::GitWorkspaceBackend::open(&root).unwrap(),
+    )
+    .unwrap();
     assert_eq!(opened.id, w2.id);
 
     // Switch pointer back to W1 manually
     fs::write(root.join(".kat/current-workspace"), &w1.id.0).unwrap();
 
-    let opened = open_workspace(&root).unwrap();
+    let opened = open_workspace(
+        &root,
+        &kat::repository::workspace::git::GitWorkspaceBackend::open(&root).unwrap(),
+    )
+    .unwrap();
     assert_eq!(opened.id, w1.id);
     assert_eq!(opened.base_revision, rev_id1);
 
     // Ensure W2's base_revision is unmutated
     fs::write(root.join(".kat/current-workspace"), &w2.id.0).unwrap();
-    let opened2 = open_workspace(&root).unwrap();
+    let opened2 = open_workspace(
+        &root,
+        &kat::repository::workspace::git::GitWorkspaceBackend::open(&root).unwrap(),
+    )
+    .unwrap();
     assert_eq!(opened2.id, w2.id);
     assert_eq!(opened2.base_revision, rev_id2);
 }

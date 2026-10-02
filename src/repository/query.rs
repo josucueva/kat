@@ -371,6 +371,14 @@ pub enum QueryError {
     },
     /// A failure returned by the physical workspace backend.
     WorkspaceBackend(crate::domain::workspace::WorkspaceBackendError),
+    /// A conflict with another active session in the workspace.
+    WorkspaceConflict(String),
+    /// Revisions have multiple incomparable best common ancestors.
+    AmbiguousMergeBase(Vec<crate::domain::identity::RepositoryRevisionId>),
+    /// Revisions have no common ancestor.
+    UnrelatedHistory,
+    /// No active reconciliation session exists in the workspace.
+    NoActiveReconciliation,
     /// The ChangeRevision dependency graph contains a cycle. Content-addressed
     /// storage makes a genuine cycle unconstructible through the normal store
     /// (each dependency ObjectId is the hash of its target's content), so this
@@ -1813,7 +1821,12 @@ pub fn repository_status(repository: &Repository) -> Result<RepositoryStatus, Qu
         None
     };
 
-    let workspace = crate::repository::workspace::workspace_status(repository.root_dir()).ok();
+    let workspace =
+        crate::repository::workspace::git::GitWorkspaceBackend::open(repository.root_dir())
+            .ok()
+            .and_then(|backend| {
+                crate::repository::workspace::workspace_status(repository.root_dir(), &backend).ok()
+            });
 
     Ok(RepositoryStatus {
         repository_id: repository.metadata.repository_id,
@@ -2860,6 +2873,17 @@ impl std::fmt::Display for QueryError {
             ),
             Self::InvalidMaxDepth(e0) => write!(f, "max depth must be greater than 0, got {e0}"),
             Self::WorkspaceBackend(e0) => write!(f, "workspace backend error: {e0}"),
+            Self::WorkspaceConflict(e0) => write!(f, "workspace conflict: {e0}"),
+            Self::AmbiguousMergeBase(bases) => {
+                let bases_str = bases
+                    .iter()
+                    .map(|b| b.as_object_id().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "ambiguous merge base (candidates: {})", bases_str)
+            }
+            Self::UnrelatedHistory => write!(f, "unrelated histories"),
+            Self::NoActiveReconciliation => write!(f, "no active reconciliation session"),
         }
     }
 }

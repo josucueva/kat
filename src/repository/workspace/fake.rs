@@ -85,8 +85,7 @@ impl FakeWorkspaceBackend {
         if let Some(root) = &self.project_root {
             let candidates_dir = root.join(".kat/physical/fake/candidates");
             let state_path = candidates_dir.join(format!("{}.json", id));
-            let json =
-                std::fs::read_to_string(&state_path).map_err(WorkspaceBackendError::Io)?;
+            let json = std::fs::read_to_string(&state_path).map_err(WorkspaceBackendError::Io)?;
             serde_json::from_str(&json)
                 .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))
         } else {
@@ -113,6 +112,21 @@ impl WorkspaceBackend for FakeWorkspaceBackend {
         _candidate: &crate::domain::workspace::PhysicalReconciliationCandidate,
     ) -> Result<(), WorkspaceBackendError> {
         // For tests, fake backend candidate persistence is in-memory or not strictly required
+        Ok(())
+    }
+
+    fn materialize_candidate(
+        &self,
+        _workspace_id: &crate::domain::workspace::WorkspaceId,
+        _candidate: &crate::domain::workspace::PhysicalReconciliationCandidate,
+    ) -> Result<(), WorkspaceBackendError> {
+        Ok(())
+    }
+
+    fn clear_physical_candidate(
+        &self,
+        _workspace_id: &crate::domain::workspace::WorkspaceId,
+    ) -> Result<(), WorkspaceBackendError> {
         Ok(())
     }
     fn inspect_working_state(
@@ -246,6 +260,13 @@ impl WorkspaceBackend for FakeWorkspaceBackend {
 
         let mut add_conflict = |path: &PathBuf, kind: MaterializationConflictKind| {
             conflicts.push(MaterializationConflict {
+                id: uuid::Uuid::from_bytes(
+                    crate::encoding::hash::object_id(format!("{:?}-{:?}", kind, path).as_bytes())
+                        .as_bytes()[..16]
+                        .try_into()
+                        .unwrap(),
+                )
+                .to_string(),
                 kind,
                 paths: vec![path.clone()],
             });
@@ -310,10 +331,18 @@ impl WorkspaceBackend for FakeWorkspaceBackend {
         let mut paths_to_remove = BTreeSet::new();
         for i in 0..provisional_paths.len() {
             let p1 = &provisional_paths[i];
-            for j in (i + 1)..provisional_paths.len() {
-                let p2 = &provisional_paths[j];
+            for p2 in provisional_paths.iter().skip(i + 1) {
                 if p2.starts_with(p1) {
                     conflicts.push(MaterializationConflict {
+                        id: uuid::Uuid::from_bytes(
+                            crate::encoding::hash::object_id(
+                                format!("PathCollision-{:?}-{:?}", p1, p2).as_bytes(),
+                            )
+                            .as_bytes()[..16]
+                                .try_into()
+                                .unwrap(),
+                        )
+                        .to_string(),
                         kind: MaterializationConflictKind::PathCollision,
                         paths: vec![p1.clone(), p2.clone()],
                     });

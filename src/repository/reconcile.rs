@@ -31,6 +31,16 @@ pub enum ReconciliationSessionState {
     PreparedClean { revision: RepositoryRevisionId },
     /// Conflicts or findings were found in either domain.
     Conflicted { candidate: ReconciliationCandidate },
+    /// Physical conflicts have been materialized into the workspace.
+    ConflictedMaterialized { candidate: ReconciliationCandidate },
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ReconcileWorkspaceOutcome {
+    Same,
+    LocalAhead,
+    OtherAhead,
+    Prepared { session: Box<ReconciliationSession> },
 }
 
 /// A candidate produced by attempting semantic reconciliation.
@@ -62,6 +72,8 @@ pub enum SessionLoadError {
     StaleTarget,
     #[error("Stale session: workspace ID mismatch")]
     StaleWorkspace,
+    #[error("Invalid session: {0}")]
+    Invalid(String),
 }
 
 /// Attempts to reconcile two divergent semantic states against their common base.
@@ -113,6 +125,13 @@ pub fn reconcile_semantic(
             // Conflict (L != B && O != B && L != O)
             let kind = determine_element_conflict_kind(store, b.copied(), l.copied(), o.copied())?;
             conflicts.push(SemanticConflict {
+                id: uuid::Uuid::from_bytes(
+                    crate::encoding::hash::object_id(format!("{:?}", kind).as_bytes()).as_bytes()
+                        [..16]
+                        .try_into()
+                        .unwrap(),
+                )
+                .to_string(),
                 affected_elements: vec![element_id],
                 affected_relationships: vec![],
                 kind,
@@ -158,15 +177,22 @@ pub fn reconcile_semantic(
                 });
             }
         } else {
-            // RelationshipConflict for relationships
+            let kind = SemanticConflictKind::RelationshipConflict {
+                base_version: b.copied(),
+                local_version: l.copied(),
+                other_version: o.copied(),
+            };
             conflicts.push(SemanticConflict {
+                id: uuid::Uuid::from_bytes(
+                    crate::encoding::hash::object_id(format!("{:?}", kind).as_bytes()).as_bytes()
+                        [..16]
+                        .try_into()
+                        .unwrap(),
+                )
+                .to_string(),
                 affected_elements: vec![],
                 affected_relationships: vec![rel_id],
-                kind: SemanticConflictKind::RelationshipConflict {
-                    base_version: b.copied(),
-                    local_version: l.copied(),
-                    other_version: o.copied(),
-                },
+                kind,
             });
             // Neutral rule: Retain base version if it existed.
             if let Some(v) = b {
@@ -185,14 +211,21 @@ pub fn reconcile_semantic(
     } else if other.ontology_version == base.ontology_version {
         local.ontology_version
     } else {
+        let kind = SemanticConflictKind::ConcurrentModification {
+            base_version: Some(base.ontology_version),
+            local_version: Some(local.ontology_version),
+            other_version: Some(other.ontology_version),
+        };
         conflicts.push(SemanticConflict {
+            id: uuid::Uuid::from_bytes(
+                crate::encoding::hash::object_id(format!("{:?}", kind).as_bytes()).as_bytes()[..16]
+                    .try_into()
+                    .unwrap(),
+            )
+            .to_string(),
             affected_elements: vec![],
             affected_relationships: vec![],
-            kind: SemanticConflictKind::ConcurrentModification {
-                base_version: Some(base.ontology_version),
-                local_version: Some(local.ontology_version),
-                other_version: Some(other.ontology_version),
-            },
+            kind,
         });
         base.ontology_version
     };
@@ -231,7 +264,7 @@ pub fn reconcile_semantic(
 }
 
 // Helper for the persistence path
-fn session_path(repo_root: &Path, workspace_id: &WorkspaceId) -> PathBuf {
+pub fn session_path(repo_root: &Path, workspace_id: &WorkspaceId) -> PathBuf {
     repo_root
         .join(".kat")
         .join("workspaces")
@@ -252,13 +285,14 @@ pub fn save_reconciliation_session(
 
     // 1. Construct physical state & 2. Write backend candidate atomically
     if let ReconciliationSessionState::Conflicted { candidate } = &session.state
-        && let Some(phys) = &candidate.physical_candidate {
-            backend
-                .persist_physical_candidate(workspace_id, phys)
-                .map_err(std::io::Error::other)?;
-            // 3. Verify it can be reopened (the API doesn't expose it generically yet, but backend has done the durable write)
-            // If it was GitWorkspaceBackend, it would load_physical_candidate. We can just rely on the durable write success.
-        }
+        && let Some(phys) = &candidate.physical_candidate
+    {
+        backend
+            .persist_physical_candidate(workspace_id, phys)
+            .map_err(std::io::Error::other)?;
+        // 3. Verify it can be reopened (the API doesn't expose it generically yet, but backend has done the durable write)
+        // If it was GitWorkspaceBackend, it would load_physical_candidate. We can just rely on the durable write success.
+    }
 
     // 4. Write reconciliation_session.json atomically
     let temp_path = path.with_extension("tmp");
@@ -301,57 +335,317 @@ pub fn load_reconciliation_session(
     Ok(Some(session))
 }
 
+pub fn clear_reconciliation_session(
+    repo_root: &Path,
+    workspace_id: &WorkspaceId,
+) -> std::io::Result<()> {
+    let path = session_path(repo_root, workspace_id);
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
 
+#[derive(Debug, thiserror::Error)]
+pub enum AbortError {
+    #[error("Not in a workspace: {0}")]
+    Workspace(#[from] crate::repository::workspace::WorkspaceError),
+    #[error("Repository error: {0}")]
+    Repository(#[from] crate::repository::error::RepositoryError),
+    #[error("Session load error: {0}")]
+    SessionLoad(#[from] crate::repository::reconcile::SessionLoadError),
+    #[error("Draft session abort error: {0}")]
+    DraftSession(#[from] crate::repository::session::DraftSessionError),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Encoding error: {0}")]
+    Encoding(#[from] crate::encoding::validate::CanonicalStructureError),
+    #[error("Decoding error: {0}")]
+    Decoding(#[from] crate::encoding::DecodingError),
+    #[error("Object store error: {0}")]
+    ObjectStore(#[from] crate::repository::object_store::ObjectStoreError),
+}
 
+pub fn abort_reconciliation_session<B: WorkspaceBackend>(
+    repo_root: &Path,
+    backend: &B,
+) -> Result<bool, AbortError> {
+    let ws = crate::repository::workspace::open_workspace(
+        repo_root,
+        &crate::repository::workspace::git::GitWorkspaceBackend::open(repo_root)
+            .map_err(crate::repository::workspace::WorkspaceError::Backend)?,
+    )?;
+
+    let session = load_reconciliation_session(repo_root, &ws.id, ws.base_revision)?;
+
+    if let Some(session) = session {
+        let repo = crate::repository::open::open_repository(repo_root)?;
+        let store = repo.object_store();
+
+        // We always use the session's original workspace base as the authoritative rollback point.
+        let base_rev_obj = store.get(session.base_revision.as_object_id())?;
+        let base_rev = match crate::encoding::decode_canonical(&base_rev_obj)?.payload {
+            CanonicalPayload::RepositoryRevision(r) => r,
+            _ => {
+                return Err(AbortError::Io(std::io::Error::other("Not a revision")));
+            }
+        };
+
+        // Check if working tree != Wbase
+        let working_state = backend
+            .inspect_working_state(&base_rev.workspace_snapshot)
+            .map_err(|e| AbortError::Io(std::io::Error::other(e)))?;
+
+        let has_changes = !working_state.changes.untracked.is_empty()
+            || !working_state.changes.modified.is_empty()
+            || !working_state.changes.deleted.is_empty();
+
+        if has_changes {
+            backend
+                .materialize_snapshot(&base_rev.workspace_snapshot)
+                .map_err(|e| AbortError::Io(std::io::Error::other(e)))?;
+
+            // Verify
+            if !backend
+                .verify_snapshot_integrity(&base_rev.workspace_snapshot)
+                .unwrap_or(false)
+            {
+                return Err(AbortError::Io(std::io::Error::other(
+                    "Materialization verification failed",
+                )));
+            }
+        }
+
+        backend
+            .clear_physical_candidate(&ws.id)
+            .map_err(|e| AbortError::Io(std::io::Error::other(e)))?;
+
+        clear_reconciliation_session(repo_root, &ws.id)?;
+
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FinalizeError {
+    #[error("Not in a workspace: {0}")]
+    Workspace(#[from] crate::repository::workspace::WorkspaceError),
+    #[error("Repository error: {0}")]
+    Repository(#[from] crate::repository::error::RepositoryError),
+    #[error("Session load error: {0}")]
+    SessionLoad(#[from] crate::repository::reconcile::SessionLoadError),
+    #[error("No active reconciliation session found.")]
+    NoSession,
+    #[error("Cannot finalize: Session is not in a PreparedClean state.")]
+    NotPreparedClean,
+    #[error("Stale session: workspace base revision does not match session base revision.")]
+    StaleSession,
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Encoding error: {0}")]
+    Encoding(#[from] crate::encoding::validate::CanonicalStructureError),
+    #[error("Decoding error: {0}")]
+    Decoding(#[from] crate::encoding::DecodingError),
+    #[error("Object store error: {0}")]
+    ObjectStore(#[from] crate::repository::object_store::ObjectStoreError),
+}
+
+pub fn finalize_reconciliation_session<B: WorkspaceBackend>(
+    repo_root: &Path,
+    backend: &B,
+) -> Result<(), FinalizeError> {
+    let ws = crate::repository::workspace::open_workspace(
+        repo_root,
+        &crate::repository::workspace::git::GitWorkspaceBackend::open(repo_root)
+            .map_err(crate::repository::workspace::WorkspaceError::Backend)?,
+    )?;
+
+    let session = load_reconciliation_session(repo_root, &ws.id, ws.base_revision)?
+        .ok_or(FinalizeError::NoSession)?;
+
+    if ws.base_revision != session.base_revision {
+        return Err(FinalizeError::StaleSession);
+    }
+
+    let r_merge = match session.state {
+        ReconciliationSessionState::PreparedClean { revision } => revision,
+        _ => return Err(FinalizeError::NotPreparedClean),
+    };
+
+    let repo = crate::repository::open::open_repository(repo_root)?;
+    let store = repo.object_store();
+    let r_merge_obj = store.get(r_merge.as_object_id())?;
+    let r_merge_rev = match crate::encoding::decode_canonical(&r_merge_obj)?.payload {
+        CanonicalPayload::RepositoryRevision(r) => r,
+        _ => {
+            return Err(FinalizeError::Io(std::io::Error::other("Not a revision")));
+        }
+    };
+
+    let w_merge = r_merge_rev.workspace_snapshot;
+
+    let working_state = backend
+        .inspect_working_state(&w_merge)
+        .map_err(|e| FinalizeError::Io(std::io::Error::other(e)))?;
+
+    let has_changes = !working_state.changes.untracked.is_empty()
+        || !working_state.changes.modified.is_empty()
+        || !working_state.changes.deleted.is_empty();
+
+    if has_changes {
+        backend
+            .materialize_snapshot(&w_merge)
+            .map_err(|e| FinalizeError::Io(std::io::Error::other(e)))?;
+
+        if !backend.verify_snapshot_integrity(&w_merge).unwrap_or(false) {
+            return Err(FinalizeError::Io(std::io::Error::other(
+                "Materialization verification failed",
+            )));
+        }
+    }
+
+    crate::repository::workspace::update_workspace_base(repo_root, &ws.id, r_merge)?;
+
+    backend
+        .clear_physical_candidate(&ws.id)
+        .map_err(|e| FinalizeError::Io(std::io::Error::other(e)))?;
+
+    clear_reconciliation_session(repo_root, &ws.id)?;
+
+    Ok(())
+}
 
 pub fn reconcile_workspace(
     repo_root: &Path,
     workspace_id: &WorkspaceId,
     target_rev_id: RepositoryRevisionId,
-) -> Result<ReconciliationSession, QueryError> {
-    let repo = crate::repository::open::open_repository(repo_root)
-        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+) -> Result<ReconcileWorkspaceOutcome, QueryError> {
+    let repo = crate::repository::open::open_repository(repo_root).map_err(|_| {
+        QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(
+            ObjectId::from_bytes([0; 32]),
+        ))
+    })?;
     let store = repo.object_store();
 
-    let ws = crate::repository::workspace::open_workspace(repo_root)
-        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+    use crate::repository::session::has_draft_session;
+    if has_draft_session(repo_root) {
+        return Err(QueryError::WorkspaceConflict(
+            "an active authoring session already exists".to_string(),
+        ));
+    }
 
-    let base_rev = crate::repository::topology::compare_ancestry(store, ws.base_revision, target_rev_id)?;
+    if session_path(repo_root, workspace_id).exists() {
+        return Err(QueryError::WorkspaceConflict(
+            "an active reconciliation session already exists".to_string(),
+        ));
+    }
+
+    let ws = crate::repository::workspace::open_workspace(
+        repo_root,
+        &crate::repository::workspace::git::GitWorkspaceBackend::open(repo_root).unwrap(),
+    )
+    .map_err(|_| {
+        QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(
+            ObjectId::from_bytes([0; 32]),
+        ))
+    })?;
+
+    let base_rev =
+        crate::repository::topology::compare_ancestry(store, ws.base_revision, target_rev_id)?;
     let common_base_id = match base_rev {
+        crate::repository::topology::DivergenceState::Same => {
+            return Ok(ReconcileWorkspaceOutcome::Same);
+        }
+        crate::repository::topology::DivergenceState::LocalAhead => {
+            return Ok(ReconcileWorkspaceOutcome::LocalAhead);
+        }
+        crate::repository::topology::DivergenceState::OtherAhead => {
+            return Ok(ReconcileWorkspaceOutcome::OtherAhead);
+        }
         crate::repository::topology::DivergenceState::Diverged { common_base } => common_base,
-        _ => return Err(QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32])))),
+        crate::repository::topology::DivergenceState::AmbiguousMergeBase { bases } => {
+            return Err(QueryError::AmbiguousMergeBase(bases));
+        }
+        crate::repository::topology::DivergenceState::Unrelated => {
+            return Err(QueryError::UnrelatedHistory);
+        }
     };
 
-    let base_revision = repo.read_revision(common_base_id)
-        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
-    let local_revision = repo.read_revision(ws.base_revision)
-        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
-    let target_revision = repo.read_revision(target_rev_id)
-        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+    let base_revision = repo.read_revision(common_base_id).map_err(|_| {
+        QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(
+            ObjectId::from_bytes([0; 32]),
+        ))
+    })?;
+    let local_revision = repo.read_revision(ws.base_revision).map_err(|_| {
+        QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(
+            ObjectId::from_bytes([0; 32]),
+        ))
+    })?;
+    let target_revision = repo.read_revision(target_rev_id).map_err(|_| {
+        QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(
+            ObjectId::from_bytes([0; 32]),
+        ))
+    })?;
 
-    let base_state_obj = store.get(base_revision.semantic_state.as_object_id())
+    let base_state_obj = store
+        .get(base_revision.semantic_state.as_object_id())
         .map_err(QueryError::ObjectStore)?;
-    let base_state = match crate::encoding::decode_canonical(&base_state_obj).map_err(QueryError::Decoding)?.payload {
+    let base_state = match crate::encoding::decode_canonical(&base_state_obj)
+        .map_err(QueryError::Decoding)?
+        .payload
+    {
         CanonicalPayload::SemanticState(s) => s,
-        _ => return Err(QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32])))),
+        _ => {
+            return Err(QueryError::ObjectStore(
+                crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes(
+                    [0; 32],
+                )),
+            ));
+        }
     };
 
-    let local_state_obj = store.get(local_revision.semantic_state.as_object_id())
+    let local_state_obj = store
+        .get(local_revision.semantic_state.as_object_id())
         .map_err(QueryError::ObjectStore)?;
-    let local_state = match crate::encoding::decode_canonical(&local_state_obj).map_err(QueryError::Decoding)?.payload {
+    let local_state = match crate::encoding::decode_canonical(&local_state_obj)
+        .map_err(QueryError::Decoding)?
+        .payload
+    {
         CanonicalPayload::SemanticState(s) => s,
-        _ => return Err(QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32])))),
+        _ => {
+            return Err(QueryError::ObjectStore(
+                crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes(
+                    [0; 32],
+                )),
+            ));
+        }
     };
 
-    let target_state_obj = store.get(target_revision.semantic_state.as_object_id())
+    let target_state_obj = store
+        .get(target_revision.semantic_state.as_object_id())
         .map_err(QueryError::ObjectStore)?;
-    let target_state = match crate::encoding::decode_canonical(&target_state_obj).map_err(QueryError::Decoding)?.payload {
+    let target_state = match crate::encoding::decode_canonical(&target_state_obj)
+        .map_err(QueryError::Decoding)?
+        .payload
+    {
         CanonicalPayload::SemanticState(s) => s,
-        _ => return Err(QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32])))),
+        _ => {
+            return Err(QueryError::ObjectStore(
+                crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes(
+                    [0; 32],
+                )),
+            ));
+        }
     };
 
-    let backend = crate::repository::workspace::git::GitWorkspaceBackend::open(repo_root)
-        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+    let backend =
+        crate::repository::workspace::git::GitWorkspaceBackend::open(repo_root).map_err(|_| {
+            QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(
+                ObjectId::from_bytes([0; 32]),
+            ))
+        })?;
 
     let session = reconcile(
         store,
@@ -368,10 +662,15 @@ pub fn reconcile_workspace(
         &target_state,
     )?;
 
-    save_reconciliation_session(repo_root, workspace_id, &session, &backend)
-        .map_err(|_| QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(ObjectId::from_bytes([0; 32]))))?;
+    save_reconciliation_session(repo_root, workspace_id, &session, &backend).map_err(|_| {
+        QueryError::ObjectStore(crate::repository::object_store::ObjectStoreError::NotFound(
+            ObjectId::from_bytes([0; 32]),
+        ))
+    })?;
 
-    Ok(session)
+    Ok(ReconcileWorkspaceOutcome::Prepared {
+        session: Box::new(session),
+    })
 }
 
 /// Orchestrates both semantic and physical reconciliation.

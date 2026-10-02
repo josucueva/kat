@@ -26,6 +26,13 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('-V', '-V ', [CompletionResultType]::ParameterName, 'Print version')
             [CompletionResult]::new('--version', '--version', [CompletionResultType]::ParameterName, 'Print version')
             [CompletionResult]::new('status', 'status', [CompletionResultType]::ParameterValue, 'Show accepted repository state and current draft status')
+            [CompletionResult]::new('reconcile', 'reconcile', [CompletionResultType]::ParameterValue, 'Prepare semantic and physical histories for collaboration')
+            [CompletionResult]::new('conflicts', 'conflicts', [CompletionResultType]::ParameterValue, 'List active conflicts in the current reconciliation session')
+            [CompletionResult]::new('materialize', 'materialize', [CompletionResultType]::ParameterValue, 'Exposes provisional physical state for human resolution')
+            [CompletionResult]::new('resolve', 'resolve', [CompletionResultType]::ParameterValue, 'Resolve a specific semantic or physical conflict')
+            [CompletionResult]::new('finalize', 'finalize', [CompletionResultType]::ParameterValue, 'Finalize an active reconciliation session by adopting the prepared revision')
+            [CompletionResult]::new('advance', 'advance', [CompletionResultType]::ParameterValue, 'Move current workspace forward to a strict descendant')
+            [CompletionResult]::new('switch', 'switch', [CompletionResultType]::ParameterValue, 'Move current workspace to an arbitrary revision/ref')
             [CompletionResult]::new('context', 'context', [CompletionResultType]::ParameterValue, 'Retrieve bounded semantic development context around elements')
             [CompletionResult]::new('author', 'author', [CompletionResultType]::ParameterValue, 'Stage a semantic Change from declarative JSON')
             [CompletionResult]::new('check', 'check', [CompletionResultType]::ParameterValue, 'Check consistency, evidence, accountability, and graph quality')
@@ -56,6 +63,74 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'kat;reconcile' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'kat;conflicts' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'kat;materialize' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'kat;resolve' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('semantic', 'semantic', [CompletionResultType]::ParameterValue, 'Resolve a semantic conflict')
+            [CompletionResult]::new('physical', 'physical', [CompletionResultType]::ParameterValue, 'Resolve a physical materialization conflict')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'kat;resolve;semantic' {
+            [CompletionResult]::new('--accept', '--accept', [CompletionResultType]::ParameterName, 'Side to accept (base, local, other)')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'kat;resolve;physical' {
+            [CompletionResult]::new('--accept', '--accept', [CompletionResultType]::ParameterName, 'Side to accept (base, local, other, working)')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'kat;resolve;help' {
+            [CompletionResult]::new('semantic', 'semantic', [CompletionResultType]::ParameterValue, 'Resolve a semantic conflict')
+            [CompletionResult]::new('physical', 'physical', [CompletionResultType]::ParameterValue, 'Resolve a physical materialization conflict')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'kat;resolve;help;semantic' {
+            break
+        }
+        'kat;resolve;help;physical' {
+            break
+        }
+        'kat;resolve;help;help' {
+            break
+        }
+        'kat;finalize' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'kat;advance' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'kat;switch' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
         'kat;context' {
@@ -293,6 +368,13 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
         }
         'kat;help' {
             [CompletionResult]::new('status', 'status', [CompletionResultType]::ParameterValue, 'Show accepted repository state and current draft status')
+            [CompletionResult]::new('reconcile', 'reconcile', [CompletionResultType]::ParameterValue, 'Prepare semantic and physical histories for collaboration')
+            [CompletionResult]::new('conflicts', 'conflicts', [CompletionResultType]::ParameterValue, 'List active conflicts in the current reconciliation session')
+            [CompletionResult]::new('materialize', 'materialize', [CompletionResultType]::ParameterValue, 'Exposes provisional physical state for human resolution')
+            [CompletionResult]::new('resolve', 'resolve', [CompletionResultType]::ParameterValue, 'Resolve a specific semantic or physical conflict')
+            [CompletionResult]::new('finalize', 'finalize', [CompletionResultType]::ParameterValue, 'Finalize an active reconciliation session by adopting the prepared revision')
+            [CompletionResult]::new('advance', 'advance', [CompletionResultType]::ParameterValue, 'Move current workspace forward to a strict descendant')
+            [CompletionResult]::new('switch', 'switch', [CompletionResultType]::ParameterValue, 'Move current workspace to an arbitrary revision/ref')
             [CompletionResult]::new('context', 'context', [CompletionResultType]::ParameterValue, 'Retrieve bounded semantic development context around elements')
             [CompletionResult]::new('author', 'author', [CompletionResultType]::ParameterValue, 'Stage a semantic Change from declarative JSON')
             [CompletionResult]::new('check', 'check', [CompletionResultType]::ParameterValue, 'Check consistency, evidence, accountability, and graph quality')
@@ -319,6 +401,35 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             break
         }
         'kat;help;status' {
+            break
+        }
+        'kat;help;reconcile' {
+            break
+        }
+        'kat;help;conflicts' {
+            break
+        }
+        'kat;help;materialize' {
+            break
+        }
+        'kat;help;resolve' {
+            [CompletionResult]::new('semantic', 'semantic', [CompletionResultType]::ParameterValue, 'Resolve a semantic conflict')
+            [CompletionResult]::new('physical', 'physical', [CompletionResultType]::ParameterValue, 'Resolve a physical materialization conflict')
+            break
+        }
+        'kat;help;resolve;semantic' {
+            break
+        }
+        'kat;help;resolve;physical' {
+            break
+        }
+        'kat;help;finalize' {
+            break
+        }
+        'kat;help;advance' {
+            break
+        }
+        'kat;help;switch' {
             break
         }
         'kat;help;context' {

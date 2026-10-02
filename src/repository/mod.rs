@@ -3,8 +3,10 @@
 
 pub mod author;
 pub mod change;
+pub mod conflicts;
 pub mod error;
 pub mod init;
+pub mod materialize;
 pub mod metadata;
 pub mod object_store;
 pub mod open;
@@ -12,6 +14,7 @@ pub mod query;
 pub mod reconcile;
 pub mod ref_store;
 pub mod resolve;
+pub mod resolve_conflicts;
 pub mod selector;
 pub mod session;
 pub mod topology;
@@ -86,3 +89,5 @@ pub use validation::repository::{
     UnverifiedConstraint, ValidationEvidenceInfo, ValidationReport, ValidationViolation,
     ValidationViolationKind, validate_repository, validate_repository_state,
 };
+pub mod transition;
+pub use transition::{TransitionError, transition_workspace_to_revision};
