@@ -20,6 +20,11 @@ All core reconciliation, conflict resolution, topology traversal, and collaborat
 
 The remaining effort focuses purely on remote networking, compatibility migration, and final end-to-end verification.
 
+### Remaining Phase 10 Items
+While the core workflows are implemented, the following items from Phase 10 require final completion/verification:
+- **10.10 JSON machine interfaces**: While basic `--json` output has been added to the new commands, a comprehensive audit and completion of the structured machine interface contracts for all new porcelain output is needed.
+- **10.11 Full E2E collaboration tests**: End-to-end multi-step collaboration tests simulating real user workflows across these new commands (this overlaps heavily with the upcoming Phase 14).
+
 ### Phase 11: Remote abstraction
 **Goal:** Implement abstractions for remote syncing.
 - Define what the remote abstraction transports: `RepositoryRevision` objects, semantic objects, shared references / heads, workspace snapshot availability metadata.
