@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10 frozen: collaboration machine interfaces and full local E2E evaluation complete. Phase 11 (Remote abstraction) is next.
+Phase 10 frozen. Phase 11.1 transport interface draft is implemented and validated; interface freeze is pending review.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -15,6 +15,7 @@ Phase 10 frozen: collaboration machine interfaces and full local E2E evaluation 
 | Phase 10.1..10.9 | `21b8275` | Complete. Local collaboration commands. |
 | Phase 10.10 | `7676223` | Complete. Versioned JSON collaboration interface; MI-COL checks pass in `tests/collaboration_json.rs`. |
 | Phase 10.11 | `7676223` | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
+| Phase 11.1 | Pending | Transport-independent contracts, coordinator, and fake-remote acceptance tests implemented and validated; freeze pending review. |
 
 ## 1. Objective
 
@@ -549,6 +550,12 @@ Provide CLI tools for collaboration.
 - Remote-backed execution of `sync`/`push` (completed in Phase 12).
 
 ## Phase 11: Remote abstraction
+### Step 11.1: Transport interface draft
+- Status: Implemented and validated; interface freeze pending review.
+- [x] Record named-reference CAS, recursive completeness, retry, and fetch authority contracts.
+- [x] Add semantic and workspace transport traits with an in-memory coordinator.
+- [x] Add fake-remote acceptance tests for closure verification, partial transfer, CAS, and local authority preservation.
+- Notes: No network, Git remote commands, or KAT Hub behavior; these remain out of scope for this step.
 ### Goal
 Implement abstractions for remote syncing.
 ### Design inputs
@@ -559,19 +566,29 @@ Implement abstractions for remote syncing.
 - Phase 10 complete.
 ### Design constraints
 - Avoid locking the domain to HTTP at this layer.
+- Keep repository coordination, semantic object transport, and physical snapshot transport as separate responsibilities.
+- Fetch transfers and verifies content before updating remote-tracking observations. It never moves local named references, `refs/accepted`, a workspace base, or the working tree.
+- Publish verifies the complete destination closure before compare-and-swapping one named remote reference.
 ### Implementation work
-- Define exactly what the remote abstraction transports: `RepositoryRevision` objects, semantic objects, shared references / heads, workspace snapshot availability metadata.
-- Operations: discover refs/heads, has object, fetch object(s), publish object(s), compare-and-swap ref, verify completeness.
+- Add a `RemoteCoordinator` over `SemanticTransport` and `WorkspaceTransport`.
+- `SemanticTransport` lists named references and read-only unnamed DAG tips, fetches/stores canonical bytes by `ObjectId`, and compare-and-swaps a named remote reference.
+- Unnamed DAG tips are derived observations; do not add a mutable `Head` type or unnamed-head mutation operation.
+- `WorkspaceTransport` checks local and remote snapshot availability, fetches snapshots, and publishes snapshots by `WorkspaceSnapshotId` without materializing the working tree.
+- Recursively resolve and verify every parent `RepositoryRevision`, its semantic state and change dependencies, and every physical snapshot in the transferred ancestry. Verify hashes, canonical decoding, expected object kinds, and semantic-change/result-state consistency.
+- Keep partially transferred immutable objects for retry. Do not update a named reference until semantic and physical destination completeness has been verified.
 ### Tests
-- In-memory fake remote testing for all operations.
+- In-memory fake transports cover reference discovery (including unnamed tips), object and snapshot transfer, idempotent duplicate transfer, recursive closure verification, and per-reference CAS.
+- Fetch tests prove that failed or partial transfers do not update remote-tracking references and that successful fetch leaves `refs/accepted`, local named references, workspace base, and working tree unchanged.
+- Publish tests prove that missing dependencies or snapshots prevent CAS, partial uploads may remain, and stale CAS preserves the current remote reference and the local candidate.
 ### Regression checks
 - `cargo test --workspace`, `cargo fmt --check`, `cargo clippy ... -D warnings`.
 ### Failure / recovery cases
-- Transport-level failures generically: unavailable transport, partial object availability, duplicate object publication, stale CAS expectation, missing referenced object.
+- Distinguish unavailable transports, missing objects/snapshots, integrity failures, and stale CAS expectations.
+- Retry after partial immutable transfers; duplicate publication is idempotent.
 ### Acceptance criteria
-- Abstraction handles full DAG transport robustly.
+- Fetch and publish handle complete revision DAGs while preserving the semantic/physical boundary and all local authority invariants.
 ### Artifacts produced
-- `Remote` interface.
+- `RemoteCoordinator`, `SemanticTransport`, `WorkspaceTransport`, and in-memory acceptance tests.
 ### Out of scope for this phase
 - Actual KAT Hub or Git network calls.
 

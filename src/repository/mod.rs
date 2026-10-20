@@ -13,6 +13,7 @@ pub mod open;
 pub mod query;
 pub mod reconcile;
 pub mod ref_store;
+pub mod remote;
 pub mod resolve;
 pub mod resolve_conflicts;
 pub mod selector;
@@ -77,6 +78,10 @@ pub use query::{
     history, history_entry_touches_element, impact_propagation_direction, inspect_draft_session,
     inspect_ontology, list_elements, origin_traversal_direction, show_element, show_ontology_type,
     trace_origin,
+};
+pub use remote::{
+    FetchOutcome, RemoteCoordinator, RemoteError, RemoteReferences, RemoteTransportError,
+    SemanticTransport, WorkspaceTransport,
 };
 pub use resolve::{ResolveError, resolve_element_id, resolve_relationship_id};
 pub use validation::invariant::InvariantError;

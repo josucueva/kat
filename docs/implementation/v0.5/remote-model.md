@@ -153,14 +153,16 @@ locations.
 Conceptually:
 
 ```text
-Remote {
+RemoteCoordinator {
     repository_id
     semantic_transport
     workspace_transport
 }
 ```
 
-The exact representation is defined separately.
+The coordinator owns fetch and publish sequencing. The semantic and workspace
+transports remain separate because they move different immutable content and
+may use different hosts.
 
 A remote may use:
 
@@ -294,6 +296,14 @@ They represent divergent accepted repository histories.
 The remote must not automatically discard one head merely because another
 revision was published later.
 
+Unnamed DAG heads are read-only observations derived from the available
+`RepositoryRevision` graph. KAT does not store or mutate a separate `Head`
+object. The semantic transport reports named references and unnamed DAG-tip
+revision IDs. The coordinator verifies each reported tip's complete dependency
+closure before treating it as usable. A complete, unreferenced revision may
+remain discoverable after a named-reference CAS loses a race; it does not move
+that named reference or any local authority.
+
 ---
 
 ## 10. Remote heads are RepositoryRevision references
@@ -350,7 +360,8 @@ A KAT shared head always identifies a complete `RepositoryRevision`.
 
 ## 12. Immutable object exchange
 
-Remote synchronization should primarily exchange immutable objects.
+Remote synchronization exchanges immutable objects independently through the
+semantic and workspace transports.
 
 Conceptually:
 
@@ -375,6 +386,10 @@ physical workspace objects
 ```
 
 Immutable object transfer does not itself modify accepted repository heads.
+Semantic objects are transferred as bytes keyed by their expected `ObjectId`.
+The receiving side verifies the hash and canonical object kind. Workspace
+objects are addressed only by `WorkspaceSnapshotId`; backend-specific Git
+object IDs do not cross the workspace transport boundary.
 
 ---
 
@@ -390,13 +405,23 @@ fetch(remote)
 
 may:
 
-1. discover remote shared heads;
-2. discover missing `RepositoryRevision`s;
-3. fetch missing semantic objects;
-4. fetch or make available required physical objects;
-5. update local knowledge of the remote view.
+1. discover named references and unnamed DAG tips;
+2. fetch and verify every required canonical object in their recursive revision
+   and semantic dependency closures;
+3. fetch and verify required physical snapshots that are not locally
+   available;
+4. update remote-tracking references for named remote references.
 
-Fetch does not automatically change the active workspace base.
+If a required object or snapshot is missing or unavailable, fetch does not
+update remote-tracking references. Successfully transferred immutable objects
+may remain locally and be reused by a retry. Unnamed heads are returned as
+read-only discovery results; they do not create or move a local named
+reference.
+
+Fetch never changes the local `refs/accepted` semantic state, local named
+references, workspace base, or working tree. Updating
+`refs/remotes/<remote>/…` is an explicit observation of the remote, not local
+acceptance or integration.
 
 ---
 
@@ -534,8 +559,8 @@ publish(R43, remote)
 
 does not merely upload a reference.
 
-Before the revision becomes a shared head, the remote must be able to
-reconstruct all state required by that revision.
+Before the requested named reference can be moved to the revision, the remote
+must be able to reconstruct all state required by that revision.
 
 This includes both semantic and physical dimensions.
 
@@ -566,6 +591,14 @@ all physical objects required by W43
 
 and any other immutable repository objects required by the revision.
 
+Completeness is recursive. It includes every parent revision; each revision's
+`SemanticState`, `ChangeRevision` when present, and transitive canonical object
+dependencies; and the physical snapshot referenced by every revision in the
+transferred ancestry. A valid hash for the root `RepositoryRevision` alone is
+not evidence of completeness. Canonical decoding, expected object kinds,
+object hashes, semantic-change/result-state consistency, and physical snapshot
+integrity must all be checked.
+
 ---
 
 ## 20. Physical-first availability
@@ -576,16 +609,19 @@ creating a shared repository revision whose physical snapshot is unavailable.
 Conceptually:
 
 ```text
-1. make physical snapshot remotely available
-2. make semantic/repository objects remotely available
-3. verify complete RepositoryRevision
-4. publish shared head
+1. make every required physical snapshot remotely available;
+2. store required semantic objects and `RepositoryRevision` objects;
+3. retrieve/check the remote objects and verify the complete semantic and
+   physical closure;
+4. compare-and-swap the requested named reference.
 ```
 
 The exact network protocol is defined separately.
 
-The important invariant is that shared-head visibility occurs only after the
-revision is complete.
+The important invariant is that a named reference moves only after the
+revision is complete. A failed transfer or verification leaves the named
+reference unchanged. Uploaded immutable objects are retained for retry or
+later collection; rollback is unnecessary.
 
 ---
 
@@ -628,9 +664,11 @@ actual shared head:
 
 KAT must not silently overwrite `R44`.
 
-The publication attempt fails as a shared-head update.
+The publication attempt fails as a named-reference update.
 
-The already uploaded immutable objects remain valid.
+The already uploaded immutable objects remain valid. If they form a complete
+revision DAG tip, it may appear in unnamed-head discovery; that derived view
+does not overwrite or advance a named reference.
 
 The local `R43` remains an accepted local revision.
 
@@ -646,7 +684,7 @@ The repository now has potential divergence:
 
 ## 23. Compare-and-swap publication
 
-Shared-head movement should use an expected-current-state check.
+Named-reference movement uses an expected-current-state check.
 
 Conceptually:
 
@@ -656,17 +694,18 @@ publish:
     candidate = R43
 ```
 
-The remote updates the shared head only if the currently visible head is still
-`R42`.
+The remote updates the named reference only if it still points to `R42` (or is
+absent when the expected value is `none`).
 
 Conceptually:
 
 ```text
-CAS(R42 -> R43)
+CAS(main: R42 -> R43)
 ```
 
-If the remote head changed concurrently, publication does not destroy that
-concurrent history.
+If the named reference changed concurrently, publication does not destroy that
+concurrent history. The candidate's immutable objects remain available and the
+candidate remains accepted locally.
 
 This enables optimistic multi-user collaboration without a global repository
 lock.
@@ -675,8 +714,9 @@ lock.
 
 ## 24. Multiple-head publication
 
-A remote may support multiple shared heads rather than forcing every concurrent
-publication into one pointer.
+Unnamed heads are derived from the complete `RepositoryRevision` DAG inventory;
+they are not written or deleted through a mutable head operation. Named
+references remain independently CAS-updated.
 
 For example:
 
@@ -686,12 +726,12 @@ For example:
      R43   R44
 ```
 
-both may become visible accepted heads.
+both may be discoverable as DAG tips.
 
 This allows divergence to be preserved as repository state.
 
-Whether a named shared reference requires a single head is a separate
-repository-policy or reference-model concern.
+Publishing through a particular named reference still requires its own
+successful CAS. Discovering another unnamed tip does not move that reference.
 
 ---
 
@@ -701,10 +741,12 @@ Fetch and publication serve different directions of collaboration.
 
 ```text
 fetch
-    remote -> local knowledge
+    remote immutable content -> local immutable content
+    then update remote-tracking observations
 
 publish
-    local accepted history -> remote visibility
+    local immutable content -> remote immutable content
+    then CAS one remote named reference
 ```
 
 Neither operation implies automatic reconciliation.
