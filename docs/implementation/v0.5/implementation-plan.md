@@ -13,8 +13,8 @@ Phase 10 frozen: collaboration machine interfaces and full local E2E evaluation 
 | Phase 4..8 | `N/A` | Complete. Workspace integration, remote reference, diverge logic, semantic reconciliation. |
 | Phase 9 | `a8a0f0a` | Complete. Physical reconciliation and conflicts. |
 | Phase 10.1..10.9 | `21b8275` | Complete. Local collaboration commands. |
-| Phase 10.10 | — | Complete. Versioned JSON collaboration interface; MI-COL checks pass. |
-| Phase 10.11 | — | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
+| Phase 10.10 | `7676223` | Complete. Versioned JSON collaboration interface; MI-COL checks pass in `tests/collaboration_json.rs`. |
+| Phase 10.11 | `7676223` | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
 
 ## 1. Objective
 
