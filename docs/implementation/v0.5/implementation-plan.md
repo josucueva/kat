@@ -15,7 +15,7 @@ Phase 10 frozen. Phase 11.1 transport interface draft is implemented and validat
 | Phase 10.1..10.9 | `21b8275` | Complete. Local collaboration commands. |
 | Phase 10.10 | `7676223` | Complete. Versioned JSON collaboration interface; MI-COL checks pass in `tests/collaboration_json.rs`. |
 | Phase 10.11 | `7676223` | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
-| Phase 11.1 | Pending | Transport-independent contracts, coordinator, and fake-remote acceptance tests implemented and validated; freeze pending review. |
+| Phase 11.1 | `c5d8029` | Transport-independent contracts, coordinator, and fake-remote acceptance tests implemented and validated (625 tests); freeze pending review. |
 
 ## 1. Objective
 
