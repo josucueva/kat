@@ -8,7 +8,8 @@ use crate::domain::workspace::{
     WorkspaceBackendError,
 };
 use crate::encoding::hash::{
-    hash_directory_materialization, hash_file_materialization, hash_workspace_snapshot,
+    hash_directory_materialization, hash_file_materialization, hash_symlink_materialization,
+    hash_workspace_snapshot,
 };
 
 /// An in-memory fake backend for testing Workspace abstraction without Git.
@@ -121,6 +122,57 @@ impl WorkspaceBackend for FakeWorkspaceBackend {
         _candidate: &crate::domain::workspace::PhysicalReconciliationCandidate,
     ) -> Result<(), WorkspaceBackendError> {
         Ok(())
+    }
+
+    fn snapshot_resolved_candidate(
+        &self,
+        _workspace_id: &crate::domain::workspace::WorkspaceId,
+        candidate: &crate::domain::workspace::PhysicalReconciliationCandidate,
+    ) -> Result<WorkspaceSnapshotId, WorkspaceBackendError> {
+        let mut tree = self
+            .provisional_merges
+            .read()
+            .unwrap()
+            .get(&candidate.provisional)
+            .cloned()
+            .ok_or_else(|| WorkspaceBackendError::Resolution("Candidate state missing".into()))?;
+        let working = self.working_tree.read().unwrap();
+        for path in candidate
+            .conflicts
+            .iter()
+            .flat_map(|conflict| &conflict.paths)
+        {
+            if let Some(entry) = working.get(path) {
+                tree.insert(path.clone(), entry.clone());
+            } else {
+                tree.remove(path);
+            }
+        }
+        let mut entries: Vec<_> = tree
+            .iter()
+            .map(|(path, entry)| {
+                let (kind, id) = match entry {
+                    FakeEntry::File {
+                        content,
+                        executable,
+                    } => (
+                        if *executable { b'X' } else { b'F' },
+                        hash_file_materialization(*executable, content),
+                    ),
+                    FakeEntry::Symlink { target } => {
+                        (b'S', hash_symlink_materialization(target.as_bytes()))
+                    }
+                };
+                (path.to_string_lossy().to_string(), kind, id)
+            })
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let snapshot = hash_workspace_snapshot(&entries);
+        self.snapshots
+            .write()
+            .unwrap()
+            .insert(snapshot.clone(), tree);
+        Ok(snapshot)
     }
 
     fn clear_physical_candidate(

@@ -92,25 +92,41 @@ pub enum Command {
     Reconcile {
         /// Target revision (can be an object ID or reference like @main)
         target: String,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
     },
 
     /// List active conflicts in the current reconciliation session
     ///
     /// Outputs semantic and physical conflicts that block finalization.
     #[command(next_help_heading = "Collaboration")]
-    Conflicts,
+    Conflicts {
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Exposes provisional physical state for human resolution
     ///
     /// Materializes conflict markers into the working tree and transitions the session state.
     #[command(next_help_heading = "Collaboration")]
-    Materialize,
+    Materialize {
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Resolve a specific semantic or physical conflict
     #[command(next_help_heading = "Collaboration")]
     Resolve {
         #[command(subcommand)]
         domain: ResolveDomain,
+
+        /// Output structured machine JSON envelope
+        #[arg(long, global = true)]
+        json: bool,
     },
 
     /// Finalize an active reconciliation session by adopting the prepared revision

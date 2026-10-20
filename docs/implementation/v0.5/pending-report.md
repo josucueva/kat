@@ -1,6 +1,6 @@
 # v0.5 Implementation Pending Report
 
-This report outlines the remaining phases required to complete the v0.5 implementation plan, following the successful completion of **Phase 10: Collaboration porcelain**.
+This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phase 10 is frozen. Phase 11: Remote abstraction is next.**
 
 ## What Has Been Completed
 
@@ -14,16 +14,13 @@ All core reconciliation, conflict resolution, topology traversal, and collaborat
 - Phase 7: Topology implementation
 - Phase 8: Semantic reconciliation
 - Phase 9: Physical reconciliation and conflicts
-- Phase 10: Collaboration porcelain (`kat reconcile`, `kat resolve`, `kat switch`, `kat advance`, `kat finalize`, `kat abort`, `kat conflicts`, `kat materialize`)
+- Phase 10.1–10.9: Core collaboration porcelain (`kat reconcile`, `kat resolve`, `kat switch`, `kat advance`, `kat finalize`, `kat abort`, `kat conflicts`, `kat materialize`)
+- Phase 10.10: JSON machine interfaces for the collaboration commands, with v1 envelope contract and MI-COL checks.
+- Phase 10.11: Ten local collaboration E2E scenarios through separate `kat` processes, covering clean and conflicted merges, semantic resolution without materialization, physical edits, abort, advance, switch, restart, and NamedReference preservation. The version-1 session format gained an optional clean physical snapshot ID; older sessions recover it from immutable inputs only. Candidate state and Git protection refs are checked across restart and after cleanup.
 
 ## What Remains Pending
 
-The remaining effort focuses purely on remote networking, compatibility migration, and final end-to-end verification.
-
-### Remaining Phase 10 Items
-While the core workflows are implemented, the following items from Phase 10 require final completion/verification:
-- **10.10 JSON machine interfaces**: While basic `--json` output has been added to the new commands, a comprehensive audit and completion of the structured machine interface contracts for all new porcelain output is needed.
-- **10.11 Full E2E collaboration tests**: End-to-end multi-step collaboration tests simulating real user workflows across these new commands (this overlaps heavily with the upcoming Phase 14).
+The remaining effort focuses on remote networking, compatibility migration, and distributed end-to-end verification.
 
 ### Phase 11: Remote abstraction
 **Goal:** Implement abstractions for remote syncing.
@@ -50,10 +47,10 @@ While the core workflows are implemented, the following items from Phase 10 requ
 
 ### Phase 14: End-to-end evaluation
 **Goal:** Validate full workflow between multiple users.
-- Execute full empirical scenario matrix (E2E-01 through E2E-10).
+- Execute the distributed empirical scenario matrix, beyond the local Phase 10 E2E-01 through E2E-10 workflows.
 - Includes scenarios for semantic conflicts, physical merge conflicts, combined evolution, publication races, and external Git movements.
 - **Tests**: All E2E scenarios pass matching expected state exactly.
 
 ## Next Steps
 
-We are ready to begin **Phase 11: Remote abstraction** and define the core networking traits and fake transport implementations.
+Begin **Phase 11: Remote abstraction**.

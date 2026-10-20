@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-use kat::domain::identity::{ObjectId, RepositoryRevisionId, WorkspaceSnapshotId};
+use kat::domain::identity::{RepositoryRevisionId, WorkspaceSnapshotId};
 use kat::domain::revision::RepositoryRevision;
 use kat::domain::workspace::{Workspace, WorkspaceBackend, WorkspaceId};
 use kat::encoding::canonical_bytes;
@@ -12,13 +12,8 @@ use kat::repository::workspace::fake::FakeWorkspaceBackend;
 use kat::repository::workspace::open_workspace;
 use kat::repository::workspace::state::write_workspace_state_atomic;
 
-fn new_rev_id(byte: u8) -> RepositoryRevisionId {
-    RepositoryRevisionId::from_object_id(ObjectId::from_bytes([byte; 32]))
-}
-
 struct TestEnv {
     pub repo_root: PathBuf,
-    pub ws_id: WorkspaceId,
     pub backend: FakeWorkspaceBackend,
     pub base_rev: RepositoryRevisionId,
     pub _dir: TempDir,
@@ -106,11 +101,8 @@ fn setup_test_env() -> TestEnv {
         base_revision: base_rev,
     };
     write_workspace_state_atomic(&root, &ws).unwrap();
-    let ws_id = ws.id;
-
     TestEnv {
         repo_root: root,
-        ws_id,
         backend,
         base_rev,
         _dir: dir,

@@ -135,6 +135,7 @@ fn stat_03_conflicted_exposes_counts() {
                         other_version: None,
                     },
                 }],
+                clean_physical_snapshot: None,
                 materialization_conflicts: vec![],
                 validation_findings: vec![kat::domain::conflict::ValidationFinding {
                     diagnostic: "test".to_string(),

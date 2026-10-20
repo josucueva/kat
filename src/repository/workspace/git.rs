@@ -737,6 +737,24 @@ impl WorkspaceBackend for GitWorkspaceBackend {
         Ok(())
     }
 
+    fn restore_snapshot(&self, id: &WorkspaceSnapshotId) -> Result<(), WorkspaceBackendError> {
+        let reps = Self::get_snapshot_representations(&self._project_root, id);
+        let commit = reps
+            .first()
+            .ok_or_else(|| WorkspaceBackendError::SnapshotNotFound(id.clone()))?;
+        let tree = self
+            ._repo
+            .find_commit(commit.commit)
+            .and_then(|commit| commit.tree())
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout.force();
+        self._repo
+            .checkout_tree(tree.as_object(), Some(&mut checkout))
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        self.materialize_snapshot(id)
+    }
+
     fn compare_snapshots(
         &self,
         left: &WorkspaceSnapshotId,
@@ -1207,7 +1225,8 @@ impl WorkspaceBackend for GitWorkspaceBackend {
                 ._repo
                 .signature()
                 .unwrap_or_else(|_| git2::Signature::now("kat", "kat@kat").unwrap());
-            self._repo
+            let commit_oid = self
+                ._repo
                 .commit(
                     None, // Do not update HEAD or references
                     &sig,
@@ -1217,6 +1236,14 @@ impl WorkspaceBackend for GitWorkspaceBackend {
                     &[&l_commit, &o_commit],
                 )
                 .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+            if Self::get_snapshot_representations(&self._project_root, &new_snapshot_id).is_empty()
+            {
+                Self::record_snapshot_representation(
+                    &self._project_root,
+                    &new_snapshot_id,
+                    commit_oid,
+                )?;
+            }
 
             Ok(PhysicalReconciliationResult::Clean {
                 snapshot: new_snapshot_id,
@@ -1264,18 +1291,16 @@ impl WorkspaceBackend for GitWorkspaceBackend {
             .join(candidate.provisional.to_string());
         std::fs::create_dir_all(&candidates_dir).map_err(WorkspaceBackendError::Io)?;
         let state_path = candidates_dir.join("git.json");
-        let state = self
+        let state = if let Some(state) = self
             .transient_candidates
             .read()
             .unwrap()
             .get(&candidate.provisional)
-            .cloned()
-            .ok_or_else(|| {
-                WorkspaceBackendError::Io(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Transient candidate state not found",
-                ))
-            })?;
+        {
+            state.clone()
+        } else {
+            self.get_candidate_state(workspace_id, &candidate.provisional)?
+        };
 
         let json = serde_json::to_string_pretty(&state)
             .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
@@ -1382,6 +1407,82 @@ impl WorkspaceBackend for GitWorkspaceBackend {
             .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
 
         Ok(())
+    }
+
+    fn snapshot_resolved_candidate(
+        &self,
+        workspace_id: &crate::domain::workspace::WorkspaceId,
+        candidate: &crate::domain::workspace::PhysicalReconciliationCandidate,
+    ) -> Result<WorkspaceSnapshotId, WorkspaceBackendError> {
+        let state = self.get_candidate_state(workspace_id, &candidate.provisional)?;
+        let tree_oid = git2::Oid::from_str(&state.provisional_tree)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let tree = self
+            ._repo
+            .find_tree(tree_oid)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let mut index = self
+            ._repo
+            .index()
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        index
+            .clear()
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        index
+            .read_tree(&tree)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let paths: std::collections::BTreeSet<_> = candidate
+            .conflicts
+            .iter()
+            .flat_map(|conflict| conflict.paths.iter().cloned())
+            .collect();
+        for path in paths {
+            let full_path = self._project_root.join(&path);
+            match std::fs::symlink_metadata(&full_path) {
+                Ok(meta) if meta.is_file() || meta.file_type().is_symlink() => {
+                    index
+                        .add_path(&path)
+                        .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+                }
+                Ok(_) => {
+                    return Err(WorkspaceBackendError::Resolution(format!(
+                        "Unsupported resolved path: {}",
+                        path.display()
+                    )));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    if index.get_path(&path, 0).is_some() {
+                        index
+                            .remove_path(&path)
+                            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+                    }
+                }
+                Err(error) => return Err(WorkspaceBackendError::Io(error)),
+            }
+        }
+        let tree_oid = index
+            .write_tree()
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let tree = self
+            ._repo
+            .find_tree(tree_oid)
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        let mut entries = Vec::new();
+        collect_git_tree(&self._repo, &tree, Path::new(""), &mut entries)?;
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let snapshot = crate::encoding::hash::hash_workspace_snapshot(&entries);
+        let sig = self
+            ._repo
+            .signature()
+            .unwrap_or_else(|_| git2::Signature::now("kat", "kat@kat").unwrap());
+        let commit = self
+            ._repo
+            .commit(None, &sig, &sig, "KAT resolved reconciliation", &tree, &[])
+            .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
+        if Self::get_snapshot_representations(&self._project_root, &snapshot).is_empty() {
+            Self::record_snapshot_representation(&self._project_root, &snapshot, commit)?;
+        }
+        Ok(snapshot)
     }
 
     fn clear_physical_candidate(

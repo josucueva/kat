@@ -83,6 +83,7 @@ pub mod tests {
                     semantic_conflicts: vec![],
                     validation_findings: vec![],
                     physical_candidate: None,
+                    clean_physical_snapshot: None,
                     materialization_conflicts: vec![],
                     workspace_id: ws_id.clone(),
                 },

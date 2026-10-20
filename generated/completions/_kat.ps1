@@ -66,21 +66,25 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             break
         }
         'kat;reconcile' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
         }
         'kat;conflicts' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
         }
         'kat;materialize' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
         }
         'kat;resolve' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('semantic', 'semantic', [CompletionResultType]::ParameterValue, 'Resolve a semantic conflict')
@@ -90,12 +94,14 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
         }
         'kat;resolve;semantic' {
             [CompletionResult]::new('--accept', '--accept', [CompletionResultType]::ParameterName, 'Side to accept (base, local, other)')
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
         'kat;resolve;physical' {
             [CompletionResult]::new('--accept', '--accept', [CompletionResultType]::ParameterName, 'Side to accept (base, local, other, working)')
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break

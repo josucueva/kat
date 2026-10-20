@@ -4,7 +4,7 @@
 .SH NAME
 reconcile \- Prepare semantic and physical histories for collaboration
 .SH SYNOPSIS
-\fBreconcile\fR [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> 
+\fBreconcile\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> 
 .SH DESCRIPTION
 Prepare semantic and physical histories for collaboration
 .PP
@@ -14,6 +14,9 @@ Reconcile computes a 3\-way merge between the workspace\*(Aqs local base and a t
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH COLLABORATION
+.TP
+\fB\-\-json\fR
+Output structured machine JSON envelope
 .TP
 <\fITARGET\fR>
 Target revision (can be an object ID or reference like @main)

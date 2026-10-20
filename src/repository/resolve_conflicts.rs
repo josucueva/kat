@@ -1,5 +1,5 @@
 use crate::domain::revision::RepositoryRevision;
-use crate::domain::workspace::WorkspaceBackend;
+use crate::domain::workspace::{PhysicalReconciliationResult, WorkspaceBackend};
 use crate::encoding::canonical_bytes;
 use crate::encoding::decode_canonical;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload};
@@ -18,6 +18,8 @@ pub enum ResolveError {
     Workspace(#[from] WorkspaceError),
     #[error("Repository error: {0}")]
     Repository(#[from] crate::repository::error::RepositoryError),
+    #[error("Workspace backend error: {0}")]
+    Backend(#[from] crate::domain::workspace::WorkspaceBackendError),
     #[error("Session load error: {0}")]
     SessionLoad(#[from] SessionLoadError),
     #[error("IO error: {0}")]
@@ -94,8 +96,13 @@ pub fn resolve_semantic_conflict<B: WorkspaceBackend>(
     let mut session = load_reconciliation_session(repo_root, &ws.id, ws.base_revision)?
         .ok_or(ResolveError::NoSession)?;
 
+    let materialized = matches!(
+        session.state,
+        ReconciliationSessionState::ConflictedMaterialized { .. }
+    );
     let mut candidate = match session.state {
-        ReconciliationSessionState::ConflictedMaterialized { candidate } => candidate,
+        ReconciliationSessionState::ConflictedMaterialized { candidate }
+        | ReconciliationSessionState::Conflicted { candidate } => candidate,
         _ => return Err(ResolveError::NotMaterialized),
     };
 
@@ -156,6 +163,24 @@ pub fn resolve_semantic_conflict<B: WorkspaceBackend>(
             candidate.proposed_semantic_state.elements.push(ev.clone());
         }
     }
+    for relationship_id in conflict.affected_relationships {
+        let version = state
+            .relationships
+            .iter()
+            .find(|entry| entry.relationship_id == relationship_id);
+        candidate
+            .proposed_semantic_state
+            .relationships
+            .retain(|entry| entry.relationship_id != relationship_id);
+        if let Some(version) = version {
+            candidate
+                .proposed_semantic_state
+                .relationships
+                .push(version.clone());
+        }
+    }
+    candidate.proposed_semantic_state.elements.sort();
+    candidate.proposed_semantic_state.relationships.sort();
 
     // Re-run validation
     let validation_report = validate_repository_state(
@@ -176,7 +201,11 @@ pub fn resolve_semantic_conflict<B: WorkspaceBackend>(
     if let Some(new_candidate) = check_and_transition(repo_root, &ws.id, &candidate, backend)? {
         session.state = new_candidate;
     } else {
-        session.state = ReconciliationSessionState::ConflictedMaterialized { candidate };
+        session.state = if materialized {
+            ReconciliationSessionState::ConflictedMaterialized { candidate }
+        } else {
+            ReconciliationSessionState::Conflicted { candidate }
+        };
     }
 
     save_reconciliation_session(repo_root, &ws.id, &session, backend)?;
@@ -209,8 +238,6 @@ pub fn resolve_physical_conflict<B: WorkspaceBackend>(
         .position(|c| c.id == conflict_id)
         .ok_or(ResolveError::ConflictNotFound)?;
 
-    let _conflict = candidate.materialization_conflicts.remove(conflict_idx);
-
     // According to the user feedback:
     // apply/capture selected physical alternative -> verify materialization -> update backend provisional state -> remove conflict -> persist backend state -> persist reconciliation session
 
@@ -218,6 +245,7 @@ pub fn resolve_physical_conflict<B: WorkspaceBackend>(
     if side != PhysicalResolution::Working {
         return Err(ResolveError::InvalidAcceptSide("only 'working' is supported for physical conflicts currently in this implementation. Use physical tools (like git) to restore versions, then --accept working".into()));
     }
+    candidate.materialization_conflicts.remove(conflict_idx);
 
     // Check if fully resolved
     if let Some(new_candidate) = check_and_transition(repo_root, &ws.id, &candidate, backend)? {
@@ -233,7 +261,7 @@ pub fn resolve_physical_conflict<B: WorkspaceBackend>(
 
 fn check_and_transition<B: WorkspaceBackend>(
     repo_root: &Path,
-    _workspace_id: &crate::domain::workspace::WorkspaceId,
+    workspace_id: &crate::domain::workspace::WorkspaceId,
     candidate: &crate::repository::reconcile::ReconciliationCandidate,
     backend: &B,
 ) -> Result<Option<ReconciliationSessionState>, ResolveError> {
@@ -247,9 +275,39 @@ fn check_and_transition<B: WorkspaceBackend>(
 
     let repo = open_repository(repo_root)?;
 
-    let snapshot_id = backend
-        .create_snapshot(&[])
-        .map_err(|e| ResolveError::Io(std::io::Error::other(e)))?;
+    let snapshot_id = if let Some(physical) = &candidate.physical_candidate {
+        backend.snapshot_resolved_candidate(workspace_id, physical)
+    } else if let Some(snapshot) = &candidate.clean_physical_snapshot {
+        if !backend
+            .verify_snapshot_integrity(snapshot)
+            .map_err(|e| ResolveError::Io(std::io::Error::other(e)))?
+        {
+            return Err(ResolveError::Io(std::io::Error::other(
+                "Clean physical snapshot failed integrity verification",
+            )));
+        }
+        Ok(snapshot.clone())
+    } else {
+        // Older version-1 sessions omit the clean snapshot. Reconcile only their immutable inputs.
+        let base = repo.read_revision(candidate.base_revision)?;
+        let local = repo.read_revision(candidate.local_revision)?;
+        let other = repo.read_revision(candidate.other_revision)?;
+        match backend.reconcile_physical(
+            &base.workspace_snapshot,
+            &local.workspace_snapshot,
+            &other.workspace_snapshot,
+        )? {
+            PhysicalReconciliationResult::Clean { snapshot }
+                if backend.verify_snapshot_integrity(&snapshot)? =>
+            {
+                Ok(snapshot)
+            }
+            _ => Err(crate::domain::workspace::WorkspaceBackendError::Resolution(
+                "Cannot recover the clean physical result from this older session".into(),
+            )),
+        }
+    }
+    .map_err(|e| ResolveError::Io(std::io::Error::other(e)))?;
 
     let state_obj = CanonicalObject {
         payload: CanonicalPayload::SemanticState(candidate.proposed_semantic_state.clone()),
@@ -261,8 +319,10 @@ fn check_and_transition<B: WorkspaceBackend>(
         .map_err(|e| ResolveError::Io(std::io::Error::other(e)))?;
     let semantic_state = crate::domain::identity::SemanticStateId::from_object_id(semantic_id);
 
+    let mut parents = vec![candidate.local_revision, candidate.other_revision];
+    parents.sort();
     let revision = RepositoryRevision {
-        parents: vec![candidate.local_revision, candidate.other_revision],
+        parents,
         semantic_state,
         semantic_change: None,
         workspace_snapshot: snapshot_id,

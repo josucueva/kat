@@ -201,6 +201,7 @@ fn conflicts_cmd_03_semantic_only() {
                     affected_relationships: vec![],
                     kind: SemanticConflictKind::AmbiguousAccountability,
                 }],
+                clean_physical_snapshot: None,
                 materialization_conflicts: vec![],
                 validation_findings: vec![],
             },
@@ -260,6 +261,7 @@ fn conflicts_cmd_04_physical_only() {
                     }],
                 }),
                 semantic_conflicts: vec![],
+                clean_physical_snapshot: None,
                 materialization_conflicts: vec![MaterializationConflict {
                     id: "test-id".to_string(),
                     kind: MaterializationConflictKind::Content,
@@ -319,6 +321,7 @@ fn conflicts_cmd_05_06_mixed() {
                     affected_relationships: vec![],
                     kind: SemanticConflictKind::AmbiguousAccountability,
                 }],
+                clean_physical_snapshot: None,
                 materialization_conflicts: vec![MaterializationConflict {
                     id: "test-id".to_string(),
                     kind: MaterializationConflictKind::Content,

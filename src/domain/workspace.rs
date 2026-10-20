@@ -167,6 +167,11 @@ pub trait WorkspaceBackend {
     /// Modifies the physical working tree to match the given snapshot exactly.
     fn materialize_snapshot(&self, id: &WorkspaceSnapshotId) -> Result<(), WorkspaceBackendError>;
 
+    /// Restores an authoritative snapshot during abort, replacing materialized edits.
+    fn restore_snapshot(&self, id: &WorkspaceSnapshotId) -> Result<(), WorkspaceBackendError> {
+        self.materialize_snapshot(id)
+    }
+
     /// Compares two snapshots to find the differing file paths.
     /// Returns the structural physical changes (added, modified, deleted).
     fn compare_snapshots(
@@ -218,6 +223,13 @@ pub trait WorkspaceBackend {
         workspace_id: &WorkspaceId,
         candidate: &PhysicalReconciliationCandidate,
     ) -> Result<(), WorkspaceBackendError>;
+
+    /// Captures resolved conflict paths over the candidate's immutable clean tree.
+    fn snapshot_resolved_candidate(
+        &self,
+        workspace_id: &WorkspaceId,
+        candidate: &PhysicalReconciliationCandidate,
+    ) -> Result<WorkspaceSnapshotId, WorkspaceBackendError>;
 
     /// Clears any persistent state or GC protections created for the physical candidate.
     fn clear_physical_candidate(

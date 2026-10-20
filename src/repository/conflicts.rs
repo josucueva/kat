@@ -2,7 +2,6 @@ use crate::domain::conflict::{MaterializationConflictKind, SemanticConflictKind}
 use crate::domain::identity::{ElementId, RelationshipId, RepositoryRevisionId};
 use crate::domain::workspace::WorkspaceId;
 use crate::repository::query::QueryError;
-use sha2::{Digest, Sha256};
 use std::path::Path;
 
 pub struct ConflictSummary {
@@ -13,6 +12,7 @@ pub struct ConflictSummary {
     pub validation_findings: Vec<ValidationFindingView>,
 }
 
+#[derive(serde::Serialize)]
 pub struct SemanticConflictView {
     pub conflict_id: String,
     pub kind: SemanticConflictKind,
@@ -20,12 +20,14 @@ pub struct SemanticConflictView {
     pub affected_relationships: Vec<RelationshipId>,
 }
 
+#[derive(serde::Serialize)]
 pub struct MaterializationConflictView {
     pub conflict_id: String,
     pub kind: MaterializationConflictKind,
     pub paths: Vec<std::path::PathBuf>,
 }
 
+#[derive(serde::Serialize)]
 pub struct ValidationFindingView {
     pub diagnostic: String,
 }
@@ -60,49 +62,27 @@ pub fn project_conflicts(
             candidate,
         } => {
             let mut semantic_views = Vec::new();
-            // We want deterministic ordering. Let's rely on the canonical ordering
-            // inside candidate (which should be sorted, but let's sort just in case).
-            let sorted_semantics = candidate.semantic_conflicts.clone();
-
-            for conflict in sorted_semantics {
-                // Deterministic ID generation based on kind and elements/relationships
-                let mut hasher = Sha256::new();
-                hasher.update(serde_json::to_vec(&conflict.kind).unwrap_or_default());
-                for e in &conflict.affected_elements {
-                    hasher.update(e.as_uuid().into_bytes());
-                }
-                for r in &conflict.affected_relationships {
-                    hasher.update(r.as_uuid().into_bytes());
-                }
-                let hash = hasher.finalize();
-                let conflict_id = hex::encode(hash);
-
+            for conflict in candidate.semantic_conflicts {
+                let mut affected_elements = conflict.affected_elements;
+                let mut affected_relationships = conflict.affected_relationships;
+                affected_elements.sort();
+                affected_relationships.sort();
                 semantic_views.push(SemanticConflictView {
-                    conflict_id,
+                    conflict_id: conflict.id,
                     kind: conflict.kind,
-                    affected_elements: conflict.affected_elements,
-                    affected_relationships: conflict.affected_relationships,
+                    affected_elements,
+                    affected_relationships,
                 });
             }
 
             let mut physical_views = Vec::new();
-            let mut sorted_physical = candidate.materialization_conflicts.clone();
-            // Actually MaterializationConflict implements Ord, so we can sort them
-            sorted_physical.sort();
-
-            for conflict in sorted_physical {
-                let mut hasher = Sha256::new();
-                hasher.update(serde_json::to_vec(&conflict.kind).unwrap_or_default());
-                for p in &conflict.paths {
-                    hasher.update(p.to_string_lossy().as_bytes());
-                }
-                let hash = hasher.finalize();
-                let conflict_id = hex::encode(hash);
-
+            for conflict in candidate.materialization_conflicts {
+                let mut paths = conflict.paths;
+                paths.sort();
                 physical_views.push(MaterializationConflictView {
-                    conflict_id,
+                    conflict_id: conflict.id,
                     kind: conflict.kind,
-                    paths: conflict.paths,
+                    paths,
                 });
             }
 
@@ -113,9 +93,9 @@ pub fn project_conflicts(
                 });
             }
 
-            // To guarantee stable ordering of the conflict IDs themselves if Phase 8/9 didn't
-            // sort the semantic conflicts fully, we can sort the projected views by their ID.
             semantic_views.sort_by(|a, b| a.conflict_id.cmp(&b.conflict_id));
+            physical_views.sort_by(|a, b| a.conflict_id.cmp(&b.conflict_id));
+            validation_views.sort_by(|a, b| a.diagnostic.cmp(&b.diagnostic));
 
             Ok(ConflictSummary {
                 base_revision: session.base_revision,

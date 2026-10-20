@@ -50,14 +50,31 @@ use kat::repository::query::{
 };
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            if matches!(
+                error.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            ) {
+                let _ = error.print();
+                return ExitCode::SUCCESS;
+            }
+            if std::env::args_os().any(|arg| arg == "--json") {
+                MachinePresenter::present_error(None, "INVALID_ARGUMENTS", &error.to_string());
+                return ExitCode::from(2);
+            }
+            let _ = error.print();
+            return ExitCode::from(2);
+        }
+    };
     match cli.command {
         Command::Init => cmd_init(),
         Command::Status { compact, json } => run_status(compact, json),
-        Command::Reconcile { target } => run_reconcile(target),
-        Command::Conflicts => run_conflicts(),
-        Command::Materialize => run_materialize(),
-        Command::Resolve { domain } => run_resolve(domain),
+        Command::Reconcile { target, json } => run_reconcile(target, json),
+        Command::Conflicts { json } => run_conflicts(json),
+        Command::Materialize { json } => run_materialize(json),
+        Command::Resolve { domain, json } => run_resolve(domain, json),
         Command::Finalize { json } => run_finalize(json),
         Command::Advance { target, json } => run_advance(target, json),
         Command::Switch { target, json } => run_switch(target, json),
@@ -232,32 +249,53 @@ fn try_open_workspace(
     kat::repository::workspace::open_workspace(repo_root, &backend)
 }
 
-fn run_reconcile(target: String) -> ExitCode {
+fn collaboration_error(
+    repository: Option<&Repository>,
+    json: bool,
+    command: &str,
+    code: &str,
+    message: impl std::fmt::Display,
+) -> ExitCode {
+    let message = message.to_string();
+    if json {
+        MachinePresenter::present_error(repository, code, &message);
+    } else {
+        eprintln!("kat {command}: {message}");
+    }
+    ExitCode::FAILURE
+}
+
+fn run_reconcile(target: String, json: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repo) => repo,
         Err(error) => {
-            eprintln!("kat reconcile: {error}");
-            return ExitCode::FAILURE;
+            return collaboration_error(None, json, "reconcile", "NotInRepository", error);
         }
     };
 
     let ws = match try_open_workspace(repository.root_dir()) {
         Ok(ws) => ws,
         Err(e) => {
-            eprintln!("kat reconcile: Workspace not found: {}", e);
-            return ExitCode::FAILURE;
+            return collaboration_error(
+                Some(&repository),
+                json,
+                "reconcile",
+                "WorkspaceNotFound",
+                format!("Workspace not found: {e}"),
+            );
         }
     };
 
     let target_rev = match std::str::FromStr::from_str(&target) {
         Ok(id) => id,
         Err(_) => {
-            // For now, only 64-char hex is supported.
-            eprintln!(
-                "kat reconcile: Invalid target revision ID format (expected 64-char hex): {}",
-                target
+            return collaboration_error(
+                Some(&repository),
+                json,
+                "reconcile",
+                "InvalidTarget",
+                format!("Invalid target revision ID format (expected 64-char hex): {target}"),
             );
-            return ExitCode::FAILURE;
         }
     };
 
@@ -268,42 +306,96 @@ fn run_reconcile(target: String) -> ExitCode {
     ) {
         Ok(outcome) => outcome,
         Err(e) => {
-            eprintln!("kat reconcile: {}", e);
-            return ExitCode::FAILURE;
+            return collaboration_error(Some(&repository), json, "reconcile", "ReconcileFailed", e);
         }
     };
 
     match outcome {
         kat::repository::reconcile::ReconcileWorkspaceOutcome::Same => {
-            println!("workspace already at target");
+            if json {
+                MachinePresenter::present_success(
+                    &repository,
+                    &serde_json::json!({
+                        "status": "same", "workspace_id": ws.id,
+                        "base_revision": ws.base_revision, "target_revision": target_rev
+                    }),
+                );
+            } else {
+                println!("workspace already at target");
+            }
             ExitCode::SUCCESS
         }
         kat::repository::reconcile::ReconcileWorkspaceOutcome::LocalAhead => {
-            println!("workspace already contains target history");
+            if json {
+                MachinePresenter::present_success(
+                    &repository,
+                    &serde_json::json!({
+                        "status": "local_ahead", "workspace_id": ws.id,
+                        "base_revision": ws.base_revision, "target_revision": target_rev
+                    }),
+                );
+            } else {
+                println!("workspace already contains target history");
+            }
             ExitCode::SUCCESS
         }
         kat::repository::reconcile::ReconcileWorkspaceOutcome::OtherAhead => {
-            println!("target is ahead; use kat advance {}", target);
+            if json {
+                MachinePresenter::present_error_with_details(
+                    Some(&repository),
+                    "OtherAhead",
+                    "target is ahead; use kat advance",
+                    serde_json::json!({ "target_revision": target_rev }),
+                );
+            } else {
+                println!("target is ahead; use kat advance {}", target);
+            }
             ExitCode::FAILURE
         }
         kat::repository::reconcile::ReconcileWorkspaceOutcome::Prepared { session } => {
             match session.state {
                 kat::repository::reconcile::ReconciliationSessionState::PreparedClean { revision } => {
-                    println!("Reconciliation prepared.");
-                    println!("Base:     {}", session.base_revision);
-                    println!("Target:   {}", session.target_revision);
-                    println!("Result:   {}", revision);
-                    println!("Status:   prepared");
+                    if json {
+                        MachinePresenter::present_success(
+                            &repository,
+                            &serde_json::json!({
+                                "status": "prepared_clean", "workspace_id": session.workspace_id,
+                                "base_revision": session.base_revision,
+                                "target_revision": session.target_revision,
+                                "prepared_revision": revision
+                            }),
+                        );
+                    } else {
+                        println!("Reconciliation prepared.");
+                        println!("Base:     {}", session.base_revision);
+                        println!("Target:   {}", session.target_revision);
+                        println!("Result:   {}", revision);
+                        println!("Status:   prepared");
+                    }
                 }
                 kat::repository::reconcile::ReconciliationSessionState::ConflictedMaterialized { candidate }
                 | kat::repository::reconcile::ReconciliationSessionState::Conflicted { candidate } => {
-                    println!("Reconciliation requires resolution.");
-                    println!("Base:                  {}", session.base_revision);
-                    println!("Target:                {}", session.target_revision);
-                    println!("Semantic conflicts:    {}", candidate.semantic_conflicts.len());
-                    println!("Physical conflicts:    {}", candidate.physical_candidate.as_ref().map(|p| p.conflicts.len()).unwrap_or(0));
-                    println!("Validation findings:   {}", candidate.validation_findings.len());
-                    println!("\nRun `kat conflicts` to inspect them.");
+                    if json {
+                        MachinePresenter::present_success(
+                            &repository,
+                            &serde_json::json!({
+                                "status": "conflicted", "workspace_id": session.workspace_id,
+                                "base_revision": session.base_revision,
+                                "target_revision": session.target_revision,
+                                "semantic_conflicts": candidate.semantic_conflicts.len(),
+                                "physical_conflicts": candidate.materialization_conflicts.len(),
+                                "validation_findings": candidate.validation_findings.len()
+                            }),
+                        );
+                    } else {
+                        println!("Reconciliation requires resolution.");
+                        println!("Base:                  {}", session.base_revision);
+                        println!("Target:                {}", session.target_revision);
+                        println!("Semantic conflicts:    {}", candidate.semantic_conflicts.len());
+                        println!("Physical conflicts:    {}", candidate.materialization_conflicts.len());
+                        println!("Validation findings:   {}", candidate.validation_findings.len());
+                        println!("\nRun `kat conflicts` to inspect them.");
+                    }
                 }
             }
             ExitCode::SUCCESS
@@ -311,20 +403,24 @@ fn run_reconcile(target: String) -> ExitCode {
     }
 }
 
-fn run_conflicts() -> ExitCode {
+fn run_conflicts(json: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repo) => repo,
         Err(error) => {
-            eprintln!("kat conflicts: {error}");
-            return ExitCode::FAILURE;
+            return collaboration_error(None, json, "conflicts", "NotInRepository", error);
         }
     };
 
     let ws = match try_open_workspace(repository.root_dir()) {
         Ok(ws) => ws,
         Err(e) => {
-            eprintln!("kat conflicts: Workspace not found: {}", e);
-            return ExitCode::FAILURE;
+            return collaboration_error(
+                Some(&repository),
+                json,
+                "conflicts",
+                "WorkspaceNotFound",
+                format!("Workspace not found: {e}"),
+            );
         }
     };
 
@@ -332,14 +428,39 @@ fn run_conflicts() -> ExitCode {
         match kat::repository::conflicts::project_conflicts(repository.root_dir(), &ws.id) {
             Ok(summary) => summary,
             Err(kat::repository::query::QueryError::NoActiveReconciliation) => {
-                eprintln!("kat conflicts: No active reconciliation session.");
-                return ExitCode::FAILURE;
+                return collaboration_error(
+                    Some(&repository),
+                    json,
+                    "conflicts",
+                    "NoActiveReconciliation",
+                    "No active reconciliation session.",
+                );
             }
             Err(e) => {
-                eprintln!("kat conflicts: Failed to project conflicts: {}", e);
-                return ExitCode::FAILURE;
+                return collaboration_error(
+                    Some(&repository),
+                    json,
+                    "conflicts",
+                    "ConflictProjectionFailed",
+                    format!("Failed to project conflicts: {e}"),
+                );
             }
         };
+
+    if json {
+        MachinePresenter::present_success(
+            &repository,
+            &serde_json::json!({
+                "workspace_id": ws.id,
+                "base_revision": conflicts.base_revision,
+                "target_revision": conflicts.target_revision,
+                "semantic_conflicts": conflicts.semantic,
+                "physical_conflicts": conflicts.physical,
+                "validation_findings": conflicts.validation_findings
+            }),
+        );
+        return ExitCode::SUCCESS;
+    }
 
     println!("Base: {}", conflicts.base_revision);
     println!("Target: {}", conflicts.target_revision);
@@ -388,12 +509,11 @@ fn run_conflicts() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run_materialize() -> ExitCode {
+fn run_materialize(json: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repo) => repo,
         Err(error) => {
-            eprintln!("kat materialize: {error}");
-            return ExitCode::FAILURE;
+            return collaboration_error(None, json, "materialize", "NotInRepository", error);
         }
     };
     let repo_root = repository.root_dir();
@@ -401,49 +521,156 @@ fn run_materialize() -> ExitCode {
     let backend = match kat::repository::workspace::git::GitWorkspaceBackend::open(repo_root) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("kat materialize: Failed to open backend: {}", e);
-            return ExitCode::FAILURE;
+            return collaboration_error(
+                Some(&repository),
+                json,
+                "materialize",
+                "WorkspaceError",
+                format!("Failed to open backend: {e}"),
+            );
         }
     };
 
-    match kat::repository::materialize::materialize_conflicts(repo_root, &backend) {
-        Ok(_) => {
-            println!("Successfully materialized physical conflicts.");
-            ExitCode::SUCCESS
-        }
-        Err(kat::repository::materialize::MaterializeError::NoSession) => {
-            eprintln!("kat materialize: No active reconciliation session.");
-            ExitCode::FAILURE
-        }
-        Err(kat::repository::materialize::MaterializeError::PreparedClean) => {
-            println!("kat materialize: Session is already clean, no conflicts to materialize.");
-            ExitCode::SUCCESS
-        }
-        Err(kat::repository::materialize::MaterializeError::AlreadyMaterialized) => {
-            println!("kat materialize: Conflicts are already materialized.");
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("kat materialize: {}", e);
-            ExitCode::FAILURE
+    let (status, session) =
+        match kat::repository::materialize::materialize_conflicts(repo_root, &backend) {
+            Ok(session) => ("materialized", Some(session)),
+            Err(kat::repository::materialize::MaterializeError::NoSession) => {
+                return collaboration_error(
+                    Some(&repository),
+                    json,
+                    "materialize",
+                    "NoActiveReconciliation",
+                    "No active reconciliation session.",
+                );
+            }
+            Err(kat::repository::materialize::MaterializeError::PreparedClean) => {
+                ("prepared_clean", None)
+            }
+            Err(kat::repository::materialize::MaterializeError::AlreadyMaterialized) => {
+                ("already_materialized", None)
+            }
+            Err(e) => {
+                return collaboration_error(
+                    Some(&repository),
+                    json,
+                    "materialize",
+                    "MaterializeFailed",
+                    e,
+                );
+            }
+        };
+
+    if json {
+        let ws = match try_open_workspace(repo_root) {
+            Ok(ws) => ws,
+            Err(e) => {
+                return collaboration_error(
+                    Some(&repository),
+                    true,
+                    "materialize",
+                    "WorkspaceNotFound",
+                    e,
+                );
+            }
+        };
+        let session = match session {
+            Some(session) => session,
+            None => match kat::repository::reconcile::load_reconciliation_session(
+                repo_root,
+                &ws.id,
+                ws.base_revision,
+            ) {
+                Ok(Some(session)) => session,
+                Ok(None) => {
+                    return collaboration_error(
+                        Some(&repository),
+                        true,
+                        "materialize",
+                        "NoActiveReconciliation",
+                        "No active reconciliation session.",
+                    );
+                }
+                Err(e) => {
+                    return collaboration_error(
+                        Some(&repository),
+                        true,
+                        "materialize",
+                        "SessionLoadFailed",
+                        e,
+                    );
+                }
+            },
+        };
+        MachinePresenter::present_success(
+            &repository,
+            &serde_json::json!({
+                "status": status, "workspace_id": ws.id,
+                "base_revision": session.base_revision,
+                "target_revision": session.target_revision
+            }),
+        );
+    } else {
+        match status {
+            "materialized" => println!("Successfully materialized physical conflicts."),
+            "prepared_clean" => {
+                println!("kat materialize: Session is already clean, no conflicts to materialize.")
+            }
+            _ => println!("kat materialize: Conflicts are already materialized."),
         }
     }
+    ExitCode::SUCCESS
 }
 
-fn run_resolve(domain: kat::cli::ResolveDomain) -> ExitCode {
+fn resolution_success(
+    repository: &Repository,
+    json: bool,
+    domain: &str,
+    conflict_id: &str,
+    accepted: &str,
+    session: kat::repository::reconcile::ReconciliationSession,
+) -> ExitCode {
+    if json {
+        let (status, prepared_revision) = match session.state {
+            kat::repository::reconcile::ReconciliationSessionState::PreparedClean { revision } => {
+                ("prepared_clean", Some(revision))
+            }
+            _ => ("conflicted", None),
+        };
+        MachinePresenter::present_success(
+            repository,
+            &serde_json::json!({
+                "workspace_id": session.workspace_id,
+                "domain": domain,
+                "conflict_id": conflict_id,
+                "accepted": accepted,
+                "status": status,
+                "prepared_revision": prepared_revision
+            }),
+        );
+    } else {
+        println!("Successfully resolved {domain} conflict {conflict_id}.");
+    }
+    ExitCode::SUCCESS
+}
+
+fn run_resolve(domain: kat::cli::ResolveDomain, json: bool) -> ExitCode {
     let repository = match open_repository(Path::new(".")) {
         Ok(repo) => repo,
         Err(error) => {
-            eprintln!("kat resolve: {error}");
-            return ExitCode::FAILURE;
+            return collaboration_error(None, json, "resolve", "NotInRepository", error);
         }
     };
     let repo_root = repository.root_dir();
     let backend = match kat::repository::workspace::git::GitWorkspaceBackend::open(repo_root) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("kat resolve: Failed to open backend: {}", e);
-            return ExitCode::FAILURE;
+            return collaboration_error(
+                Some(&repository),
+                json,
+                "resolve",
+                "WorkspaceError",
+                format!("Failed to open backend: {e}"),
+            );
         }
     };
 
@@ -455,8 +682,13 @@ fn run_resolve(domain: kat::cli::ResolveDomain) -> ExitCode {
             let accept_side = match std::str::FromStr::from_str(&accept) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("kat resolve: {}", e);
-                    return ExitCode::FAILURE;
+                    return collaboration_error(
+                        Some(&repository),
+                        json,
+                        "resolve",
+                        "InvalidAcceptSide",
+                        e,
+                    );
                 }
             };
             match kat::repository::resolve_conflicts::resolve_semantic_conflict(
@@ -465,13 +697,16 @@ fn run_resolve(domain: kat::cli::ResolveDomain) -> ExitCode {
                 accept_side,
                 &backend,
             ) {
-                Ok(_) => {
-                    println!("Successfully resolved semantic conflict {}.", conflict_id);
-                    ExitCode::SUCCESS
-                }
+                Ok(session) => resolution_success(
+                    &repository,
+                    json,
+                    "semantic",
+                    &conflict_id,
+                    &accept.to_lowercase(),
+                    session,
+                ),
                 Err(e) => {
-                    eprintln!("kat resolve: {}", e);
-                    ExitCode::FAILURE
+                    collaboration_error(Some(&repository), json, "resolve", "ResolveFailed", e)
                 }
             }
         }
@@ -482,8 +717,13 @@ fn run_resolve(domain: kat::cli::ResolveDomain) -> ExitCode {
             let accept_side = match std::str::FromStr::from_str(&accept) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("kat resolve: {}", e);
-                    return ExitCode::FAILURE;
+                    return collaboration_error(
+                        Some(&repository),
+                        json,
+                        "resolve",
+                        "InvalidAcceptSide",
+                        e,
+                    );
                 }
             };
             match kat::repository::resolve_conflicts::resolve_physical_conflict(
@@ -492,13 +732,16 @@ fn run_resolve(domain: kat::cli::ResolveDomain) -> ExitCode {
                 accept_side,
                 &backend,
             ) {
-                Ok(_) => {
-                    println!("Successfully resolved physical conflict {}.", conflict_id);
-                    ExitCode::SUCCESS
-                }
+                Ok(session) => resolution_success(
+                    &repository,
+                    json,
+                    "physical",
+                    &conflict_id,
+                    &accept.to_lowercase(),
+                    session,
+                ),
                 Err(e) => {
-                    eprintln!("kat resolve: {}", e);
-                    ExitCode::FAILURE
+                    collaboration_error(Some(&repository), json, "resolve", "ResolveFailed", e)
                 }
             }
         }
@@ -3191,7 +3434,6 @@ fn cmd_artifacts(stale: bool, artifact_id: Option<String>, compact: bool, json: 
 
     use kat::repository::query::AccountabilityContext;
     use kat::repository::workspace::git::GitWorkspaceBackend;
-    use kat::repository::workspace::open_workspace;
     let _backend = GitWorkspaceBackend::open(
         &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
     )
@@ -3992,14 +4234,34 @@ fn run_abort(json: bool) -> ExitCode {
     let backend_res =
         kat::repository::workspace::git::GitWorkspaceBackend::open(repository.root_dir());
 
-    if let Ok(backend) = backend_res {
+    if let Ok(backend) = backend_res
+        && repository
+            .root_dir()
+            .join(".kat/current-workspace")
+            .exists()
+    {
         match kat::repository::reconcile::abort_reconciliation_session(
             repository.root_dir(),
             &backend,
         ) {
             Ok(true) => {
                 if json {
-                    let data = serde_json::json!({ "aborted": true, "type": "reconciliation" });
+                    let ws = match try_open_workspace(repository.root_dir()) {
+                        Ok(ws) => ws,
+                        Err(e) => {
+                            return collaboration_error(
+                                Some(&repository),
+                                true,
+                                "abort",
+                                "WorkspaceNotFound",
+                                e,
+                            );
+                        }
+                    };
+                    let data = serde_json::json!({
+                        "aborted": true, "type": "reconciliation",
+                        "workspace_id": ws.id, "base_revision": ws.base_revision
+                    });
                     MachinePresenter::present_success(&repository, &data);
                 } else {
                     println!("aborted reconciliation session");
@@ -4527,37 +4789,66 @@ fn print_ontology_type_view_compact(view: &OntologyTypeView) {
 }
 
 fn run_finalize(json: bool) -> ExitCode {
-    let repo_root = Path::new(".");
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repo) => repo,
+        Err(e) => return collaboration_error(None, json, "finalize", "NotInRepository", e),
+    };
+    let repo_root = repository.root_dir();
+    let ws = match try_open_workspace(repo_root) {
+        Ok(ws) => ws,
+        Err(e) => {
+            return collaboration_error(
+                Some(&repository),
+                json,
+                "finalize",
+                "WorkspaceNotFound",
+                e,
+            );
+        }
+    };
 
     let backend = match kat::repository::workspace::git::GitWorkspaceBackend::open(repo_root) {
         Ok(backend) => backend,
         Err(e) => {
-            if json {
-                println!(r#"{{"error": "Failed to open backend: {}"}}"#, e);
-            } else {
-                eprintln!("Failed to open workspace backend: {}", e);
-            }
-            return ExitCode::FAILURE;
+            return collaboration_error(
+                Some(&repository),
+                json,
+                "finalize",
+                "WorkspaceError",
+                format!("Failed to open workspace backend: {e}"),
+            );
         }
     };
 
     match kat::repository::reconcile::finalize_reconciliation_session(repo_root, &backend) {
         Ok(_) => {
             if json {
-                println!(r#"{{"status": "success"}}"#);
+                let new_ws = match try_open_workspace(repo_root) {
+                    Ok(ws) => ws,
+                    Err(e) => {
+                        return collaboration_error(
+                            Some(&repository),
+                            true,
+                            "finalize",
+                            "WorkspaceNotFound",
+                            e,
+                        );
+                    }
+                };
+                MachinePresenter::present_success(
+                    &repository,
+                    &serde_json::json!({
+                        "workspace_id": ws.id,
+                        "from_revision": ws.base_revision,
+                        "to_revision": new_ws.base_revision
+                    }),
+                );
             } else {
                 println!("Successfully finalized reconciliation session.");
             }
             ExitCode::SUCCESS
         }
-        Err(e) => {
-            if json {
-                println!(r#"{{"error": "{}"}}"#, e);
-            } else {
-                eprintln!("Failed to finalize session: {}", e);
-            }
-            ExitCode::FAILURE
-        }
+        Err(e) => collaboration_error(Some(&repository), json, "finalize", "FinalizeFailed", e),
     }
 }
 fn run_advance(target: String, json: bool) -> ExitCode {
@@ -4628,7 +4919,12 @@ fn run_advance(target: String, json: bool) -> ExitCode {
     match divergence {
         DivergenceState::Same => {
             if json {
-                let data = serde_json::json!({ "advanced": false, "reason": "already at target" });
+                let data = serde_json::json!({
+                    "advanced": false, "reason": "already at target",
+                    "workspace_id": ws.id,
+                    "from_revision": ws.base_revision,
+                    "to_revision": ws.base_revision
+                });
                 MachinePresenter::present_success(&repository, &data);
             } else {
                 println!("Already at target revision.");
@@ -4700,8 +4996,12 @@ fn run_advance(target: String, json: bool) -> ExitCode {
     ) {
         Ok(_) => {
             if json {
-                let data =
-                    serde_json::json!({ "advanced": true, "target": target_rev.to_string() });
+                let data = serde_json::json!({
+                    "advanced": true, "target": target_rev.to_string(),
+                    "workspace_id": ws.id,
+                    "from_revision": ws.base_revision,
+                    "to_revision": target_rev
+                });
                 MachinePresenter::present_success(&repository, &data);
             } else {
                 println!("Successfully advanced workspace to {}", target_rev);
@@ -4790,7 +5090,12 @@ fn run_switch(target: String, json: bool) -> ExitCode {
     use kat::repository::topology::DivergenceState;
     if divergence == DivergenceState::Same {
         if json {
-            let data = serde_json::json!({ "switched": false, "reason": "already at target" });
+            let data = serde_json::json!({
+                "switched": false, "reason": "already at target",
+                "workspace_id": ws.id,
+                "from_revision": ws.base_revision,
+                "to_revision": ws.base_revision
+            });
             MachinePresenter::present_success(&repository, &data);
         } else {
             println!("Already at target revision.");
@@ -4822,8 +5127,12 @@ fn run_switch(target: String, json: bool) -> ExitCode {
     ) {
         Ok(_) => {
             if json {
-                let data =
-                    serde_json::json!({ "switched": true, "target": target_rev.to_string() });
+                let data = serde_json::json!({
+                    "switched": true, "target": target_rev.to_string(),
+                    "workspace_id": ws.id,
+                    "from_revision": ws.base_revision,
+                    "to_revision": target_rev
+                });
                 MachinePresenter::present_success(&repository, &data);
             } else {
                 println!("Successfully switched workspace to {}", target_rev);

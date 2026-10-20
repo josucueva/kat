@@ -564,7 +564,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__conflicts)
-            opts="-h --help"
+            opts="-h --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1294,7 +1294,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__materialize)
-            opts="-h --help"
+            opts="-h --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1378,7 +1378,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__reconcile)
-            opts="-h --help"
+            opts="-h --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1392,7 +1392,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__resolve)
-            opts="-h --help semantic physical help"
+            opts="-h --json --help semantic physical help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1462,7 +1462,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__resolve__subcmd__physical)
-            opts="-h --accept --help"
+            opts="-h --accept --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1480,7 +1480,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__resolve__subcmd__semantic)
-            opts="-h --accept --help"
+            opts="-h --accept --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

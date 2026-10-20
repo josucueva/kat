@@ -4,7 +4,7 @@
 .SH NAME
 materialize \- Exposes provisional physical state for human resolution
 .SH SYNOPSIS
-\fBmaterialize\fR [\fB\-h\fR|\fB\-\-help\fR] 
+\fBmaterialize\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
 Exposes provisional physical state for human resolution
 .PP
@@ -13,3 +13,7 @@ Materializes conflict markers into the working tree and transitions the session 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH COLLABORATION
+.TP
+\fB\-\-json\fR
+Output structured machine JSON envelope

@@ -225,6 +225,14 @@ impl WorkspaceBackend for FailBackend {
         }
         self.inner.materialize_candidate(workspace_id, candidate)
     }
+    fn snapshot_resolved_candidate(
+        &self,
+        workspace_id: &WorkspaceId,
+        candidate: &PhysicalReconciliationCandidate,
+    ) -> Result<WorkspaceSnapshotId, kat::domain::workspace::WorkspaceBackendError> {
+        self.inner
+            .snapshot_resolved_candidate(workspace_id, candidate)
+    }
     fn clear_physical_candidate(
         &self,
         _workspace_id: &WorkspaceId,
@@ -259,6 +267,7 @@ fn mat_t01_successful_materialization() {
         },
         physical_candidate: Some(phys_candidate.clone()),
         semantic_conflicts: vec![],
+        clean_physical_snapshot: None,
         materialization_conflicts: vec![],
         validation_findings: vec![],
     };
@@ -321,6 +330,7 @@ fn mat_t02_t03_materialization_fails_rollback_succeeds() {
         },
         physical_candidate: Some(phys_candidate.clone()),
         semantic_conflicts: vec![],
+        clean_physical_snapshot: None,
         materialization_conflicts: vec![],
         validation_findings: vec![],
     };
@@ -383,6 +393,7 @@ fn mat_t04_rollback_fails() {
         },
         physical_candidate: Some(phys_candidate.clone()),
         semantic_conflicts: vec![],
+        clean_physical_snapshot: None,
         materialization_conflicts: vec![],
         validation_findings: vec![],
     };

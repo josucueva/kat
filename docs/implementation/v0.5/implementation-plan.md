@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 9 (Physical Reconciliation and Conflicts) Complete.
+Phase 10 frozen: collaboration machine interfaces and full local E2E evaluation complete. Phase 11 (Remote abstraction) is next.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -11,7 +11,10 @@ Phase 9 (Physical Reconciliation and Conflicts) Complete.
 | Phase 2 | `c806322` | Complete. WorkspaceSnapshot abstraction added. |
 | Phase 3 | `3d1ed40` | Complete. GitWorkspaceBackend implementation added, physical identity enforced. |
 | Phase 4..8 | `N/A` | Complete. Workspace integration, remote reference, diverge logic, semantic reconciliation. |
-| Phase 9 | `PENDING` | Complete. Physical reconciliation and conflicts. |
+| Phase 9 | `a8a0f0a` | Complete. Physical reconciliation and conflicts. |
+| Phase 10.1..10.9 | `21b8275` | Complete. Local collaboration commands. |
+| Phase 10.10 | — | Complete. Versioned JSON collaboration interface; MI-COL checks pass. |
+| Phase 10.11 | — | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
 
 ## 1. Objective
 
@@ -528,7 +531,9 @@ Provide CLI tools for collaboration.
 - 10.8 Finalize/accept workflows (`kat finalize` or `kat accept`).
 - 10.9 Switch/advance workflows (`kat switch`, explicit advance).
 - 10.10 JSON machine interfaces.
+- 10.10 execution plan: [implementation-plan-phase10-10.md](implementation-plan-phase10-10.md).
 - 10.11 Full E2E collaboration tests.
+- 10.11 execution plan: [implementation-plan-phase10-11.md](implementation-plan-phase10-11.md).
 ### Tests
 - Local end-to-end usability scenarios mirroring real workflow.
 ### Regression checks

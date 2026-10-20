@@ -54,6 +54,8 @@ pub struct ReconciliationCandidate {
     pub proposed_semantic_state: SemanticState,
     pub semantic_conflicts: Vec<SemanticConflict>,
     pub physical_candidate: Option<crate::domain::workspace::PhysicalReconciliationCandidate>,
+    #[serde(default)]
+    pub clean_physical_snapshot: Option<crate::domain::identity::WorkspaceSnapshotId>,
     pub materialization_conflicts: Vec<crate::domain::conflict::MaterializationConflict>,
     pub validation_findings: Vec<ValidationFinding>,
 }
@@ -258,6 +260,7 @@ pub fn reconcile_semantic(
         proposed_semantic_state,
         semantic_conflicts: conflicts,
         physical_candidate: None,
+        clean_physical_snapshot: None,
         materialization_conflicts: vec![],
         validation_findings: findings,
     })
@@ -396,13 +399,11 @@ pub fn abort_reconciliation_session<B: WorkspaceBackend>(
             .inspect_working_state(&base_rev.workspace_snapshot)
             .map_err(|e| AbortError::Io(std::io::Error::other(e)))?;
 
-        let has_changes = !working_state.changes.untracked.is_empty()
-            || !working_state.changes.modified.is_empty()
-            || !working_state.changes.deleted.is_empty();
+        let has_changes = !working_state.changes.is_clean();
 
         if has_changes {
             backend
-                .materialize_snapshot(&base_rev.workspace_snapshot)
+                .restore_snapshot(&base_rev.workspace_snapshot)
                 .map_err(|e| AbortError::Io(std::io::Error::other(e)))?;
 
             // Verify
@@ -486,24 +487,14 @@ pub fn finalize_reconciliation_session<B: WorkspaceBackend>(
 
     let w_merge = r_merge_rev.workspace_snapshot;
 
-    let working_state = backend
-        .inspect_working_state(&w_merge)
+    backend
+        .materialize_snapshot(&w_merge)
         .map_err(|e| FinalizeError::Io(std::io::Error::other(e)))?;
 
-    let has_changes = !working_state.changes.untracked.is_empty()
-        || !working_state.changes.modified.is_empty()
-        || !working_state.changes.deleted.is_empty();
-
-    if has_changes {
-        backend
-            .materialize_snapshot(&w_merge)
-            .map_err(|e| FinalizeError::Io(std::io::Error::other(e)))?;
-
-        if !backend.verify_snapshot_integrity(&w_merge).unwrap_or(false) {
-            return Err(FinalizeError::Io(std::io::Error::other(
-                "Materialization verification failed",
-            )));
-        }
+    if !backend.verify_snapshot_integrity(&w_merge).unwrap_or(false) {
+        return Err(FinalizeError::Io(std::io::Error::other(
+            "Materialization verification failed",
+        )));
     }
 
     crate::repository::workspace::update_workspace_base(repo_root, &ws.id, r_merge)?;
@@ -714,6 +705,7 @@ pub fn reconcile(
         PhysicalReconciliationResult::Clean {
             snapshot: new_snapshot_id,
         } => {
+            candidate.clean_physical_snapshot = Some(new_snapshot_id.clone());
             if candidate.semantic_conflicts.is_empty() && candidate.validation_findings.is_empty() {
                 // Both semantic and physical domains are clean
 

@@ -4,7 +4,7 @@
 .SH NAME
 conflicts \- List active conflicts in the current reconciliation session
 .SH SYNOPSIS
-\fBconflicts\fR [\fB\-h\fR|\fB\-\-help\fR] 
+\fBconflicts\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
 List active conflicts in the current reconciliation session
 .PP
@@ -13,3 +13,7 @@ Outputs semantic and physical conflicts that block finalization.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH COLLABORATION
+.TP
+\fB\-\-json\fR
+Output structured machine JSON envelope

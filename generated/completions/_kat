@@ -38,6 +38,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (reconcile)
 _arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':target -- Target revision (can be an object ID or reference like @main):_default' \
@@ -45,18 +46,21 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (conflicts)
 _arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
 (materialize)
 _arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
 (resolve)
 _arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ":: :_kat__subcmd__resolve_commands" \
@@ -72,6 +76,7 @@ _arguments "${_arguments_options[@]}" : \
             (semantic)
 _arguments "${_arguments_options[@]}" : \
 '--accept=[Side to accept (base, local, other)]:ACCEPT:_default' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':conflict_id -- Conflict ID:_default' \
@@ -80,6 +85,7 @@ _arguments "${_arguments_options[@]}" : \
 (physical)
 _arguments "${_arguments_options[@]}" : \
 '--accept=[Side to accept (base, local, other, working)]:ACCEPT:_default' \
+'--json[Output structured machine JSON envelope]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':conflict_id -- Conflict ID:_default' \

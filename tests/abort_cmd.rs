@@ -146,6 +146,7 @@ fn create_base_candidate(
         proposed_semantic_state: semantic_state,
         physical_candidate: None,
         semantic_conflicts: vec![],
+        clean_physical_snapshot: None,
         materialization_conflicts: vec![],
         validation_findings: vec![],
     }

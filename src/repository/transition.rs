@@ -67,8 +67,7 @@ pub fn transition_workspace_to_revision<B: WorkspaceBackend>(
     let target_rev = match crate::encoding::decode_canonical(&target_obj)?.payload {
         crate::encoding::object::CanonicalPayload::RepositoryRevision(r) => r,
         _ => {
-            return Err(TransitionError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(TransitionError::Io(std::io::Error::other(
                 "Target is not a revision",
             )));
         }
@@ -79,8 +78,7 @@ pub fn transition_workspace_to_revision<B: WorkspaceBackend>(
     let base_rev = match crate::encoding::decode_canonical(&base_obj)?.payload {
         crate::encoding::object::CanonicalPayload::RepositoryRevision(r) => r,
         _ => {
-            return Err(TransitionError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(TransitionError::Io(std::io::Error::other(
                 "Base is not a revision",
             )));
         }
