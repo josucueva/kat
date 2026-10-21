@@ -2,6 +2,7 @@
 
 pub mod fake;
 pub mod git;
+pub mod git_transport;
 pub mod state;
 
 use std::path::Path;
