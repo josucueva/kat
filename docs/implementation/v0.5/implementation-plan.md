@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10, Phase 11, Phase 12.0, and Phase 12.1 are frozen. Phase 12 implementation and deployment acceptance remain pending. Phase 12.2 is planned as three verifiable stages: controlled Git backend, concrete workspace transport, then retention and failure validation. No controlled server has been configured or verified.
+Phase 10, Phase 11, Phase 12.0, and Phase 12.1 are frozen. Phase 12 implementation and deployment acceptance remain pending. Phase 12.2 is split into three verifiable stages: controlled Git backend, concrete workspace transport, then retention and failure validation. A controlled backend and transport are covered by loopback tests; deployment-level retention proof remains pending.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -18,7 +18,9 @@ Phase 10, Phase 11, Phase 12.0, and Phase 12.1 are frozen. Phase 12 implementati
 | Phase 11 | `c5d8029`, `9c9d01c`, `a065de8` | Complete. Step 11.1 satisfies the planned transport abstraction criteria; parent-first uploads, complete unnamed-tip discovery, structured fetch partial outcomes, and retention contract are covered. Source review found no distinct 11.2 workflow in the plan. Remote-backed workflows and live retention enforcement are Phase 12 work. Verification reported: 631 workspace tests and 16 remote tests pass. |
 | Phase 12.0 | `6f03dd3`, `0ee8b36` | Transport contract frozen in [phase12-transport-design.md](phase12-transport-design.md). KAT-controlled retention and repository binding are specified; deployment-level backend verification remains pending. |
 | Phase 12.1 | `2989582` | Complete. Local snapshot representation recording fails closed unless the embedded Git repository and direct protection ref verify; mapping writes are atomic and reads validate protection refs. Workspace Git tests and the full verification gate pass. |
-| Phase 12.2 | `facf800` | In progress. Stage 12.2.1 provisions the bound controlled Git backend and proves server-side create-only lineage refs over loopback `git daemon`; workspace transport and GC/failure acceptance remain. |
+| Phase 12.2.1 | `facf800`, `32d1de8` | Complete. A repository/backend-bound bare Git server provisions create-only lineage refs and rejects updates, deletion, and non-lineage writes. Loopback `git daemon` verifies the receive policy. |
+| Phase 12.2.2 | `1f5d8e2` | Complete. The Git `WorkspaceTransport` persists an immutable remote binding, verifies the server's repository/backend marker, transfers lineage refs, and recomputes `WorkspaceSnapshotId` from remote trees before exposing local representations. Seven loopback transport tests pass. |
+| Phase 12.2.3 | Pending | GC retention, interrupted transfer/retry, and concurrent access validation remain. Hub semantic publication stays disabled until this stage passes. |
 
 ## 1. Objective
 
@@ -613,7 +615,7 @@ Implement abstractions for remote syncing.
 - [x] Define semantic and Git-backed workspace transfer, reference visibility, retention, GC, repository binding, and failure/recovery behavior without changing Phase 11 interfaces.
 - [ ] Select and configure a KAT-controlled workspace backend; verify remote ref read-back and recompute the tree-derived `WorkspaceSnapshotId` before CAS.
 - [ ] Verify that the backend rejects lineage-ref update/deletion and preserves refs through Git GC; bind its fixed `WorkspaceBackendId` in the Hub repository record.
-- Notes: The design contract is frozen independently of deployment proof. No KAT Hub or workspace remote is configured in this repository. Its `origin` points to GitHub for the project source, not a KAT physical workspace remote. GitHub documentation does not establish retention of `refs/kat/*`; Phase 12 v1 therefore targets a KAT-controlled Git backend.
+- Notes: The design contract is frozen independently of deployment proof. Stages 12.2.1 and 12.2.2 exercise a provisioned backend over loopback `git daemon`; this is not a production deployment. No KAT Hub or workspace remote is configured in the project repository. Its `origin` points to GitHub for the project source, not a KAT physical workspace remote. GitHub documentation does not establish retention of `refs/kat/*`; Phase 12 v1 therefore targets a KAT-controlled Git backend.
 ### Step 12.1: Local Git snapshot retention hardening
 - Status: Complete (`2989582`).
 - [x] Require the embedded repository and target commit to open before recording a representation.
@@ -628,12 +630,13 @@ Implement abstractions for remote syncing.
   - [x] Provision a bare Git repository bound to one KAT `RepositoryId` and `WorkspaceBackendId`.
   - [x] Enforce create-only `refs/kat/lineage/**` updates on the server; reject ref updates and deletion through supported Git operations.
   - [x] Test through a real loopback Git daemon; verify binding and receive-hook drift fail closed.
-- [ ] Stage 12.2.2 — Concrete workspace transport:
-  - Implement the frozen `WorkspaceTransport` contract over the configured Git repository; operations cannot select another destination.
-  - Transfer only KAT lineage refs, independently read them back, and recompute `WorkspaceSnapshotId` from fetched trees.
-  - Record local representations only after ref, commit, and snapshot identity verification.
+- Stage 12.2.2 — Concrete workspace transport: Complete (`1f5d8e2`).
+  - [x] Persist one immutable local binding and verify the configured server's advertised `RepositoryId` and `WorkspaceBackendId` marker before transfer.
+  - [x] Implement the frozen `WorkspaceTransport` contract; transfers use only KAT lineage refs and cannot select a destination per operation.
+  - [x] Read refs and commits back into a fresh Git repository, recompute `WorkspaceSnapshotId`, and record local representations only after integrity verification.
+  - [x] Verify publication, fetch without materializing, wrong repository/backend binding, and wrong tree identity in seven loopback integration tests.
 - [ ] Stage 12.2.3 — Retention and failure validation:
-  - Test repository-binding mismatch, denied updates/deletions, interrupted upload and retry, concurrent GC, read-back integrity, and subsequent fetch after GC.
+  - Test denied updates/deletions, interrupted upload and retry, concurrent GC, read-back integrity, and subsequent fetch after GC.
   - Keep Hub semantic publication disabled until every preceding stage passes.
 - Acceptance: after successful physical publication, the bound server still serves the exact snapshot after GC; client-visible mutation/deletion attempts fail; mismatched binding or tree identity fails closed; retry is idempotent.
 - Trust boundary: the guarantee covers ordinary Git protocol clients and supported KAT administration. Trusted host administrators and underlying storage durability remain explicit deployment assumptions; unrestricted root-level ref/hook changes and physical storage loss are outside the guarantee.

@@ -2,9 +2,9 @@
 
 ## Status and scope
 
-Status: Phase 12.0 transport contract frozen; deployment acceptance pending.
-No concrete remote transport has been implemented. The deployment backend
-must still pass the operational retention and repository-binding checks below.
+Status: Phase 12.0 transport contract frozen; controlled backend and concrete
+workspace transport implemented in Stages 12.2.1 and 12.2.2. Deployment
+retention acceptance remains pending.
 
 The design freeze establishes internally consistent, testable transport
 contracts. It does not claim that a deployed server has enforced or passed
@@ -16,13 +16,14 @@ It preserves KAT's authority model and the separate semantic and physical
 transports. It does not define Hub endpoint paths, a wire schema, credentials,
 or CLI syntax.
 
-Phase 12 uses a KAT Hub semantic service and a Git smart-protocol remote for
-physical workspace content. One repository-level binding pairs those two
-services. Phase 12 v1 supports only a KAT-controlled Git backend whose ref
-retention policy the Hub can enforce and verify. A generic Git URL or a
-successful push is not sufficient. The current repository has no KAT Hub or
-workspace remote configured, so this policy has not yet been exercised against
-a deployment.
+Phase 12 is designed to use a KAT Hub semantic service and a Git smart-protocol
+remote for physical workspace content. One repository-level binding pairs
+those two services. Phase 12 v1 supports only a KAT-controlled Git backend
+whose ref retention policy the Hub can enforce and verify. A generic Git URL or
+a successful push is not sufficient. Loopback tests now exercise the
+provisioned Git backend and physical transport. The current repository has no
+KAT Hub or workspace remote configured, so the policy has not been exercised
+against a deployment.
 
 ## Design decisions
 
@@ -39,6 +40,10 @@ a deployment.
    A ref is create-only and immutable. The configured Git server must enforce
    rejection of updates and deletion; a conflicting target is an integrity
    error.
+   The controlled backend also exposes a provision-time blob at
+   `refs/kat/backend-binding`. It records the bound `RepositoryId` and
+   `WorkspaceBackendId`; clients read it before each transfer. The receive hook
+   rejects client writes to this marker and every non-lineage ref.
 5. Upload physical snapshot refs first, semantic dependencies second, and
    update one KAT named reference last with linearizable compare-and-swap.
 6. Phase 12 remote semantic storage is append-only. The configured Git server
@@ -142,21 +147,13 @@ collection; it does not prevent a host from deleting a ref.
 
 ## Existing backend review findings
 
-`GitWorkspaceBackend::create_snapshot` rereads the commit tree and verifies its
-KAT snapshot identity before recording the representation. However,
-`record_snapshot_representation` ignores failure to open the internal Git repo
-and ignores failure to create the local lineage ref, then returns success.
-`verify_snapshot_integrity` validates commits listed in `snapshots.json` but
-does not require a corresponding protection ref. The happy-path reachability
-test does not cover these failures.
-
-Phase 12 implementation must not treat the mapping file or a successful local
-snapshot check as proof that a commit is GC-protected. Before remote publication
-is implemented, local representation recording must fail closed when it cannot
-create the protection ref, and the publish path must verify the local commit
-and derived snapshot identity before transfer. Add a regression test that
-injects local ref-creation failure. This is an implementation prerequisite; it
-does not require changing the frozen Phase 11 transport interface.
+The original Phase 12.0 review found that `record_snapshot_representation`
+could report success without a local Git protection ref, and lookups did not
+require that ref. Phase 12.1 (`2989582`) closed this gap: recording now fails
+closed, atomically persists the mapping, and lookup verifies the direct ref and
+tree-derived snapshot identity. The regression tests cover missing/conflicting
+refs and recovery. The local mapping is therefore not treated as proof by
+itself.
 
 ## Concrete transport responsibilities
 
@@ -194,6 +191,15 @@ response.
 with Git's fetch/push protocol, restricted to KAT lineage refs. It does not
 push or fetch ordinary branches as KAT state.
 
+The controlled backend provisions a create-only binding marker at
+`refs/kat/backend-binding`. The Git transport fetches this marker into a fresh
+temporary bare repository and checks its IDs against the immutable local
+binding before every physical operation. This detects a URL that points to a
+different configured repository/backend. The marker is an identity check, not
+proof that the receive hook or server retention policy is active; the Hub must
+verify those controls through its deployment control plane before semantic
+reference CAS.
+
 For each `WorkspaceSnapshotId`, local `.kat/physical/snapshots.json` supplies
 candidate commit representations. Before publishing, the backend verifies
 each commit exists, its local protection ref exists, and hashing its tree with
@@ -204,16 +210,16 @@ remote ref back and verifies the target tree before allowing CAS; this is a
 content check, while the server policy above provides retention.
 
 For fetch, the transport fetches all remote lineage refs for the requested
-snapshot ID into the same local namespace. It verifies each fetched commit's
-tree-derived snapshot ID, writes the local representation mapping, and creates
-local KAT protection refs. These steps store immutable backend data only:
+snapshot ID into temporary staging refs. It verifies each fetched commit's
+tree-derived snapshot ID before creating local KAT protection refs and
+recording mappings. These steps store immutable backend data only:
 they do not checkout a commit, update the active lineage, materialize files,
 or change a workspace base.
 
-The local mapping file is a cache, not remote authority. On fetch, the Git refs
-are the transfer record and the mapping is rebuilt from validated ref names and
-commit targets. Mapping updates and protection-ref creation must be checked and
-durable before `local_snapshot_available` reports success.
+The local mapping file is a cache, not remote authority. On fetch, Git refs are
+the transfer record and only validated ref names and commit targets populate
+the mapping. Mapping updates and protection-ref creation must be checked before
+`local_snapshot_available` reports success.
 
 ### Logical remote binding
 
