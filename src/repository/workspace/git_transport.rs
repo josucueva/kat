@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use git2::{Direction, Repository};
+use git2::{Direction, PushOptions, RemoteCallbacks, Repository};
 use uuid::Uuid;
 
 use crate::domain::identity::{RepositoryId, WorkspaceSnapshotId};
@@ -326,7 +326,35 @@ impl WorkspaceTransport for GitWorkspaceTransport {
             }
             let refspec = format!("{name}:{name}");
             let mut remote = repo.remote_anonymous(&self.url).map_err(other)?;
-            remote.push(&[refspec], None).map_err(other)?;
+            let mut rejection = None;
+            {
+                let mut callbacks = RemoteCallbacks::new();
+                // libgit2 reports receive-hook rejections through this callback.
+                callbacks.push_update_reference(|refname, status| {
+                    if let Some(status) = status {
+                        rejection = Some(format!("{refname}: {status}"));
+                    }
+                    Ok(())
+                });
+                let mut options = PushOptions::new();
+                options.remote_callbacks(callbacks);
+                remote.push(&[refspec], Some(&mut options)).map_err(other)?;
+            }
+            if let Some(rejection) = rejection {
+                match self
+                    .list_snapshot_refs(&repo, id)?
+                    .into_iter()
+                    .find(|(advertised_name, _)| advertised_name == name)
+                {
+                    Some((_, advertised_target)) if advertised_target == *target => continue,
+                    Some(_) => return Err(RemoteTransportError::SnapshotIntegrity(id.clone())),
+                    None => {
+                        return Err(other(format!(
+                            "remote rejected workspace lineage ref: {rejection}"
+                        )));
+                    }
+                }
+            }
         }
 
         if !self.remote_snapshot_available(id)? {
