@@ -2,9 +2,9 @@
 
 ## Status and scope
 
-Status: Phase 12.0 transport contract frozen; controlled backend and concrete
-workspace transport implemented in Stages 12.2.1 and 12.2.2. Deployment
-retention acceptance remains pending.
+Status: Phase 12.0 transport contract frozen; local Phase 12.2 controlled
+backend, concrete workspace transport, and retention/failure checks are
+complete. Deployment retention and durability acceptance remain pending.
 
 The design freeze establishes internally consistent, testable transport
 contracts. It does not claim that a deployed server has enforced or passed
@@ -127,6 +127,15 @@ supported maintenance operation removes or rewrites a lineage ref; ordinary
 repository binding changes are privileged control-plane actions and must be
 audited and visible to publication verification.
 
+The loopback tests cover an aggressive `git gc --prune=now` while a receive is
+paused before its pre-receive validation. If that collection makes the incoming
+commit unavailable, the server rejects the ref creation; the transport reports
+the per-ref rejection and no lineage ref is created. A retry after collection
+succeeds. After publication, the same aggressive collection preserves the
+reachable snapshot and a separate KAT repository can fetch it. Concurrent
+create attempts for the same lineage ref are treated as success only after
+read-back confirms that the ref points to the expected commit.
+
 Host administrators with unrestricted filesystem or process privileges remain
 trusted. They can replace hooks, rewrite refs, or delete repository data, so
 the guarantee does not cover malicious or accidental root-level changes. The
@@ -199,6 +208,11 @@ different configured repository/backend. The marker is an identity check, not
 proof that the receive hook or server retention policy is active; the Hub must
 verify those controls through its deployment control plane before semantic
 reference CAS.
+
+The Git push path checks libgit2's per-reference status callback. A successful
+transport call therefore means the server accepted each requested lineage
+ref; a rejected reference is returned as an error unless a concurrent writer
+has already created that exact ref and read-back confirms the expected target.
 
 For each `WorkspaceSnapshotId`, local `.kat/physical/snapshots.json` supplies
 candidate commit representations. Before publishing, the backend verifies

@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10, Phase 11, Phase 12.0, and Phase 12.1 are frozen. Phase 12 implementation and deployment acceptance remain pending. Phase 12.2 is split into three verifiable stages: controlled Git backend, concrete workspace transport, then retention and failure validation. A controlled backend and transport are covered by loopback tests; deployment-level retention proof remains pending.
+Phase 10, Phase 11, Phase 12.0, Phase 12.1, and the local Phase 12.2 implementation are complete. Phase 12 Hub implementation and deployment-level retention proof remain pending. The controlled backend and physical transport pass loopback acceptance tests; the deployment must still attest policy enforcement and storage durability before Hub publication.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -20,7 +20,7 @@ Phase 10, Phase 11, Phase 12.0, and Phase 12.1 are frozen. Phase 12 implementati
 | Phase 12.1 | `2989582` | Complete. Local snapshot representation recording fails closed unless the embedded Git repository and direct protection ref verify; mapping writes are atomic and reads validate protection refs. Workspace Git tests and the full verification gate pass. |
 | Phase 12.2.1 | `facf800`, `32d1de8` | Complete. A repository/backend-bound bare Git server provisions create-only lineage refs and rejects updates, deletion, and non-lineage writes. Loopback `git daemon` verifies the receive policy. |
 | Phase 12.2.2 | `1f5d8e2` | Complete. The Git `WorkspaceTransport` persists an immutable remote binding, verifies the server's repository/backend marker, transfers lineage refs, and recomputes `WorkspaceSnapshotId` from remote trees before exposing local representations. Seven loopback transport tests pass. |
-| Phase 12.2.3 | Pending | GC retention, interrupted transfer/retry, and concurrent access validation remain. Hub semantic publication stays disabled until this stage passes. |
+| Phase 12.2.3 | `517e102` | Complete locally. The loopback tests cover partial publication/retry, concurrent identical publication, rejected in-flight publication during aggressive GC, and read-back/fetch after GC. Hub publication and deployment-level durability proof remain pending. |
 
 ## 1. Objective
 
@@ -625,7 +625,7 @@ Implement abstractions for remote syncing.
 - [x] Cover missing repository, conflicting/missing protection refs, failed recording without representation exposure, and recovery after repair.
 - Notes: An interrupted mapping write may leave an orphan protection ref, which is safe and retryable. If post-write ref verification fails, lookups reject the mapping until the ref is repaired. This step does not establish server-side ref immutability or GC retention.
 ### Step 12.2: Controlled physical transport and retention enforcement
-- Status: In progress; execute the three stages in order. No Hub semantic reference publication in this step.
+- Status: Local implementation complete; deployment policy/durability proof pending. No Hub semantic reference publication in this step.
 - Stage 12.2.1 — Controlled Git backend: Complete (`facf800`).
   - [x] Provision a bare Git repository bound to one KAT `RepositoryId` and `WorkspaceBackendId`.
   - [x] Enforce create-only `refs/kat/lineage/**` updates on the server; reject ref updates and deletion through supported Git operations.
@@ -635,11 +635,14 @@ Implement abstractions for remote syncing.
   - [x] Implement the frozen `WorkspaceTransport` contract; transfers use only KAT lineage refs and cannot select a destination per operation.
   - [x] Read refs and commits back into a fresh Git repository, recompute `WorkspaceSnapshotId`, and record local representations only after integrity verification.
   - [x] Verify publication, fetch without materializing, wrong repository/backend binding, and wrong tree identity in seven loopback integration tests.
-- [ ] Stage 12.2.3 — Retention and failure validation:
-  - Test denied updates/deletions, interrupted upload and retry, concurrent GC, read-back integrity, and subsequent fetch after GC.
-  - Keep Hub semantic publication disabled until every preceding stage passes.
-- Acceptance: after successful physical publication, the bound server still serves the exact snapshot after GC; client-visible mutation/deletion attempts fail; mismatched binding or tree identity fails closed; retry is idempotent.
-- Trust boundary: the guarantee covers ordinary Git protocol clients and supported KAT administration. Trusted host administrators and underlying storage durability remain explicit deployment assumptions; unrestricted root-level ref/hook changes and physical storage loss are outside the guarantee.
+- Stage 12.2.3 — Retention and failure validation: Complete locally (`517e102`).
+  - [x] Verify per-ref push rejections are surfaced; a second representation can fail after the first remains safely published, then retry completes idempotently.
+  - [x] Race identical publication calls and verify only one immutable lineage ref remains.
+  - [x] Run aggressive GC during a paused receive; the server rejects the now-incomplete upload, creates no lineage ref, and a retry succeeds after GC.
+  - [x] Run `git gc --prune=now` after publication, read the exact remote tree back, and fetch it into a second KAT repository.
+  - [x] Confirm invalid fetched tree identity leaves no local representation or staging ref.
+- Acceptance: local loopback tests prove that published snapshots remain fetchable after GC, client-visible mutation/deletion attempts fail, mismatched binding/tree identity fails closed, and retries are idempotent. Deployment policy and storage durability must still be verified before Hub CAS is implemented.
+- Trust boundary: supported GC after publication preserves refs; aggressive concurrent GC may reject an in-flight upload, which leaves no lineage ref and requires retry. Unrestricted host administrators and underlying storage loss remain deployment assumptions; root-level ref/hook changes and physical storage loss are outside the guarantee.
 ### Goal
 Implement the actual remote sync via KAT Hub/Git.
 ### Design inputs
