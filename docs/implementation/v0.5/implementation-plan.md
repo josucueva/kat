@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10 frozen. Phase 11 complete: Step 11.1 is frozen, and review found no remaining Phase 11 acceptance criteria that need a separate 11.2. Remote-backed workflows and concrete published-closure retention enforcement remain Phase 12 work.
+Phase 10 frozen. Phase 11 complete and frozen. Phase 12 transport and publication design drafted; implementation pending. Initial retention uses append-only Hub objects and protected Git lineage refs, so concurrent Git GC cannot remove referenced snapshots.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -16,6 +16,7 @@ Phase 10 frozen. Phase 11 complete: Step 11.1 is frozen, and review found no rem
 | Phase 10.10 | `7676223` | Complete. Versioned JSON collaboration interface; MI-COL checks pass in `tests/collaboration_json.rs`. |
 | Phase 10.11 | `7676223` | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
 | Phase 11 | `c5d8029`, `9c9d01c`, `a065de8` | Complete. Step 11.1 satisfies the planned transport abstraction criteria; parent-first uploads, complete unnamed-tip discovery, structured fetch partial outcomes, and retention contract are covered. Source review found no distinct 11.2 workflow in the plan. Remote-backed workflows and live retention enforcement are Phase 12 work. Verification reported: 631 workspace tests and 16 remote tests pass. |
+| Phase 12.0 | Pending tracker checkpoint | Transport and publication design drafted in [phase12-transport-design.md](phase12-transport-design.md); concrete transport implementation remains pending. |
 
 ## 1. Objective
 
@@ -605,10 +606,16 @@ Implement abstractions for remote syncing.
 - Actual KAT Hub or Git network calls.
 
 ## Phase 12: KAT Hub and Git remote integration
+### Step 12.0: Concrete transport and publication design
+- Status: Design drafted; implementation pending.
+- [x] Define semantic and Git-backed workspace transfer, reference visibility, retention, GC, and failure/recovery behavior without changing Phase 11 interfaces.
+- Notes: The repository contains no KAT Hub service target. Phase 12 implementation must integrate an existing Hub service or add a separately deployable service component before claiming a complete Hub transport.
 ### Goal
 Implement the actual remote sync via KAT Hub/Git.
 ### Design inputs
 - `remote-model.md`
+- `git-workspace-backend.md`
+- [Phase 12 transport and publication design](phase12-transport-design.md)
 ### Traceability
 - Changing Git remote URL does not alter canonical state.
 - Shared reference never points to an incomplete `RepositoryRevision`.
@@ -616,25 +623,38 @@ Implement the actual remote sync via KAT Hub/Git.
 - Phase 11 complete.
 ### Design constraints
 - Remote sync is purely transport and CAS; no semantic reinterpretation.
-- Enforce retention of a published reference's full semantic and physical dependency closure and coordinate publication with garbage collection/deletion.
+- Keep the Phase 11 transport trait signatures and canonical formats unchanged.
+- Store exact canonical bytes by `ObjectId`; never re-encode during transfer.
+- Keep KAT named references in the semantic service. Git refs carry physical snapshots only.
+- Publish physical snapshot refs before semantic revisions; advance one semantic named ref with linearizable CAS only after full destination verification.
+- Retain published semantic content in append-only Hub storage and physical content through immutable `refs/kat/lineage/<snapshot-id>/<git-oid>` roots. Do not delete these roots or collect Hub semantic objects in Phase 12.
+- Treat fetch as observation: only remote-tracking refs may change after full closure verification; accepted state, local named refs, workspace base, active lineage, and working tree remain unchanged.
 ### Implementation work
-- Publish protocol:
-  1. Ensure physical snapshot available remotely.
-  2. Upload required semantic immutable objects.
-  3. Upload `RepositoryRevision`.
-  4. Verify completeness.
-  5. CAS shared reference/head (the **visibility boundary**).
+- Implement a Git `WorkspaceTransport` over the internal bare repository and the configured Git smart-protocol remote; fetch and publish only KAT lineage refs and rebuild local snapshot mappings from verified refs.
+- Implement or integrate the KAT Hub `SemanticTransport` service/client: repository-scoped immutable canonical objects, coherent discovery, unnamed-tip derivation with paired physical-closure checks, and per-name linearizable CAS.
+- Compose the transports with `RemoteCoordinator` without adding a second repository coordination wrapper.
+- Implement the publish sequence: verify local closure; publish and verify physical snapshot refs; upload semantic dependencies and revision parents before children; read back and verify the destination closure; CAS one named KAT ref as the visibility boundary.
+- Implement fetch and sync workflow behavior: fetch updates only remote-tracking refs; sync reports topology relative to those observations without automatic publish, reconciliation, reference movement, or materialization.
+- Keep Phase 12 remote storage append-only. Any later KAT-aware pruning must synchronize with reference CAS and protect in-flight publication.
 ### Tests
-- **Fetch semantics**: fetch missing immutable objects, remote heads, fetch does not move local reference, fetch does not move workspace base, fetch is idempotent, partial fetch failure leaves accepted local state unchanged.
-- **Publication failures**: Git upload fails, semantic upload fails, `RepositoryRevision` upload fails, verification fails, CAS loses race, network drops after objects uploaded, retry publication, duplicate upload.
+- Exercise the Git transport against a temporary bare remote: lineage ref push/fetch, multiple representations per snapshot, identity mismatch, idempotent retry, and concurrent `git gc` preservation.
+- Exercise the Hub semantic transport: exact byte preservation, duplicate and mismatched object writes, repository mismatch, coherent discovery, incomplete closure, CAS success/race, and lost-response recovery.
+- **Fetch semantics**: fetch missing immutable objects and physical snapshots, fetch does not move local reference or workspace base, fetch is idempotent, and partial failure leaves authority unchanged.
+- **Publication failures**: Git upload fails, semantic upload fails, `RepositoryRevision` upload fails, destination verification fails, CAS loses race, response is lost after CAS, retry publication, and duplicate upload.
+- Test that incomplete unnamed tips are omitted, incomplete named refs fail closed, and every advertised closure passes independent coordinator verification.
+- Test fetch/push/sync preserve accepted state, local named refs, workspace base, active lineage, and the working tree as specified.
 ### Regression checks
 - `cargo test --workspace`, `cargo fmt --check`, `cargo clippy ... -D warnings`.
 ### Failure / recovery cases
 - Protocol must cleanly fail before CAS if any upload step fails.
 ### Acceptance criteria
-- Multi-user scenarios across the implemented semantic and physical remote transports pass.
+- The concrete transports satisfy the frozen Phase 11 interfaces and move canonical objects and Git-backed snapshots without changing canonical identities.
+- A KAT named ref advances only after the complete semantic and physical destination closure is verified; CAS never overwrites a concurrent target.
+- Published closures survive concurrent Git GC and remain available under append-only Hub object retention.
+- Fetch and sync preserve local authority; retry and ambiguous-CAS behavior match the failure/recovery design.
+- The multi-user remote scenarios across semantic and physical transports pass.
 ### Artifacts produced
-- KAT Hub / Git remote implementation.
+- KAT Hub semantic transport integration, Git workspace transport, and repository remote workflow integration.
 ### Out of scope for this phase
 - Auth mechanisms (assumes basic setup for now).
 

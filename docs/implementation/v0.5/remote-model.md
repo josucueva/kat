@@ -641,9 +641,12 @@ reachable, its complete semantic and physical dependency closure must remain
 retrievable. This includes every recursively referenced `RepositoryRevision`,
 semantic dependency, and `WorkspaceSnapshot`. Destination verification before
 CAS alone is insufficient if concurrent collection can remove verified
-content. Concrete retention and publication/collection synchronization are
-deferred to Phase 12; Phase 11 tests the contract with transports that retain
-published closure content.
+content. Phase 11 tests this contract with fake transports. The Phase 12 design
+enforces it with append-only semantic storage and protected Git refs; KAT-aware
+reclamation and its synchronization with publication remain deferred.
+
+The Phase 12 concrete transfer, reference, retention, and recovery decisions
+are recorded in [phase12-transport-design.md](phase12-transport-design.md).
 
 ---
 

@@ -1144,6 +1144,10 @@ KAT's remote model determines which physical snapshots must be available.
 
 The Git backend determines how those physical objects are transferred.
 
+For the Phase 12 implementation, transfer uses the Git smart protocol and the
+KAT-owned `refs/kat/lineage/<WorkspaceSnapshotId-hex>/<Git-commit-OID>` refs
+defined in [phase12-transport-design.md](phase12-transport-design.md).
+
 ---
 
 ## 40. Fetching physical objects
@@ -1198,15 +1202,14 @@ These refs are implementation mechanisms.
 
 They do not become KAT repository heads or semantic branches.
 
-For example, a backend may conceptually maintain:
+The Phase 12 transport uses:
 
 ```text
-refs/kat/...
+refs/kat/lineage/<WorkspaceSnapshotId-hex>/<Git-commit-OID>
 ```
 
-to protect or transport KAT-owned physical snapshots.
-
-The exact Git ref namespace is intentionally not frozen in this document.
+to protect and transport KAT-owned physical snapshots. Refs in this namespace
+are create-only immutable snapshot mappings, never KAT named references.
 
 ---
 
@@ -1218,15 +1221,11 @@ remain retrievable.
 KAT must prevent backend garbage collection from deleting physical snapshots
 still referenced by live KAT repository history.
 
-Possible implementation mechanisms include:
-
-```text
-protected internal Git refs
-reachability roots
-dedicated backend references
-```
-
-The exact mechanism is deferred.
+Each lineage ref is a normal Git reachability root. Git garbage collection may
+run concurrently and must preserve the referenced commit and its complete
+object ancestry. Phase 12 does not delete KAT lineage refs; any later KAT-aware
+pruning must coordinate with semantic reference updates and in-flight
+publication.
 
 The requirement is:
 
