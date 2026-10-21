@@ -3,8 +3,9 @@
 ## Status and scope
 
 Status: Phase 12.0 transport contract frozen; local Phase 12.2 controlled
-backend, concrete workspace transport, and retention/failure checks are
-complete. Deployment retention and durability acceptance remain pending.
+backend, concrete workspace transport, retention/failure checks, and the Phase
+12.3 trusted Hub semantic core are complete. Network exposure, deployment
+retention, and durability acceptance remain pending.
 
 The design freeze establishes internally consistent, testable transport
 contracts. It does not claim that a deployed server has enforced or passed
@@ -24,6 +25,14 @@ a successful push is not sufficient. Loopback tests now exercise the
 provisioned Git backend and physical transport. The current repository has no
 KAT Hub or workspace remote configured, so the policy has not been exercised
 against a deployment.
+
+Phase 12.3 adds a file-backed Hub core that implements the frozen
+`SemanticTransport`. Its trust boundary is same-process use: it opens a local
+Hub data root and a configured controlled Git repository, and it does not
+listen on a network socket. The deployment must restrict that data root to
+trusted processes using operating-system permissions; the library does not
+configure ACLs. Any network adapter must authenticate callers and verify the
+deployed Git policy and storage durability before it exposes publication.
 
 ## Design decisions
 

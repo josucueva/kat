@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10, Phase 11, Phase 12.0, Phase 12.1, and the local Phase 12.2 implementation are complete. Phase 12 Hub implementation and deployment-level retention proof remain pending. The controlled backend and physical transport pass loopback acceptance tests; the deployment must still attest policy enforcement and storage durability before Hub publication.
+Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, and the trusted local Hub semantic core are complete. Network exposure, deployment authentication, production retention proof, and storage durability acceptance remain pending.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -21,6 +21,7 @@ Phase 10, Phase 11, Phase 12.0, Phase 12.1, and the local Phase 12.2 implementat
 | Phase 12.2.1 | `facf800`, `32d1de8` | Complete. A repository/backend-bound bare Git server provisions create-only lineage refs and rejects updates, deletion, and non-lineage writes. Loopback `git daemon` verifies the receive policy. |
 | Phase 12.2.2 | `1f5d8e2` | Complete. The Git `WorkspaceTransport` persists an immutable remote binding, verifies the server's repository/backend marker, transfers lineage refs, and recomputes `WorkspaceSnapshotId` from remote trees before exposing local representations. Seven loopback transport tests pass. |
 | Phase 12.2.3 | `517e102` | Complete locally. The loopback tests cover partial publication/retry, concurrent identical publication, rejected in-flight publication during aggressive GC, and read-back/fetch after GC. Hub publication and deployment-level durability proof remain pending. |
+| Phase 12.3 | `8a02b56` | Complete locally. Added a file-backed `SemanticTransport` with immutable canonical objects, repository-scoped named-ref CAS, fixed controlled-Git binding, closure/tree verification before CAS, and complete unnamed-tip discovery. Five Hub acceptance tests pass; full gate: 649 tests, build, fmt, and Clippy pass. This is trusted in-process code, not a network service. |
 
 ## 1. Objective
 
@@ -641,7 +642,7 @@ Implement abstractions for remote syncing.
   - [x] Run aggressive GC during a paused receive; the server rejects the now-incomplete upload, creates no lineage ref, and a retry succeeds after GC.
   - [x] Run `git gc --prune=now` after publication, read the exact remote tree back, and fetch it into a second KAT repository.
   - [x] Confirm invalid fetched tree identity leaves no local representation or staging ref.
-- Acceptance: local loopback tests prove that published snapshots remain fetchable after GC, client-visible mutation/deletion attempts fail, mismatched binding/tree identity fails closed, and retries are idempotent. Deployment policy and storage durability must still be verified before Hub CAS is implemented.
+- Acceptance: local loopback tests prove that published snapshots remain fetchable after GC, client-visible mutation/deletion attempts fail, mismatched binding/tree identity fails closed, and retries are idempotent. Deployment policy and storage durability must still be verified before production Hub publication is accepted; Step 12.3 checks the local controlled-backend policy before CAS.
 - Trust boundary: supported GC after publication preserves refs; aggressive concurrent GC may reject an in-flight upload, which leaves no lineage ref and requires retry. Unrestricted host administrators and underlying storage loss remain deployment assumptions; root-level ref/hook changes and physical storage loss are outside the guarantee.
 ### Goal
 Implement the actual remote sync via KAT Hub/Git.
@@ -691,8 +692,17 @@ Implement the actual remote sync via KAT Hub/Git.
 - The multi-user remote scenarios across semantic and physical transports pass.
 ### Artifacts produced
 - KAT Hub semantic transport integration, Git workspace transport, and repository remote workflow integration.
+### Step 12.3: Trusted Hub semantic service core
+- Status: Complete locally (`8a02b56`).
+- [x] Store exact, validated canonical bytes in repository-scoped append-only object namespaces.
+- [x] Persist named references through per-name CAS and reject invalid names or repository mismatches.
+- [x] Fix each Hub repository to one `WorkspaceBackendId` and controlled Git repository; reject binding changes.
+- [x] Verify the active controlled-backend policy, recursive semantic closure, and every referenced snapshot tree before CAS.
+- [x] Discover only closure-complete unnamed DAG tips; fail listing when a named ref or ref file is invalid.
+- [x] Test interrupted upload/retry, missing semantic and physical dependencies, invalid backend binding, policy drift, CAS race, Hub reopen, and publish/fetch through `RemoteCoordinator` with a test workspace transport; Hub-side snapshot verification uses the controlled Git repository.
+- Notes: This first Hub service boundary is a trusted in-process file-backed core. It has no network listener, endpoint schema, authentication, or CLI wiring. The deployment must restrict the Hub data root with operating-system permissions; the library does not set ACLs. Production retention, durability, and administrative trust remain unverified.
 ### Out of scope for this phase
-- Auth mechanisms (assumes basic setup for now).
+- Remote authentication, network endpoint/client, and production deployment policy proof. The local core must not be exposed to untrusted processes.
 
 ## Phase 13: Migration and compatibility
 ### Goal
