@@ -182,7 +182,8 @@ fn git_20_reachability() {
 
     let reps = kat::repository::workspace::git::GitWorkspaceBackend::get_snapshot_representations(
         &root, &id,
-    );
+    )
+    .unwrap();
     assert!(!reps.is_empty());
 
     let commit_oid = reps[0].commit;
@@ -195,6 +196,112 @@ fn git_20_reachability() {
     let ref_name = format!("refs/kat/lineage/{}/{}", id_hex, commit_oid);
     let reference = repo.find_reference(&ref_name).unwrap();
     assert_eq!(reference.target().unwrap(), commit_oid);
+}
+
+#[test]
+fn snapshot_recording_requires_open_embedded_repo() {
+    let (_dir, root) = setup_temp_project("snapshot_recording_missing_repo");
+    let snapshot = kat::domain::identity::WorkspaceSnapshotId::new(vec![7; 32]);
+    let commit = git2::Oid::from_str("0000000000000000000000000000000000000000").unwrap();
+
+    let result = GitWorkspaceBackend::record_snapshot_representation(&root, &snapshot, commit);
+
+    assert!(result.is_err());
+    assert!(!root.join(".kat/physical/snapshots.json").exists());
+}
+
+#[test]
+fn snapshot_recording_rejects_conflicting_ref_and_recovers() {
+    let (_dir, root) = setup_temp_project("snapshot_recording_conflicting_ref");
+    let backend = GitWorkspaceBackend::init(&root).unwrap();
+
+    fs::write(root.join("file.txt"), "first").unwrap();
+    let first_id = backend
+        .create_snapshot(&[PathBuf::from("file.txt")])
+        .unwrap();
+    let first_commit =
+        GitWorkspaceBackend::get_snapshot_representations(&root, &first_id).unwrap()[0].commit;
+
+    fs::write(root.join("file.txt"), "second").unwrap();
+    let second_id = backend
+        .create_snapshot(&[PathBuf::from("file.txt")])
+        .unwrap();
+    let second_commit =
+        GitWorkspaceBackend::get_snapshot_representations(&root, &second_id).unwrap()[0].commit;
+
+    let index_path = root.join(".kat/physical/snapshots.json");
+    let mut index: std::collections::HashMap<String, Vec<String>> =
+        serde_json::from_slice(&fs::read(&index_path).unwrap()).unwrap();
+    index.remove(&first_id.to_hex());
+    fs::write(&index_path, serde_json::to_vec_pretty(&index).unwrap()).unwrap();
+
+    let repo = git2::Repository::open(root.join(".kat/physical/git")).unwrap();
+    let ref_name = format!("refs/kat/lineage/{}/{}", first_id.to_hex(), first_commit);
+    repo.find_reference(&ref_name).unwrap().delete().unwrap();
+    repo.reference(
+        &ref_name,
+        second_commit,
+        false,
+        "inject conflicting protection ref",
+    )
+    .unwrap();
+
+    assert!(
+        GitWorkspaceBackend::record_snapshot_representation(&root, &first_id, first_commit)
+            .is_err()
+    );
+    assert!(
+        GitWorkspaceBackend::get_snapshot_representations(&root, &first_id)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        GitWorkspaceBackend::get_snapshot_representations(&root, &second_id).unwrap()[0].commit,
+        second_commit
+    );
+    assert_eq!(
+        repo.find_reference(&ref_name).unwrap().target(),
+        Some(second_commit)
+    );
+
+    repo.find_reference(&ref_name).unwrap().delete().unwrap();
+    GitWorkspaceBackend::record_snapshot_representation(&root, &first_id, first_commit).unwrap();
+    assert_eq!(
+        GitWorkspaceBackend::get_snapshot_representations(&root, &first_id).unwrap()[0].commit,
+        first_commit
+    );
+}
+
+#[test]
+fn snapshot_lookup_rejects_missing_protection_ref_and_recovers() {
+    let (_dir, root) = setup_temp_project("snapshot_lookup_missing_ref");
+    let backend = GitWorkspaceBackend::init(&root).unwrap();
+    fs::write(root.join("file.txt"), "content").unwrap();
+    let snapshot = backend
+        .create_snapshot(&[PathBuf::from("file.txt")])
+        .unwrap();
+    let commit =
+        GitWorkspaceBackend::get_snapshot_representations(&root, &snapshot).unwrap()[0].commit;
+
+    let repo = git2::Repository::open(root.join(".kat/physical/git")).unwrap();
+    let ref_name = format!("refs/kat/lineage/{}/{}", snapshot.to_hex(), commit);
+    repo.find_reference(&ref_name).unwrap().delete().unwrap();
+
+    assert!(matches!(
+        GitWorkspaceBackend::get_snapshot_representations(&root, &snapshot),
+        Err(kat::domain::workspace::WorkspaceBackendError::SnapshotIntegrity(_))
+    ));
+    assert!(matches!(
+        backend.verify_snapshot_integrity(&snapshot),
+        Err(kat::domain::workspace::WorkspaceBackendError::SnapshotIntegrity(_))
+    ));
+
+    GitWorkspaceBackend::record_snapshot_representation(&root, &snapshot, commit).unwrap();
+    assert_eq!(
+        GitWorkspaceBackend::get_snapshot_representations(&root, &snapshot).unwrap()[0].commit,
+        commit
+    );
+    assert!(backend.verify_snapshot_integrity(&snapshot).unwrap());
 }
 
 #[test]
@@ -230,6 +337,13 @@ fn git_22_gitlink_rejection() {
         .iter()
         .map(|b| format!("{:02x}", b))
         .collect::<String>();
+    repo.reference(
+        &format!("refs/kat/lineage/{snap_id_hex}/{commit_id}"),
+        commit_id,
+        false,
+        "fixture snapshot protection",
+    )
+    .unwrap();
     map.insert(snap_id_hex, vec![commit_id.to_string()]);
 
     let index_file = root.join(".kat/physical/snapshots.json");

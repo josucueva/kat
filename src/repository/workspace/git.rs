@@ -1,12 +1,16 @@
 use git2::Repository;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::domain::identity::{MaterializationId, PhysicalCandidateId, WorkspaceSnapshotId};
 use crate::domain::workspace::{
     BackendConsistency, MaterializationResolution, PhysicalChanges, WorkingState, WorkspaceBackend,
     WorkspaceBackendError,
 };
+
+static NEXT_SNAPSHOT_INDEX_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 /// A specific Git commit and ancestry context representing a snapshot.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -197,19 +201,21 @@ impl GitWorkspaceBackend {
         })
     }
 
-    /// Saves a representation mapping: WorkspaceSnapshotId -> GitCommitOid[]
+    /// Persists a representation only after verifying its local GC protection ref.
     pub fn record_snapshot_representation(
         project_root: &Path,
         snapshot_id: &WorkspaceSnapshotId,
         commit: git2::Oid,
     ) -> Result<(), WorkspaceBackendError> {
         let index_path = project_root.join(".kat/physical/snapshots.json");
-        let mut index: std::collections::HashMap<String, Vec<String>> = if index_path.exists() {
-            let content = std::fs::read_to_string(&index_path).unwrap_or_default();
-            serde_json::from_str(&content).unwrap_or_default()
-        } else {
-            std::collections::HashMap::new()
-        };
+        let repo = Repository::open(project_root.join(".kat/physical/git")).map_err(|error| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to open KAT physical Git repository: {error}"
+            )))
+        })?;
+        let mut index = Self::read_snapshot_representation_index(&index_path)?;
+
+        Self::create_snapshot_protection_ref(&repo, snapshot_id, commit)?;
 
         let id_str = snapshot_id.to_hex();
         let commit_str = commit.to_string();
@@ -221,45 +227,118 @@ impl GitWorkspaceBackend {
         if let Some(parent) = index_path.parent() {
             std::fs::create_dir_all(parent).map_err(WorkspaceBackendError::Io)?;
         }
-        let content = serde_json::to_string_pretty(&index).unwrap();
-        std::fs::write(index_path, content).map_err(WorkspaceBackendError::Io)?;
-
-        // Also create a ref to protect from GC
-        if let Ok(repo) = git2::Repository::open(project_root.join(".kat/physical/git")) {
-            let ref_name = format!("refs/kat/lineage/{}/{}", snapshot_id.to_hex(), commit);
-            let _ = repo.reference(&ref_name, commit, true, "KAT physical lineage protection");
+        let content = serde_json::to_vec_pretty(&index)
+            .map_err(|error| WorkspaceBackendError::Io(std::io::Error::other(error)))?;
+        let temp_path = index_path.with_file_name(format!(
+            "snapshots.json.tmp-{}-{}",
+            std::process::id(),
+            NEXT_SNAPSHOT_INDEX_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let write_result = (|| -> std::io::Result<()> {
+            let mut file = File::create(&temp_path)?;
+            file.write_all(&content)?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&temp_path, &index_path)
+        })();
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&temp_path);
+            return Err(WorkspaceBackendError::Io(error));
         }
 
+        Self::verify_snapshot_protection_ref(&repo, snapshot_id, commit)?;
         Ok(())
     }
 
-    /// Loads the representation mapping for a given WorkspaceSnapshotId
+    fn read_snapshot_representation_index(
+        index_path: &Path,
+    ) -> Result<std::collections::HashMap<String, Vec<String>>, WorkspaceBackendError> {
+        match fs::read_to_string(index_path) {
+            Ok(content) => serde_json::from_str(&content)
+                .map_err(|error| WorkspaceBackendError::Io(std::io::Error::other(error))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+            Err(error) => Err(WorkspaceBackendError::Io(error)),
+        }
+    }
+
+    fn create_snapshot_protection_ref(
+        repo: &Repository,
+        snapshot_id: &WorkspaceSnapshotId,
+        commit: git2::Oid,
+    ) -> Result<(), WorkspaceBackendError> {
+        let ref_name = format!("refs/kat/lineage/{}/{}", snapshot_id.to_hex(), commit);
+        repo.find_commit(commit).map_err(|error| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Snapshot representation commit {commit} is unavailable: {error}"
+            )))
+        })?;
+
+        if let Err(create_error) =
+            repo.reference(&ref_name, commit, false, "KAT physical lineage protection")
+            && let Err(verify_error) =
+                Self::verify_snapshot_protection_ref(repo, snapshot_id, commit)
+        {
+            return Err(WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to create snapshot protection ref {ref_name}: {create_error}; verification failed: {verify_error}"
+            ))));
+        }
+
+        Self::verify_snapshot_protection_ref(repo, snapshot_id, commit)
+    }
+
+    fn verify_snapshot_protection_ref(
+        repo: &Repository,
+        snapshot_id: &WorkspaceSnapshotId,
+        commit: git2::Oid,
+    ) -> Result<(), WorkspaceBackendError> {
+        let ref_name = format!("refs/kat/lineage/{}/{}", snapshot_id.to_hex(), commit);
+        let reference = repo.find_reference(&ref_name).map_err(|error| {
+            if error.code() == git2::ErrorCode::NotFound {
+                WorkspaceBackendError::SnapshotIntegrity(snapshot_id.clone())
+            } else {
+                WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Failed to read snapshot protection ref {ref_name}: {error}"
+                )))
+            }
+        })?;
+        if reference.kind() != Some(git2::ReferenceType::Direct)
+            || reference.target() != Some(commit)
+        {
+            return Err(WorkspaceBackendError::SnapshotIntegrity(
+                snapshot_id.clone(),
+            ));
+        }
+        repo.find_commit(commit)
+            .map_err(|_| WorkspaceBackendError::SnapshotIntegrity(snapshot_id.clone()))?;
+        Ok(())
+    }
+
+    /// Loads only representations whose direct KAT protection refs are present.
     pub fn get_snapshot_representations(
         project_root: &Path,
         id: &WorkspaceSnapshotId,
-    ) -> Vec<BackendSnapshotRepresentation> {
+    ) -> Result<Vec<BackendSnapshotRepresentation>, WorkspaceBackendError> {
         let index_path = project_root.join(".kat/physical/snapshots.json");
-        let content = match fs::read_to_string(&index_path) {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
-
-        let index: std::collections::HashMap<String, Vec<String>> =
-            match serde_json::from_str(&content) {
-                Ok(idx) => idx,
-                Err(_) => return Vec::new(),
-            };
+        let index = Self::read_snapshot_representation_index(&index_path)?;
 
         let id_hex = id.to_hex();
-        if let Some(oids_hex) = index.get(&id_hex) {
-            oids_hex
-                .iter()
-                .filter_map(|h| git2::Oid::from_str(h).ok())
-                .map(|commit| BackendSnapshotRepresentation { commit })
-                .collect()
-        } else {
-            Vec::new()
-        }
+        let Some(oids_hex) = index.get(&id_hex) else {
+            return Ok(Vec::new());
+        };
+        let repo = Repository::open(project_root.join(".kat/physical/git")).map_err(|error| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to open KAT physical Git repository: {error}"
+            )))
+        })?;
+        oids_hex
+            .iter()
+            .map(|value| {
+                let commit = git2::Oid::from_str(value)
+                    .map_err(|_| WorkspaceBackendError::SnapshotIntegrity(id.clone()))?;
+                Self::verify_snapshot_protection_ref(&repo, id, commit)?;
+                Ok(BackendSnapshotRepresentation { commit })
+            })
+            .collect()
     }
 
     fn active_lineage_path(project_root: &Path) -> PathBuf {
@@ -351,7 +430,7 @@ impl WorkspaceBackend for GitWorkspaceBackend {
         &self,
         base: &WorkspaceSnapshotId,
     ) -> Result<WorkingState, WorkspaceBackendError> {
-        let representations = Self::get_snapshot_representations(&self._project_root, base);
+        let representations = Self::get_snapshot_representations(&self._project_root, base)?;
         if representations.is_empty() {
             return Err(WorkspaceBackendError::SnapshotNotFound(base.clone()));
         }
@@ -562,6 +641,11 @@ impl WorkspaceBackend for GitWorkspaceBackend {
         {
             // The physical state is unchanged according to KAT identity
             // Reuse the active lineage representation exactly
+            Self::record_snapshot_representation(
+                &self._project_root,
+                &computed_id,
+                parents[0].id(),
+            )?;
             let _ = self._repo.set_head_detached(parents[0].id());
             return Ok(computed_id);
         }
@@ -634,7 +718,7 @@ impl WorkspaceBackend for GitWorkspaceBackend {
 
     fn materialize_snapshot(&self, id: &WorkspaceSnapshotId) -> Result<(), WorkspaceBackendError> {
         // 1. Get target representation
-        let reps = Self::get_snapshot_representations(&self._project_root, id);
+        let reps = Self::get_snapshot_representations(&self._project_root, id)?;
         if reps.is_empty() {
             return Err(WorkspaceBackendError::SnapshotNotFound(id.clone()));
         }
@@ -738,7 +822,7 @@ impl WorkspaceBackend for GitWorkspaceBackend {
     }
 
     fn restore_snapshot(&self, id: &WorkspaceSnapshotId) -> Result<(), WorkspaceBackendError> {
-        let reps = Self::get_snapshot_representations(&self._project_root, id);
+        let reps = Self::get_snapshot_representations(&self._project_root, id)?;
         let commit = reps
             .first()
             .ok_or_else(|| WorkspaceBackendError::SnapshotNotFound(id.clone()))?;
@@ -772,8 +856,8 @@ impl WorkspaceBackend for GitWorkspaceBackend {
             return Ok(changes);
         }
 
-        let left_reps = Self::get_snapshot_representations(&self._project_root, left);
-        let right_reps = Self::get_snapshot_representations(&self._project_root, right);
+        let left_reps = Self::get_snapshot_representations(&self._project_root, left)?;
+        let right_reps = Self::get_snapshot_representations(&self._project_root, right)?;
 
         if left_reps.is_empty() {
             return Err(WorkspaceBackendError::SnapshotNotFound(left.clone()));
@@ -856,7 +940,7 @@ impl WorkspaceBackend for GitWorkspaceBackend {
             return Ok(MaterializationResolution::NotFound);
         }
 
-        let reps = Self::get_snapshot_representations(&self._project_root, snapshot);
+        let reps = Self::get_snapshot_representations(&self._project_root, snapshot)?;
         if reps.is_empty() {
             return Err(WorkspaceBackendError::SnapshotNotFound(snapshot.clone()));
         }
@@ -921,7 +1005,7 @@ impl WorkspaceBackend for GitWorkspaceBackend {
         &self,
         id: &WorkspaceSnapshotId,
     ) -> Result<bool, WorkspaceBackendError> {
-        let representations = Self::get_snapshot_representations(&self._project_root, id);
+        let representations = Self::get_snapshot_representations(&self._project_root, id)?;
         if representations.is_empty() {
             return Err(WorkspaceBackendError::SnapshotNotFound(id.clone()));
         }
@@ -966,9 +1050,9 @@ impl WorkspaceBackend for GitWorkspaceBackend {
         use std::collections::{BTreeMap, BTreeSet};
         use std::path::PathBuf;
 
-        let b_reps = Self::get_snapshot_representations(&self._project_root, base);
-        let l_reps = Self::get_snapshot_representations(&self._project_root, local);
-        let o_reps = Self::get_snapshot_representations(&self._project_root, other);
+        let b_reps = Self::get_snapshot_representations(&self._project_root, base)?;
+        let l_reps = Self::get_snapshot_representations(&self._project_root, local)?;
+        let o_reps = Self::get_snapshot_representations(&self._project_root, other)?;
 
         let b_commit = self
             ._repo
@@ -1236,7 +1320,7 @@ impl WorkspaceBackend for GitWorkspaceBackend {
                     &[&l_commit, &o_commit],
                 )
                 .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
-            if Self::get_snapshot_representations(&self._project_root, &new_snapshot_id).is_empty()
+            if Self::get_snapshot_representations(&self._project_root, &new_snapshot_id)?.is_empty()
             {
                 Self::record_snapshot_representation(
                     &self._project_root,
@@ -1347,9 +1431,9 @@ impl WorkspaceBackend for GitWorkspaceBackend {
         _workspace_id: &crate::domain::workspace::WorkspaceId,
         candidate: &crate::domain::workspace::PhysicalReconciliationCandidate,
     ) -> Result<(), WorkspaceBackendError> {
-        let b_reps = Self::get_snapshot_representations(&self._project_root, &candidate.base);
-        let l_reps = Self::get_snapshot_representations(&self._project_root, &candidate.local);
-        let o_reps = Self::get_snapshot_representations(&self._project_root, &candidate.other);
+        let b_reps = Self::get_snapshot_representations(&self._project_root, &candidate.base)?;
+        let l_reps = Self::get_snapshot_representations(&self._project_root, &candidate.local)?;
+        let o_reps = Self::get_snapshot_representations(&self._project_root, &candidate.other)?;
 
         let b_commit = self
             ._repo
@@ -1479,7 +1563,7 @@ impl WorkspaceBackend for GitWorkspaceBackend {
             ._repo
             .commit(None, &sig, &sig, "KAT resolved reconciliation", &tree, &[])
             .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e)))?;
-        if Self::get_snapshot_representations(&self._project_root, &snapshot).is_empty() {
+        if Self::get_snapshot_representations(&self._project_root, &snapshot)?.is_empty() {
             Self::record_snapshot_representation(&self._project_root, &snapshot, commit)?;
         }
         Ok(snapshot)
