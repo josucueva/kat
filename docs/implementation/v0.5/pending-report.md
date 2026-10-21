@@ -1,6 +1,6 @@
 # v0.5 Implementation Pending Report
 
-This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phases 10 and 11 are frozen. Phase 12.0 is committed and under architectural review; Phase 12 remains unfrozen.**
+This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phases 10 and 11 are frozen. The Phase 12.0 transport contract is frozen; Phase 12 implementation and deployment acceptance remain pending.**
 
 ## What Has Been Completed
 
@@ -29,9 +29,10 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 
 ### Phase 12: KAT Hub and Git remote integration
 **Goal:** Implement the actual remote sync via KAT Hub/Git.
-- Design: [`phase12-transport-design.md`](phase12-transport-design.md), drafted in `6f03dd3` and reviewed/amended in `0ee8b36`, defines canonical-byte transfer, Git lineage refs, publication ordering, repository binding, and recovery. The retention guarantee now requires a KAT-controlled Git backend with server-enforced create-only lineage refs, remote read-back/tree verification, and Hub-side verification of the bound backend before CAS. Phase 12.0 is still unfrozen: no KAT Hub or physical workspace remote is configured, and the current `GitWorkspaceBackend` ignores local lineage-ref creation failures.
+- Design: [`phase12-transport-design.md`](phase12-transport-design.md), drafted in `6f03dd3` and reviewed/amended in `0ee8b36`, defines canonical-byte transfer, Git lineage refs, publication ordering, repository binding, and recovery. The transport contract is frozen independently of deployment proof. The retention guarantee requires a KAT-controlled Git backend with server-enforced create-only lineage refs, remote read-back/tree verification, and Hub-side verification of the bound backend before CAS.
+- Phase 12.1 is complete in `2989582`: local snapshot recording requires the embedded Git repo and a verified direct protection ref, mapping updates are atomic, and lookups reject missing or mismatched protection refs. Missing-repository, conflicting/missing-ref, and recovery cases pass; the full build, test, formatting, and Clippy gate passed.
 - GitHub's fully qualified ref API and documented branch/tag rulesets do not prove retention for `refs/kat/*`. This repository's `origin` is only its project-source remote, not evidence of a configured KAT workspace host.
-- Before network code: harden local lineage-ref recording and test failure; provision a KAT-controlled workspace backend; verify its binding, immutable-ref policy, read-back tree identity, and survival through Git GC. No endpoint schema, CLI wiring, or production network code has been added.
+- Before transport implementation: provision a KAT-controlled workspace backend and verify its binding, immutable-ref policy, read-back tree identity, and survival through Git GC. No endpoint schema, CLI wiring, or production network code has been added.
 - Implement the actual Publish protocol:
   1. Ensure physical snapshot available remotely.
   2. Upload required semantic immutable objects.

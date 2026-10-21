@@ -2,10 +2,13 @@
 
 ## Status and scope
 
-Status: Draft after focused architectural review; no concrete transport code
-has been started. The retention contract and repository binding are specified
-below, but Phase 12.0 is not frozen until the deployment backend passes the
-operational acceptance gates.
+Status: Phase 12.0 transport contract frozen; deployment acceptance pending.
+No concrete remote transport has been implemented. The deployment backend
+must still pass the operational retention and repository-binding checks below.
+
+The design freeze establishes internally consistent, testable transport
+contracts. It does not claim that a deployed server has enforced or passed
+those contracts.
 
 This design defines the first concrete implementation of the frozen Phase 11
 `SemanticTransport`, `WorkspaceTransport`, and `RemoteCoordinator` contracts.

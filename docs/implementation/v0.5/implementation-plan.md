@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10 frozen. Phase 11 complete and frozen. Phase 12.0 design is committed and under focused architectural review; Phase 12 is not frozen. The reviewed draft requires append-only Hub objects and a KAT-controlled Git backend with enforced lineage-ref retention. No deployment backend has been configured or verified.
+Phase 10 frozen. Phase 11 complete and frozen. The Phase 12.0 transport contract is frozen; Phase 12 implementation and deployment acceptance remain pending. Step 12.1 hardens local snapshot retention. No controlled deployment backend has been configured or verified.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -16,7 +16,8 @@ Phase 10 frozen. Phase 11 complete and frozen. Phase 12.0 design is committed an
 | Phase 10.10 | `7676223` | Complete. Versioned JSON collaboration interface; MI-COL checks pass in `tests/collaboration_json.rs`. |
 | Phase 10.11 | `7676223` | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
 | Phase 11 | `c5d8029`, `9c9d01c`, `a065de8` | Complete. Step 11.1 satisfies the planned transport abstraction criteria; parent-first uploads, complete unnamed-tip discovery, structured fetch partial outcomes, and retention contract are covered. Source review found no distinct 11.2 workflow in the plan. Remote-backed workflows and live retention enforcement are Phase 12 work. Verification reported: 631 workspace tests and 16 remote tests pass. |
-| Phase 12.0 | `6f03dd3`, `0ee8b36` | Design drafted, then reviewed and amended in [phase12-transport-design.md](phase12-transport-design.md). KAT-controlled retention and repository binding are specified; operational backend verification and local Git protection-ref hardening remain before freeze. |
+| Phase 12.0 | `6f03dd3`, `0ee8b36` | Transport contract frozen in [phase12-transport-design.md](phase12-transport-design.md). KAT-controlled retention and repository binding are specified; deployment-level backend verification remains pending. |
+| Phase 12.1 | `2989582` | Complete. Local snapshot representation recording fails closed unless the embedded Git repository and direct protection ref verify; mapping writes are atomic and reads validate protection refs. Workspace Git tests and the full verification gate pass. |
 
 ## 1. Objective
 
@@ -607,12 +608,19 @@ Implement abstractions for remote syncing.
 
 ## Phase 12: KAT Hub and Git remote integration
 ### Step 12.0: Concrete transport and publication design
-- Status: Draft committed and reviewed; **unfrozen**.
+- Status: Transport contract frozen; deployment acceptance pending.
 - [x] Define semantic and Git-backed workspace transfer, reference visibility, retention, GC, repository binding, and failure/recovery behavior without changing Phase 11 interfaces.
 - [ ] Select and configure a KAT-controlled workspace backend; verify remote ref read-back and recompute the tree-derived `WorkspaceSnapshotId` before CAS.
 - [ ] Verify that the backend rejects lineage-ref update/deletion and preserves refs through Git GC; bind its fixed `WorkspaceBackendId` in the Hub repository record.
-- [ ] Harden `GitWorkspaceBackend::record_snapshot_representation` so local ref creation failures fail closed; add a regression test and verify local protection refs before export.
-- Notes: No KAT Hub or workspace remote is configured in this repository. Its `origin` points to GitHub for the project source, not a KAT physical workspace remote. GitHub documents fully qualified ref creation and branch/tag rulesets, but that evidence does not establish retention of `refs/kat/*`. Phase 12 v1 therefore targets a KAT-controlled Git backend; third-party hosts need provider-specific proof before support.
+- Notes: The design contract is frozen independently of deployment proof. No KAT Hub or workspace remote is configured in this repository. Its `origin` points to GitHub for the project source, not a KAT physical workspace remote. GitHub documentation does not establish retention of `refs/kat/*`; Phase 12 v1 therefore targets a KAT-controlled Git backend.
+### Step 12.1: Local Git snapshot retention hardening
+- Status: Complete (`2989582`).
+- [x] Require the embedded repository and target commit to open before recording a representation.
+- [x] Create protection refs without force and verify that each is a direct ref to the expected commit.
+- [x] Persist mappings with atomic replacement and fail closed on mapping read/write errors.
+- [x] Validate protection refs whenever representations are loaded; propagate integrity errors through workspace operations.
+- [x] Cover missing repository, conflicting/missing protection refs, failed recording without representation exposure, and recovery after repair.
+- Notes: An interrupted mapping write may leave an orphan protection ref, which is safe and retryable. If post-write ref verification fails, lookups reject the mapping until the ref is repaired. This step does not establish server-side ref immutability or GC retention.
 ### Goal
 Implement the actual remote sync via KAT Hub/Git.
 ### Design inputs
