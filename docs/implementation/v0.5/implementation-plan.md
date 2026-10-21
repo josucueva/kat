@@ -16,7 +16,7 @@ Phase 10 frozen. Phase 11 complete and frozen. Phase 12.0 design is committed an
 | Phase 10.10 | `7676223` | Complete. Versioned JSON collaboration interface; MI-COL checks pass in `tests/collaboration_json.rs`. |
 | Phase 10.11 | `7676223` | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
 | Phase 11 | `c5d8029`, `9c9d01c`, `a065de8` | Complete. Step 11.1 satisfies the planned transport abstraction criteria; parent-first uploads, complete unnamed-tip discovery, structured fetch partial outcomes, and retention contract are covered. Source review found no distinct 11.2 workflow in the plan. Remote-backed workflows and live retention enforcement are Phase 12 work. Verification reported: 631 workspace tests and 16 remote tests pass. |
-| Phase 12.0 | `6f03dd3` | Design drafted and committed in [phase12-transport-design.md](phase12-transport-design.md). Focused review found the retention and repository-binding requirements; operational backend verification and local Git protection-ref hardening remain before freeze. |
+| Phase 12.0 | `6f03dd3`, `0ee8b36` | Design drafted, then reviewed and amended in [phase12-transport-design.md](phase12-transport-design.md). KAT-controlled retention and repository binding are specified; operational backend verification and local Git protection-ref hardening remain before freeze. |
 
 ## 1. Objective
 
