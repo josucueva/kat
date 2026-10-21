@@ -5,11 +5,16 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
+use std::{fs, path::PathBuf};
 
 use git2::{Repository, Signature};
-use kat::domain::identity::RepositoryId;
+use kat::domain::identity::{RepositoryId, WorkspaceSnapshotId};
+use kat::domain::workspace::WorkspaceBackend;
+use kat::repository::init::init_repository;
+use kat::repository::remote::{RemoteTransportError, WorkspaceTransport};
+use kat::repository::workspace::git::GitWorkspaceBackend;
 use kat::repository::workspace::git_transport::{
-    ControlledGitBackend, GitWorkspaceBinding, WorkspaceBackendId,
+    ControlledGitBackend, GitWorkspaceBinding, GitWorkspaceTransport, WorkspaceBackendId,
 };
 use tempfile::TempDir;
 
@@ -216,4 +221,190 @@ fn controlled_git_server_accepts_lineage_creation_but_denies_update_and_delete()
         remote.find_reference(&protected_ref).unwrap().target(),
         Some(first)
     );
+}
+
+#[test]
+fn git_workspace_transport_publishes_verifies_and_fetches_without_materializing() {
+    let server_root = tempfile::tempdir().unwrap();
+    let server_path = server_root.path().join("workspace.git");
+
+    let source_dir = tempfile::tempdir().unwrap();
+    let initialized = init_repository(source_dir.path()).unwrap();
+    let source_backend = GitWorkspaceBackend::init(source_dir.path()).unwrap();
+    fs::write(source_dir.path().join("snapshot.txt"), "remote snapshot\n").unwrap();
+    let snapshot = source_backend
+        .create_snapshot(&[PathBuf::from("snapshot.txt")])
+        .unwrap();
+    let binding = GitWorkspaceBinding {
+        repository_id: initialized.repository_id,
+        workspace_backend_id: WorkspaceBackendId::new(),
+    };
+
+    ControlledGitBackend::provision(&server_path, binding).unwrap();
+    let server = start_git_daemon(server_root);
+    let source_transport =
+        GitWorkspaceTransport::configure(source_dir.path(), &server.url, binding).unwrap();
+    assert!(
+        source_transport
+            .local_snapshot_available(&snapshot)
+            .unwrap()
+    );
+    assert!(
+        !source_transport
+            .remote_snapshot_available(&snapshot)
+            .unwrap()
+    );
+    source_transport.publish_snapshot(&snapshot).unwrap();
+    assert!(
+        source_transport
+            .remote_snapshot_available(&snapshot)
+            .unwrap()
+    );
+
+    let target_dir = tempfile::tempdir().unwrap();
+    init_repository(target_dir.path()).unwrap();
+    fs::copy(
+        source_dir.path().join(".kat/repository.toml"),
+        target_dir.path().join(".kat/repository.toml"),
+    )
+    .unwrap();
+    let target_backend = GitWorkspaceBackend::init(target_dir.path()).unwrap();
+    fs::write(
+        target_dir.path().join("local.txt"),
+        "keep this working tree\n",
+    )
+    .unwrap();
+    let before = fs::read(target_dir.path().join("local.txt")).unwrap();
+    let target_transport =
+        GitWorkspaceTransport::configure(target_dir.path(), &server.url, binding).unwrap();
+
+    assert!(
+        !target_transport
+            .local_snapshot_available(&snapshot)
+            .unwrap()
+    );
+    target_transport.fetch_snapshot(&snapshot).unwrap();
+
+    assert!(
+        target_transport
+            .local_snapshot_available(&snapshot)
+            .unwrap()
+    );
+    assert!(target_backend.verify_snapshot_integrity(&snapshot).unwrap());
+    assert_eq!(
+        fs::read(target_dir.path().join("local.txt")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn git_workspace_transport_rejects_a_remote_tree_with_the_wrong_snapshot_id() {
+    let root = tempfile::tempdir().unwrap();
+    let server_path = root.path().join("workspace.git");
+    let local = tempfile::tempdir().unwrap();
+    let initialized = init_repository(local.path()).unwrap();
+    let binding = GitWorkspaceBinding {
+        repository_id: initialized.repository_id,
+        workspace_backend_id: WorkspaceBackendId::new(),
+    };
+    ControlledGitBackend::provision(&server_path, binding).unwrap();
+    let server = start_git_daemon(root);
+
+    GitWorkspaceBackend::init(local.path()).unwrap();
+    let transport = GitWorkspaceTransport::configure(local.path(), &server.url, binding).unwrap();
+
+    let client_dir = tempfile::tempdir().unwrap();
+    let client_path = client_dir.path().join("client.git");
+    let (_client, commit, _) = commit_pair(&client_path);
+    let claimed_snapshot = WorkspaceSnapshotId::new(vec![42; 32]);
+    let ref_name = format!("refs/kat/lineage/{}/{commit}", claimed_snapshot.to_hex());
+    let refspec = format!("refs/heads/main:{ref_name}");
+    let pushed = push(&client_path, &server.url, &refspec);
+    assert!(pushed.status.success());
+
+    assert!(matches!(
+        transport.remote_snapshot_available(&claimed_snapshot),
+        Err(RemoteTransportError::SnapshotIntegrity(id)) if id == claimed_snapshot
+    ));
+}
+
+#[test]
+fn git_workspace_remote_binding_is_create_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let initialized = init_repository(dir.path()).unwrap();
+    GitWorkspaceBackend::init(dir.path()).unwrap();
+    let binding = GitWorkspaceBinding {
+        repository_id: initialized.repository_id,
+        workspace_backend_id: WorkspaceBackendId::new(),
+    };
+    GitWorkspaceTransport::configure(dir.path(), "git://localhost/workspace.git", binding).unwrap();
+
+    assert!(
+        GitWorkspaceTransport::configure(dir.path(), "git://localhost/another.git", binding)
+            .is_err()
+    );
+    assert!(
+        GitWorkspaceTransport::configure(
+            dir.path(),
+            "git://localhost/workspace.git",
+            GitWorkspaceBinding {
+                workspace_backend_id: WorkspaceBackendId::new(),
+                ..binding
+            }
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn git_workspace_transport_rejects_a_remote_with_a_different_repository_binding() {
+    let root = tempfile::tempdir().unwrap();
+    let server_path = root.path().join("workspace.git");
+
+    let local = tempfile::tempdir().unwrap();
+    let initialized = init_repository(local.path()).unwrap();
+    let binding = GitWorkspaceBinding {
+        repository_id: initialized.repository_id,
+        workspace_backend_id: WorkspaceBackendId::new(),
+    };
+    GitWorkspaceBackend::init(local.path()).unwrap();
+
+    let remote_binding = GitWorkspaceBinding {
+        repository_id: RepositoryId::new(),
+        ..binding
+    };
+    ControlledGitBackend::provision(&server_path, remote_binding).unwrap();
+    let server = start_git_daemon(root);
+    let transport = GitWorkspaceTransport::configure(local.path(), &server.url, binding).unwrap();
+
+    assert!(matches!(
+        transport.remote_snapshot_available(&WorkspaceSnapshotId::new(vec![42; 32])),
+        Err(RemoteTransportError::RepositoryMismatch { expected, actual })
+            if expected == binding.repository_id && actual == remote_binding.repository_id
+    ));
+
+    let backend_root = tempfile::tempdir().unwrap();
+    let backend_path = backend_root.path().join("workspace.git");
+    let wrong_backend = GitWorkspaceBinding {
+        workspace_backend_id: WorkspaceBackendId::new(),
+        ..binding
+    };
+    ControlledGitBackend::provision(&backend_path, wrong_backend).unwrap();
+    let backend_server = start_git_daemon(backend_root);
+    let backend_local = tempfile::tempdir().unwrap();
+    init_repository(backend_local.path()).unwrap();
+    fs::copy(
+        local.path().join(".kat/repository.toml"),
+        backend_local.path().join(".kat/repository.toml"),
+    )
+    .unwrap();
+    GitWorkspaceBackend::init(backend_local.path()).unwrap();
+    let backend_transport =
+        GitWorkspaceTransport::configure(backend_local.path(), &backend_server.url, binding)
+            .unwrap();
+    assert!(matches!(
+        backend_transport.remote_snapshot_available(&WorkspaceSnapshotId::new(vec![42; 32])),
+        Err(RemoteTransportError::Other(message))
+            if message == "workspace Git backend binding mismatch"
+    ));
 }
