@@ -1131,7 +1131,7 @@ The parent histories continue to preserve `BA` and `BB`.
 The Git backend may use standard Git-compatible remotes to transfer physical
 objects.
 
-Possible hosts include:
+Candidate hosts include:
 
 ```text
 GitHub
@@ -1139,6 +1139,13 @@ GitLab
 self-hosted Git
 future KAT Hub Git service
 ```
+
+These are candidates, not interchangeable supported backends. Phase 12 v1
+requires a KAT-controlled Git server that enforces create-only retention for
+`refs/kat/lineage/**` and lets the Hub verify that policy. A host is supported
+only after its custom-ref advertisement, read-back, mutation controls, and GC
+behavior pass the Phase 12 acceptance gates. The current repository's GitHub
+`origin` is its source-code remote, not a configured KAT workspace backend.
 
 KAT's remote model determines which physical snapshots must be available.
 
@@ -1187,8 +1194,11 @@ RepositoryRevision R43
 GitWorkspaceBackend.publish(W43)
 ```
 
-Only after remote physical availability is established may higher KAT layers
-publish the complete repository revision.
+The Hub must read the bound remote ref back and recompute the
+`WorkspaceSnapshotId` from its target tree before CAS. This proves current
+content availability. The server-enforced retention policy, not read-back,
+keeps that content available after publication. Only after both checks pass may
+higher KAT layers publish the complete repository revision.
 
 ---
 
@@ -1221,11 +1231,14 @@ remain retrievable.
 KAT must prevent backend garbage collection from deleting physical snapshots
 still referenced by live KAT repository history.
 
-Each lineage ref is a normal Git reachability root. Git garbage collection may
-run concurrently and must preserve the referenced commit and its complete
-object ancestry. Phase 12 does not delete KAT lineage refs; any later KAT-aware
-pruning must coordinate with semantic reference updates and in-flight
-publication.
+Each lineage ref is a normal Git reachability root. The Git `gc` implementation
+preserves objects reachable from refs in `refs/*`, but this does not prevent a
+host or administrator from deleting a ref. Therefore, the Phase 12 server must
+reject lineage-ref updates and deletions, and the Hub must verify the bound
+server's active policy before CAS. Phase 12 does not delete KAT lineage refs;
+any later KAT-aware pruning must coordinate with semantic reference updates
+and in-flight publication. See [the Phase 12 transport design](phase12-transport-design.md)
+for the deployment contract.
 
 The requirement is:
 

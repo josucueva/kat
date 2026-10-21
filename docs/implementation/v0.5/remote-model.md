@@ -641,9 +641,13 @@ reachable, its complete semantic and physical dependency closure must remain
 retrievable. This includes every recursively referenced `RepositoryRevision`,
 semantic dependency, and `WorkspaceSnapshot`. Destination verification before
 CAS alone is insufficient if concurrent collection can remove verified
-content. Phase 11 tests this contract with fake transports. The Phase 12 design
-enforces it with append-only semantic storage and protected Git refs; KAT-aware
-reclamation and its synchronization with publication remain deferred.
+content. Phase 11 tests this contract with fake transports. Phase 12 v1 enforces
+it with append-only semantic storage and a KAT-controlled Git backend whose
+lineage refs cannot be updated or deleted by ordinary service identities. The
+Hub verifies the repository-to-backend binding, current ref target, and
+tree-derived snapshot identity before CAS. A successful push or read-back alone
+does not establish retention. KAT-aware reclamation and its synchronization
+with publication remain deferred.
 
 The Phase 12 concrete transfer, reference, retention, and recovery decisions
 are recorded in [phase12-transport-design.md](phase12-transport-design.md).
@@ -1234,7 +1238,10 @@ Those may be added later without changing the remote model.
 
 ## 42. External Git hosting
 
-A KAT Hub may delegate physical workspace storage to an external Git host.
+A KAT Hub may delegate physical workspace storage to an external Git host only
+when that host provides an enforceable and verifiable retention policy for
+KAT's custom lineage refs. A provider's support for creating refs and reading
+them back is insufficient by itself.
 
 For example:
 
@@ -1262,6 +1269,11 @@ WorkspaceSnapshot W42
 ```
 
 It does not associate `S42` with a movable Git branch.
+
+Phase 12 v1 uses a KAT-controlled Git backend. External-host integrations are
+deferred until each provider demonstrates custom-ref advertisement, create-only
+policy enforcement, Hub-side target/tree verification, and retention through
+Git garbage collection.
 
 ---
 

@@ -2,8 +2,10 @@
 
 ## Status and scope
 
-Status: Draft for Phase 12 implementation review; no concrete transport code
-has been started.
+Status: Draft after focused architectural review; no concrete transport code
+has been started. The retention contract and repository binding are specified
+below, but Phase 12.0 is not frozen until the deployment backend passes the
+operational acceptance gates.
 
 This design defines the first concrete implementation of the frozen Phase 11
 `SemanticTransport`, `WorkspaceTransport`, and `RemoteCoordinator` contracts.
@@ -12,10 +14,12 @@ transports. It does not define Hub endpoint paths, a wire schema, credentials,
 or CLI syntax.
 
 Phase 12 uses a KAT Hub semantic service and a Git smart-protocol remote for
-physical workspace content. One logical remote binds those two locations.
-The current repository has the transport client interface but no KAT Hub
-service target; Phase 12 implementation must integrate an existing Hub service
-or add that service as a separately deployable component.
+physical workspace content. One repository-level binding pairs those two
+services. Phase 12 v1 supports only a KAT-controlled Git backend whose ref
+retention policy the Hub can enforce and verify. A generic Git URL or a
+successful push is not sufficient. The current repository has no KAT Hub or
+workspace remote configured, so this policy has not yet been exercised against
+a deployment.
 
 ## Design decisions
 
@@ -29,22 +33,108 @@ or add that service as a separately deployable component.
    and retain every verified local representation of a published snapshot.
 4. Reuse the existing KAT snapshot-protection ref shape:
    `refs/kat/lineage/<WorkspaceSnapshotId-hex>/<Git-commit-OID>`.
-   A ref is create-only and immutable. A conflicting target is an integrity
+   A ref is create-only and immutable. The configured Git server must enforce
+   rejection of updates and deletion; a conflicting target is an integrity
    error.
 5. Upload physical snapshot refs first, semantic dependencies second, and
    update one KAT named reference last with linearizable compare-and-swap.
-6. Phase 12 remote semantic storage is append-only. Git garbage collection may
-   run normally because KAT lineage refs are persistent roots. Phase 12 does
-   not delete KAT lineage refs or collect KAT semantic objects.
-7. The Hub's discovery and CAS implementation is bound to the associated
-   workspace remote so it can verify physical snapshot availability. The
-   client coordinator independently verifies the full closure before changing
-   local tracking refs or requesting publication.
+6. Phase 12 remote semantic storage is append-only. The configured Git server
+   retains lineage refs and runs Git garbage collection with those refs as
+   reachability roots. Phase 12 does not delete KAT lineage refs or collect KAT
+   semantic objects.
+7. Each Hub repository has a fixed workspace-backend binding. Hub discovery and
+   CAS inspect that bound backend; a publication request cannot select another
+   Git destination. The client coordinator independently verifies the full
+   closure before changing local tracking refs or requesting publication.
 
 These decisions fill in transport details left open by
 [`remote-model.md`](remote-model.md) and
 [`git-workspace-backend.md`](git-workspace-backend.md); they do not change the
 Phase 11 trait signatures or canonical formats.
+
+## Durable snapshot guarantee
+
+A successful push and remote ref read-back prove only that a ref currently
+points to a commit. They do not prove the ref cannot later be deleted, or that
+the Git host will retain its objects. Publication therefore requires all of
+the following at the bound workspace backend:
+
+1. The Hub provisions and controls the backend for Phase 12 v1. A stable
+   `WorkspaceBackendId` in the Hub's repository configuration identifies the
+   Git repository and the retention policy applied to it.
+2. The server accepts only create-if-absent writes to
+   `refs/kat/lineage/**`. Its server-side policy rejects updates and deletions
+   of those refs from both ordinary users and the transport identity. Ref
+   creation is acknowledged only after the commit, tree, and blob objects and
+   the ref update have been durably stored under the backend's stated storage
+   policy.
+3. Before CAS, the Hub reads the exact ref back from that configured backend,
+   fetches or otherwise inspects the target commit tree, and recomputes the
+   `WorkspaceSnapshotId` using KAT's identity rules. A ref-name match or
+   successful push alone is not verification.
+4. The Hub checks its repository configuration and the KAT backend's
+   enforcement status when it publishes the named reference. The Hub's
+   deployment control plane provisions the lineage-ref policy and reports its
+   active policy version to the publication service. If the Hub cannot inspect
+   the bound backend or cannot establish that the policy is enforced, it must
+   reject publication before CAS.
+5. While a KAT named reference can reach a snapshot, the backend does not remove
+   its lineage ref. Ordinary Git garbage collection may run because Git keeps
+   objects reachable from refs in `refs/*`; no KAT cleanup job may remove the
+   ref. Storage loss or privileged administrative deletion is an operational
+   failure, not a consequence of normal Git GC.
+
+The KAT Hub's server-side repository record contains the immutable pairing:
+
+```text
+RepositoryId
+semantic object/reference namespace
+WorkspaceBackendId
+workspace Git repository and retention policy
+```
+
+The local client selects a logical Hub remote, not a physical Git destination
+per publication. The Hub uses its configured backend binding for discovery and
+CAS, and the publication request has no destination override. The Hub's
+independent verification against its configured backend fails if any required
+snapshot is absent there, leaving the named reference unchanged. Once a shared
+reference exists, the backend binding and retention policy cannot be edited in
+place. Changing them requires an explicit migration that copies and verifies
+all reachable snapshots before cutover; Phase 12 v1 does not implement
+rebinding.
+
+This guarantee relies on the KAT deployment controlling the Git server policy
+and on its storage durability configuration. Git protocol alone cannot enforce
+that policy against a host administrator. External providers are not Phase 12
+v1 targets unless a provider-specific integration proves equivalent create-only
+retention and lets the Hub verify that enforcement.
+
+The [GitHub reference API](https://docs.github.com/en/rest/git/refs) documents
+creation of fully qualified refs, while GitHub's
+[ruleset documentation](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
+describes creation, update, and deletion controls for branches and tags. Those
+documents do not establish an immutable retention guarantee for KAT's custom
+`refs/kat/*` namespace. The [Git `gc` manual](https://git-scm.com/docs/git-gc)
+documents that refs keep their reachable objects from ordinary garbage
+collection; it does not prevent a host from deleting a ref.
+
+## Existing backend review findings
+
+`GitWorkspaceBackend::create_snapshot` rereads the commit tree and verifies its
+KAT snapshot identity before recording the representation. However,
+`record_snapshot_representation` ignores failure to open the internal Git repo
+and ignores failure to create the local lineage ref, then returns success.
+`verify_snapshot_integrity` validates commits listed in `snapshots.json` but
+does not require a corresponding protection ref. The happy-path reachability
+test does not cover these failures.
+
+Phase 12 implementation must not treat the mapping file or a successful local
+snapshot check as proof that a commit is GC-protected. Before remote publication
+is implemented, local representation recording must fail closed when it cannot
+create the protection ref, and the publish path must verify the local commit
+and derived snapshot identity before transfer. Add a regression test that
+injects local ref-creation failure. This is an implementation prerequisite; it
+does not require changing the frozen Phase 11 transport interface.
 
 ## Concrete transport responsibilities
 
@@ -70,10 +160,10 @@ silently hidden. The client coordinator still verifies every advertised
 closure independently.
 
 The Hub must confirm a candidate's semantic closure and physical snapshot
-availability at CAS time. This is safe across the two hosts because published
-physical snapshots are protected by immutable Git refs and Phase 12 does not
-delete those refs. The Hub's reference read/list operation must provide a
-fresh, coherent view suitable for resolving an ambiguous CAS response.
+availability at CAS time, using the fixed repository-to-backend binding and
+the active retention policy. The Hub's reference read/list operation must
+provide a fresh, coherent view suitable for resolving an ambiguous CAS
+response.
 
 ### Workspace transport: Git smart protocol
 
@@ -83,12 +173,13 @@ with Git's fetch/push protocol, restricted to KAT lineage refs. It does not
 push or fetch ordinary branches as KAT state.
 
 For each `WorkspaceSnapshotId`, local `.kat/physical/snapshots.json` supplies
-the known commit representations. Before publishing, the backend verifies
-each commit exists and that hashing its tree with KAT's workspace identity
-rules yields the requested snapshot ID. It then pushes the corresponding
-create-only lineage ref. Git transfers the commit, its parent commits, trees,
-and blobs. After the push, the transport confirms that each remote ref names
-the expected commit.
+candidate commit representations. Before publishing, the backend verifies
+each commit exists, its local protection ref exists, and hashing its tree with
+KAT's workspace identity rules yields the requested snapshot ID. It then
+creates the corresponding ref on the configured KAT-controlled server. Git
+transfers the commit, its parent commits, trees, and blobs. The Hub reads the
+remote ref back and verifies the target tree before allowing CAS; this is a
+content check, while the server policy above provides retention.
 
 For fetch, the transport fetches all remote lineage refs for the requested
 snapshot ID into the same local namespace. It verifies each fetched commit's
@@ -104,19 +195,23 @@ durable before `local_snapshot_available` reports success.
 
 ### Logical remote binding
 
-A logical remote pairs one semantic Hub location with one physical Git
-location. That pairing is local, noncanonical configuration; changing either
-location does not change `RepositoryId`, object IDs, KAT refs, or workspace
-bases. Credentials are not stored in canonical objects or repository identity
+A logical remote identifies a KAT Hub repository. The Hub's noncanonical
+repository configuration binds that `RepositoryId` to one `WorkspaceBackendId`
+and one Git repository with the required retention policy. Client-local config
+may name the logical remote and credentials, but it cannot override the
+physical destination for an individual publication. Changing the backend
+binding does not change `RepositoryId`, object IDs, KAT refs, or workspace
+bases; it requires an explicit migration, deferred beyond Phase 12 v1.
+Credentials are not stored in canonical objects or repository identity
 metadata. Exact configuration syntax is part of transport implementation,
 not this design.
 
-The Hub's service configuration must associate each hosted `RepositoryId` with
-its workspace remote so discovery and CAS can verify snapshots. A Hub deployment
-that cannot reach or inspect its paired Git remote cannot claim closure-complete
-unnamed-tip discovery or safe reference publication.
-Phase 12's basic service setup must provide that read access; account and
-authorization design remains out of scope.
+A Hub deployment that cannot reach and inspect its configured backend, or
+cannot verify that its retention policy is active, cannot advertise
+closure-complete unnamed tips or accept a reference publication. The Hub
+repository record and backend policy are checked by the service at CAS, not
+selected by the publication caller. Account and authorization design remains
+out of scope.
 
 ## Operation sequences
 
@@ -148,10 +243,12 @@ reference name, and the previously observed remote target (`expected`).
 3. Store semantic dependencies, then `RepositoryRevision` parents before
    children. All object writes are idempotent.
 4. Read the semantic destination back and independently verify the complete
-   semantic closure; confirm every physical snapshot remains available.
+   semantic closure. The Hub separately rechecks the exact physical refs and
+   trees on the backend bound to this `RepositoryId`, and verifies that its
+   create-only retention policy is active.
 5. Ask the Hub to CAS the one named KAT reference from `expected` to the
-   candidate. The Hub rechecks closure completeness and atomically records the
-   reference as a retention root.
+   candidate. The Hub rechecks closure completeness and the backend binding
+   before atomically recording the reference as a retention root.
 
 The Git refs do not move the KAT shared reference. The Hub CAS does not move a
 local reference or workspace. A stale expected target fails without automatic
@@ -173,10 +270,13 @@ objects between destination verification and reference CAS. The cost is that
 objects left by failed or stale publications remain stored.
 
 On the Git side, each KAT lineage ref is a normal Git reachability root. Git
-`gc` may run concurrently with fetch or publication; it must preserve the
-referenced commit and its complete object ancestry. The KAT transport never
-deletes lineage refs. The Hub and the Git remote must reserve the KAT lineage
-namespace from ordinary branch updates and ref deletion.
+`gc` may run concurrently with fetch or publication; it preserves the
+referenced commit and its complete object ancestry while that ref exists. The
+KAT-controlled server must reject ref updates and deletion, and the Hub must
+verify the binding and active policy at CAS. The KAT transport never deletes
+lineage refs. This guarantee does not extend to arbitrary third-party hosts or
+privileged administrative deletion unless their service policy establishes
+equivalent controls.
 
 Phase 12 has no KAT-aware object or ref pruning. Any later reclamation feature
 must coordinate collection with named-reference CAS: a collector may remove
@@ -197,6 +297,7 @@ Hub cleanup job that can race publication.
 | Fetch fails after immutable transfer | Local refs and workspace authority stay unchanged; transferred objects may remain | Retry fetch |
 | One local tracking-ref CAS fails after siblings succeeded | Successful siblings remain; failed ref is reported | Inspect `FetchOutcome.failed`, then retry that ref |
 | Git remote is unavailable or deletes a protected KAT ref | No local authority moves; closure verification fails | Restore availability/ref or select a valid remote |
+| Backend binding is missing, changed, or retention policy is not verifiably active | Hub CAS is rejected; named reference is unchanged | Restore the configured policy or complete an explicit backend migration |
 
 Partial immutable transfers are not rolled back. Partial transfer is safe
 because objects and lineage refs are immutable, idempotent, and not KAT named
@@ -206,8 +307,15 @@ references.
 
 - A local bare Git remote receives and fetches snapshot mappings using only
   `refs/kat/lineage/**`; branch movement has no effect on KAT references.
-- A supported Git host must advertise and retain the reserved KAT lineage ref
-  namespace; compatibility is verified per host before that host is claimed.
+- Phase 12 v1 uses a KAT-controlled Git backend whose server rejects lineage
+  ref update/deletion and whose Git GC preserves reachable objects.
+- A remote ref is read back from the bound backend and its tree-derived
+  `WorkspaceSnapshotId` is independently recomputed before CAS.
+- The Hub rejects publication when the `RepositoryId` has no fixed workspace
+  backend binding or the deployment control plane cannot verify the backend
+  retention policy as active.
+- Host-specific support is claimed only after proving custom ref advertisement,
+  read-back, create-only policy enforcement, and GC retention on that host.
 - Multiple Git commit representations of one workspace identity retain and
   round-trip; a mismatched tree is rejected.
 - Fetch does not materialize content or change workspace base, active lineage,
@@ -220,6 +328,8 @@ references.
   KAT named reference only after destination closure verification.
 - Concurrent Git `gc` cannot remove a snapshot protected by a KAT lineage ref;
   Hub semantic objects remain present under the append-only Phase 12 policy.
+- A local representation/ref-creation failure fails before publication; the
+  regression suite covers the current `GitWorkspaceBackend` failure path.
 - Interrupted uploads, CAS races, lost CAS responses, retries, duplicate
   transfers, and partial fetch tracking updates match the recovery table.
 - Failed publication and fetch preserve local accepted state, named refs,
@@ -233,3 +343,4 @@ references.
   `sync`;
 - KAT-aware deletion, compaction, and garbage collection;
 - Git-provider-specific administration or hosting APIs.
+- Backend rebinding and migration; Phase 12 v1 rejects silent changes.
