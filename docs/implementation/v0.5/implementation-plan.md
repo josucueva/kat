@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10 frozen. Phase 11.1 frozen after hardening and verification; concrete published-closure retention enforcement is deferred to Phase 12.
+Phase 10 frozen. Phase 11 complete: Step 11.1 is frozen, and review found no remaining Phase 11 acceptance criteria that need a separate 11.2. Remote-backed workflows and concrete published-closure retention enforcement remain Phase 12 work.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -15,7 +15,7 @@ Phase 10 frozen. Phase 11.1 frozen after hardening and verification; concrete pu
 | Phase 10.1..10.9 | `21b8275` | Complete. Local collaboration commands. |
 | Phase 10.10 | `7676223` | Complete. Versioned JSON collaboration interface; MI-COL checks pass in `tests/collaboration_json.rs`. |
 | Phase 10.11 | `7676223` | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
-| Phase 11.1 | `c5d8029`, `9c9d01c` | Transport abstraction frozen. Parent-first uploads, complete unnamed-tip discovery, structured fetch partial outcomes, and retention contract covered; 631 workspace tests and 16 remote tests pass. Live retention enforcement is Phase 12 work. |
+| Phase 11 | `c5d8029`, `9c9d01c`, `a065de8` | Complete. Step 11.1 satisfies the planned transport abstraction criteria; parent-first uploads, complete unnamed-tip discovery, structured fetch partial outcomes, and retention contract are covered. Source review found no distinct 11.2 workflow in the plan. Remote-backed workflows and live retention enforcement are Phase 12 work. Verification reported: 631 workspace tests and 16 remote tests pass. |
 
 ## 1. Objective
 
@@ -558,7 +558,7 @@ Provide CLI tools for collaboration.
 - [x] Upload revision parents before children; require closure-complete unnamed-tip discovery and reject an advertised incomplete tip.
 - [x] Preflight tracking names and namespace conflicts; report per-reference partial CAS outcomes after full content verification.
 - [x] Require published-reference closure retention by contract; defer concrete retention/collection enforcement to Phase 12.
-- Notes: No network, Git remote commands, KAT Hub behavior, or live retention enforcement; these remain out of scope for this step.
+- Notes: Phase 11 is complete in this step. The plan has no separate repository-level workflow acceptance criteria for 11.2; the existing coordinator already composes local stores with injected transports. No network, Git remote commands, KAT Hub behavior, or live retention enforcement is added; those remain Phase 12 work.
 ### Goal
 Implement abstractions for remote syncing.
 ### Design inputs

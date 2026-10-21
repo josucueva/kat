@@ -1,6 +1,6 @@
 # v0.5 Implementation Pending Report
 
-This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phase 10 is frozen. Phase 11: Remote abstraction is next.**
+This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phases 10 and 11 are frozen. Phase 12: KAT Hub and Git remote integration is next.**
 
 ## What Has Been Completed
 
@@ -17,16 +17,15 @@ All core reconciliation, conflict resolution, topology traversal, and collaborat
 - Phase 10.1–10.9: Core collaboration porcelain (`kat reconcile`, `kat resolve`, `kat switch`, `kat advance`, `kat finalize`, `kat abort`, `kat conflicts`, `kat materialize`)
 - Phase 10.10: JSON machine interfaces for the collaboration commands, with v1 envelope contract and MI-COL checks.
 - Phase 10.11: Ten local collaboration E2E scenarios through separate `kat` processes, covering clean and conflicted merges, semantic resolution without materialization, physical edits, abort, advance, switch, restart, and NamedReference preservation. The version-1 session format gained an optional clean physical snapshot ID; older sessions recover it from immutable inputs only. Candidate state and Git protection refs are checked across restart and after cleanup.
+- Phase 11.1: Frozen transport abstraction with semantic/workspace separation, recursive closure verification, parent-first uploads, closure-complete unnamed-tip discovery, per-reference tracking CAS outcomes, and a documented retention contract. Reported verification: 631 workspace tests and 16 remote tests pass.
 
 ## What Remains Pending
 
-The remaining effort focuses on remote networking, compatibility migration, and distributed end-to-end verification.
+The remaining effort focuses on concrete remote integration, compatibility migration, and distributed end-to-end verification.
 
-### Phase 11: Remote abstraction
-**Goal:** Implement abstractions for remote syncing.
-- Define what the remote abstraction transports: `RepositoryRevision` objects, semantic objects, shared references / heads, workspace snapshot availability metadata.
-- Implement operations: discover refs/heads, has object, fetch object(s), publish object(s), compare-and-swap ref, verify completeness.
-- **Tests**: In-memory fake remote testing for all operations.
+### Phase 11: Remote abstraction — Complete
+
+Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan contains no separate 11.2 repository workflow step; actual remote-backed `sync`/`push` is assigned to Phase 12. No additional wrapper around `RemoteCoordinator` is planned because it already coordinates the existing local stores and injected transports.
 
 ### Phase 12: KAT Hub and Git remote integration
 **Goal:** Implement the actual remote sync via KAT Hub/Git.
@@ -53,4 +52,4 @@ The remaining effort focuses on remote networking, compatibility migration, and 
 
 ## Next Steps
 
-Begin **Phase 11: Remote abstraction**.
+Begin **Phase 12: KAT Hub and Git remote integration**, including live published-closure retention and garbage-collection coordination.
