@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10 frozen. Phase 11.1 hardening passed verification; freeze and commit reference are pending the final tracker checkpoint.
+Phase 10 frozen. Phase 11.1 frozen after hardening and verification; concrete published-closure retention enforcement is deferred to Phase 12.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -15,7 +15,7 @@ Phase 10 frozen. Phase 11.1 hardening passed verification; freeze and commit ref
 | Phase 10.1..10.9 | `21b8275` | Complete. Local collaboration commands. |
 | Phase 10.10 | `7676223` | Complete. Versioned JSON collaboration interface; MI-COL checks pass in `tests/collaboration_json.rs`. |
 | Phase 10.11 | `7676223` | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
-| Phase 11.1 | `c5d8029` | Initial transport interface. Hardening and full verification passed; final freeze checkpoint pending. |
+| Phase 11.1 | `c5d8029`, `9c9d01c` | Transport abstraction frozen. Parent-first uploads, complete unnamed-tip discovery, structured fetch partial outcomes, and retention contract covered; 631 workspace tests and 16 remote tests pass. Live retention enforcement is Phase 12 work. |
 
 ## 1. Objective
 
@@ -551,7 +551,7 @@ Provide CLI tools for collaboration.
 
 ## Phase 11: Remote abstraction
 ### Step 11.1: Transport abstraction and hardening
-- Status: Hardening implemented and verified; freeze pending the final tracker checkpoint.
+- Status: Frozen after hardening and full verification.
 - [x] Record named-reference CAS, recursive completeness, retry, and fetch authority contracts.
 - [x] Add semantic and workspace transport traits with an in-memory coordinator.
 - [x] Add fake-remote acceptance tests for closure verification, partial transfer, CAS, and local authority preservation.
