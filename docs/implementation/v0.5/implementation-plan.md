@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10 frozen. Phase 11.1 transport interface draft is implemented and validated; interface freeze is pending review.
+Phase 10 frozen. Phase 11.1 hardening passed verification; freeze and commit reference are pending the final tracker checkpoint.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -15,7 +15,7 @@ Phase 10 frozen. Phase 11.1 transport interface draft is implemented and validat
 | Phase 10.1..10.9 | `21b8275` | Complete. Local collaboration commands. |
 | Phase 10.10 | `7676223` | Complete. Versioned JSON collaboration interface; MI-COL checks pass in `tests/collaboration_json.rs`. |
 | Phase 10.11 | `7676223` | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
-| Phase 11.1 | `c5d8029` | Transport-independent contracts, coordinator, and fake-remote acceptance tests implemented and validated (625 tests); freeze pending review. |
+| Phase 11.1 | `c5d8029` | Initial transport interface. Hardening and full verification passed; final freeze checkpoint pending. |
 
 ## 1. Objective
 
@@ -550,12 +550,15 @@ Provide CLI tools for collaboration.
 - Remote-backed execution of `sync`/`push` (completed in Phase 12).
 
 ## Phase 11: Remote abstraction
-### Step 11.1: Transport interface draft
-- Status: Implemented and validated; interface freeze pending review.
+### Step 11.1: Transport abstraction and hardening
+- Status: Hardening implemented and verified; freeze pending the final tracker checkpoint.
 - [x] Record named-reference CAS, recursive completeness, retry, and fetch authority contracts.
 - [x] Add semantic and workspace transport traits with an in-memory coordinator.
 - [x] Add fake-remote acceptance tests for closure verification, partial transfer, CAS, and local authority preservation.
-- Notes: No network, Git remote commands, or KAT Hub behavior; these remain out of scope for this step.
+- [x] Upload revision parents before children; require closure-complete unnamed-tip discovery and reject an advertised incomplete tip.
+- [x] Preflight tracking names and namespace conflicts; report per-reference partial CAS outcomes after full content verification.
+- [x] Require published-reference closure retention by contract; defer concrete retention/collection enforcement to Phase 12.
+- Notes: No network, Git remote commands, KAT Hub behavior, or live retention enforcement; these remain out of scope for this step.
 ### Goal
 Implement abstractions for remote syncing.
 ### Design inputs
@@ -569,24 +572,33 @@ Implement abstractions for remote syncing.
 - Keep repository coordination, semantic object transport, and physical snapshot transport as separate responsibilities.
 - Fetch transfers and verifies content before updating remote-tracking observations. It never moves local named references, `refs/accepted`, a workspace base, or the working tree.
 - Publish verifies the complete destination closure before compare-and-swapping one named remote reference.
+- Discovery advertises only unnamed tips with complete revision, semantic, and physical dependency closure; the coordinator verifies every advertised closure and errors if a tip is incomplete.
+- Fetch validates remote names and local tracking namespace conflicts before transfer. Independent per-reference CAS may partially succeed and returns an outcome that identifies updated, unchanged, removed, and failed refs.
+- Successfully published named refs retain their recursively referenced revisions, semantic dependencies, and snapshots while reachable; concrete synchronization with collection is Phase 12 work.
 ### Implementation work
 - Add a `RemoteCoordinator` over `SemanticTransport` and `WorkspaceTransport`.
-- `SemanticTransport` lists named references and read-only unnamed DAG tips, fetches/stores canonical bytes by `ObjectId`, and compare-and-swaps a named remote reference.
+- `SemanticTransport` lists named references and closure-complete read-only unnamed DAG tips, fetches/stores canonical bytes by `ObjectId`, and compare-and-swaps a named remote reference.
 - Unnamed DAG tips are derived observations; do not add a mutable `Head` type or unnamed-head mutation operation.
 - `WorkspaceTransport` checks local and remote snapshot availability, fetches snapshots, and publishes snapshots by `WorkspaceSnapshotId` without materializing the working tree.
 - Recursively resolve and verify every parent `RepositoryRevision`, its semantic state and change dependencies, and every physical snapshot in the transferred ancestry. Verify hashes, canonical decoding, expected object kinds, and semantic-change/result-state consistency.
-- Keep partially transferred immutable objects for retry. Do not update a named reference until semantic and physical destination completeness has been verified.
+- Upload revision parents before children. Keep partially transferred immutable objects for retry. Do not update a named reference until semantic and physical destination completeness has been verified.
+- Do not move shared references until the transport can retain their complete semantic and physical closure for the lifetime of reachability; Phase 11 specifies and fake-tests this contract, Phase 12 implements its storage enforcement.
 ### Tests
 - In-memory fake transports cover reference discovery (including unnamed tips), object and snapshot transfer, idempotent duplicate transfer, recursive closure verification, and per-reference CAS.
-- Fetch tests prove that failed or partial transfers do not update remote-tracking references and that successful fetch leaves `refs/accepted`, local named references, workspace base, and working tree unchanged.
+- `REMOTE-11` covers an interrupted parent-first revision upload, incomplete unnamed-tip suppression, and explicit failure if discovery advertises that incomplete tip.
+- Fetch tests prove invalid names fail before transfer, content failures do not update tracking references, later CAS failure reports earlier successful updates, and local authority never moves.
 - Publish tests prove that missing dependencies or snapshots prevent CAS, partial uploads may remain, and stale CAS preserves the current remote reference and the local candidate.
+- Successful publication tests verify that the fake transports retain the complete semantic and physical closure after CAS.
 ### Regression checks
-- `cargo test --workspace`, `cargo fmt --check`, `cargo clippy ... -D warnings`.
+- `cargo build`, `cargo test --workspace`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`.
 ### Failure / recovery cases
 - Distinguish unavailable transports, missing objects/snapshots, integrity failures, and stale CAS expectations.
+- Report tracking-ref CAS failures per reference without losing partial success information.
 - Retry after partial immutable transfers; duplicate publication is idempotent.
 ### Acceptance criteria
-- Fetch and publish handle complete revision DAGs while preserving the semantic/physical boundary and all local authority invariants.
+- Fetch and publish handle complete revision DAGs, preserve all local authority invariants, and report per-reference update failures after content verification.
+- Unnamed discovery never advertises an incomplete tip; a transport that does so causes an explicit fetch integrity error.
+- The publication retention contract is documented and exercised by the fake transports; concrete enforcement is explicitly deferred to Phase 12.
 ### Artifacts produced
 - `RemoteCoordinator`, `SemanticTransport`, `WorkspaceTransport`, and in-memory acceptance tests.
 ### Out of scope for this phase
@@ -604,6 +616,7 @@ Implement the actual remote sync via KAT Hub/Git.
 - Phase 11 complete.
 ### Design constraints
 - Remote sync is purely transport and CAS; no semantic reinterpretation.
+- Enforce retention of a published reference's full semantic and physical dependency closure and coordinate publication with garbage collection/deletion.
 ### Implementation work
 - Publish protocol:
   1. Ensure physical snapshot available remotely.

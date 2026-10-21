@@ -80,8 +80,8 @@ pub use query::{
     trace_origin,
 };
 pub use remote::{
-    FetchOutcome, RemoteCoordinator, RemoteError, RemoteReferences, RemoteTransportError,
-    SemanticTransport, WorkspaceTransport,
+    FetchOutcome, ReferenceUpdateFailure, RemoteCoordinator, RemoteError, RemoteReferences,
+    RemoteTransportError, SemanticTransport, WorkspaceTransport,
 };
 pub use resolve::{ResolveError, resolve_element_id, resolve_relationship_id};
 pub use validation::invariant::InvariantError;

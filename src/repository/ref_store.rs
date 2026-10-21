@@ -273,6 +273,11 @@ impl FileRefStore {
         })
     }
 
+    /// Validates a reference name without reading or writing it.
+    pub fn validate_ref_name(&self, name: &str) -> Result<(), RefStoreError> {
+        self.resolve_ref_path(name).map(|_| ())
+    }
+
     pub fn compare_and_swap_ref(
         &self,
         name: &str,

@@ -278,6 +278,9 @@ struct MemorySemanticTransport {
     references: Mutex<BTreeMap<String, RepositoryRevisionId>>,
     writes: Mutex<usize>,
     fail_after_writes: Mutex<Option<usize>>,
+    revision_writes: Mutex<Vec<RepositoryRevisionId>>,
+    fail_after_revision_writes: Mutex<Option<usize>>,
+    forced_unnamed_heads: Mutex<Vec<RepositoryRevisionId>>,
 }
 
 impl MemorySemanticTransport {
@@ -288,6 +291,9 @@ impl MemorySemanticTransport {
             references: Mutex::new(BTreeMap::new()),
             writes: Mutex::new(0),
             fail_after_writes: Mutex::new(None),
+            revision_writes: Mutex::new(Vec::new()),
+            fail_after_revision_writes: Mutex::new(None),
+            forced_unnamed_heads: Mutex::new(Vec::new()),
         }
     }
 
@@ -325,6 +331,18 @@ impl MemorySemanticTransport {
         *self.fail_after_writes.lock().unwrap() = count;
     }
 
+    fn fail_after_revision_writes(&self, count: Option<usize>) {
+        *self.fail_after_revision_writes.lock().unwrap() = count;
+    }
+
+    fn revision_writes(&self) -> Vec<RepositoryRevisionId> {
+        self.revision_writes.lock().unwrap().clone()
+    }
+
+    fn advertise_unnamed_head(&self, revision: RepositoryRevisionId) {
+        self.forced_unnamed_heads.lock().unwrap().push(revision);
+    }
+
     fn check_repository(&self, expected: RepositoryId) -> Result<(), RemoteTransportError> {
         if expected == self.repository_id {
             Ok(())
@@ -360,6 +378,9 @@ impl SemanticTransport for MemorySemanticTransport {
         let objects = self.objects.lock().unwrap();
         let mut revisions = HashMap::new();
         for (id, bytes) in objects.iter() {
+            if object_id(bytes) != *id {
+                continue;
+            }
             let Ok(object) = decode_canonical(bytes) else {
                 continue;
             };
@@ -371,11 +392,13 @@ impl SemanticTransport for MemorySemanticTransport {
         for revision in revisions.values() {
             ancestors.extend(revision.parents.iter().copied());
         }
-        let unnamed_heads = revisions
+        let mut unnamed_heads = revisions
             .keys()
             .filter(|revision| !ancestors.contains(revision) && !named_targets.contains(revision))
+            .filter(|revision| revision_parent_closure_complete(**revision, &revisions))
             .copied()
-            .collect();
+            .collect::<Vec<_>>();
+        unnamed_heads.extend(self.forced_unnamed_heads.lock().unwrap().iter().copied());
         Ok(RemoteReferences {
             named,
             unnamed_heads,
@@ -401,12 +424,29 @@ impl SemanticTransport for MemorySemanticTransport {
         if object_id(bytes) != id {
             return Err(RemoteTransportError::ObjectIntegrity(id));
         }
+        let revision = decode_canonical(bytes)
+            .ok()
+            .and_then(|object| match object.payload {
+                CanonicalPayload::RepositoryRevision(_) => {
+                    Some(RepositoryRevisionId::from_object_id(id))
+                }
+                _ => None,
+            });
         let mut objects = self.objects.lock().unwrap();
         if let Some(existing) = objects.get(&id) {
             if existing != bytes {
                 return Err(RemoteTransportError::ObjectIntegrity(id));
             }
         } else {
+            if revision.is_some()
+                && self
+                    .fail_after_revision_writes
+                    .lock()
+                    .unwrap()
+                    .is_some_and(|limit| self.revision_writes.lock().unwrap().len() >= limit)
+            {
+                return Err(RemoteTransportError::Unavailable);
+            }
             if self
                 .fail_after_writes
                 .lock()
@@ -417,6 +457,9 @@ impl SemanticTransport for MemorySemanticTransport {
             }
             objects.insert(id, bytes.to_vec());
             *self.writes.lock().unwrap() += 1;
+            if let Some(revision) = revision {
+                self.revision_writes.lock().unwrap().push(revision);
+            }
         }
         Ok(())
     }
@@ -436,6 +479,24 @@ impl SemanticTransport for MemorySemanticTransport {
         references.insert(name.into(), new);
         Ok(())
     }
+}
+
+fn revision_parent_closure_complete(
+    head: RepositoryRevisionId,
+    revisions: &HashMap<RepositoryRevisionId, RepositoryRevision>,
+) -> bool {
+    let mut pending = vec![head];
+    let mut visited = HashSet::new();
+    while let Some(revision_id) = pending.pop() {
+        if !visited.insert(revision_id) {
+            continue;
+        }
+        let Some(revision) = revisions.get(&revision_id) else {
+            return false;
+        };
+        pending.extend(revision.parents.iter().copied());
+    }
+    true
 }
 
 #[derive(Default)]
@@ -506,15 +567,21 @@ fn fetch_transfers_recursive_closures_and_only_tracks_remote_references() {
     workspace.add_remote(fixture.w0.clone());
     workspace.add_remote(fixture.w1.clone());
     workspace.add_remote(fixture.w2.clone());
+    client
+        .refs
+        .compare_and_swap_ref("remotes/origin/stale", None, fixture.r0)
+        .unwrap();
 
     let outcome = client
         .coordinator(fixture.repository_id, &semantic, &workspace)
         .fetch()
         .unwrap();
 
-    assert_eq!(outcome.references.len(), 1);
-    assert_eq!(outcome.references[0].name, "main");
-    assert_eq!(outcome.references[0].target, fixture.r1);
+    assert_eq!(outcome.updated.len(), 1);
+    assert_eq!(outcome.updated[0].name, "main");
+    assert_eq!(outcome.updated[0].target, fixture.r1);
+    assert_eq!(outcome.removed.len(), 1);
+    assert_eq!(outcome.removed[0].name, "stale");
     assert_eq!(outcome.unnamed_heads, vec![fixture.r2]);
     assert_eq!(
         client.refs.read_ref("remotes/origin/main").unwrap(),
@@ -535,6 +602,133 @@ fn fetch_transfers_recursive_closures_and_only_tracks_remote_references() {
         client.objects.get(id).unwrap();
     }
     fixture.assert_local_authority_unchanged();
+    client.assert_local_authority_unchanged();
+
+    let outcome = client
+        .coordinator(fixture.repository_id, &semantic, &workspace)
+        .fetch()
+        .unwrap();
+    assert!(outcome.updated.is_empty());
+    assert_eq!(outcome.unchanged.len(), 1);
+    assert_eq!(outcome.unchanged[0].name, "main");
+    assert!(outcome.removed.is_empty());
+}
+
+#[test]
+fn remote_11_interrupted_revision_upload_keeps_parents_first_and_fetches_complete_tips() {
+    let fixture = Fixture::new();
+    let w3 = WorkspaceSnapshotId::new(vec![0x13]);
+    let r3 = put_revision(
+        &fixture.store,
+        vec![fixture.r1],
+        SemanticStateId::from_object_id(fixture.updated_state),
+        w3.clone(),
+        None,
+    );
+    let semantic = MemorySemanticTransport::new(fixture.repository_id);
+    for id in [
+        fixture.ontology_id,
+        fixture.initial_state,
+        fixture.r0.as_object_id(),
+    ] {
+        semantic.seed(id, fixture.store.get(id).unwrap());
+    }
+    semantic.set_reference("main", fixture.r0);
+    semantic.fail_after_revision_writes(Some(1));
+    let workspace = MemoryWorkspaceTransport::default();
+    for id in [&fixture.w0, &fixture.w1, &w3] {
+        workspace.add_local((*id).clone());
+    }
+    workspace.add_remote(fixture.w0.clone());
+
+    let result = fixture
+        .coordinator(&semantic, &workspace)
+        .publish("main", Some(fixture.r0), r3);
+    assert!(matches!(
+        result,
+        Err(RemoteError::Transport(RemoteTransportError::Unavailable))
+    ));
+    assert_eq!(semantic.revision_writes(), vec![fixture.r1]);
+    assert!(semantic.contains(fixture.r1.as_object_id()));
+    assert!(!semantic.contains(r3.as_object_id()));
+    assert_eq!(semantic.reference("main"), Some(fixture.r0));
+
+    let client = fixture.fetch_client();
+    let outcome = client
+        .coordinator(fixture.repository_id, &semantic, &workspace)
+        .fetch()
+        .unwrap();
+    assert_eq!(outcome.updated[0].name, "main");
+    assert_eq!(outcome.unnamed_heads, vec![fixture.r1]);
+    assert!(workspace.local_snapshot_available(&fixture.w1).unwrap());
+    assert!(!outcome.unnamed_heads.contains(&r3));
+    assert!(client.objects.get(r3.as_object_id()).is_err());
+    client.assert_local_authority_unchanged();
+}
+
+#[test]
+fn remote_11_discovery_omits_a_tip_with_a_missing_revision_parent() {
+    let fixture = Fixture::new();
+    let missing_parent = RepositoryRevisionId::from_object_id(ObjectId::from_bytes([0x99; 32]));
+    let broken = put_revision(
+        &fixture.store,
+        vec![missing_parent],
+        SemanticStateId::from_object_id(fixture.initial_state),
+        WorkspaceSnapshotId::new(vec![0x13]),
+        None,
+    );
+    let client = fixture.fetch_client();
+    let semantic = MemorySemanticTransport::new(fixture.repository_id);
+    semantic.seed_store(&fixture.store);
+    semantic.set_reference("main", fixture.r0);
+    let discovered = semantic.list_references(fixture.repository_id).unwrap();
+    assert!(!discovered.unnamed_heads.contains(&broken));
+    let workspace = MemoryWorkspaceTransport::default();
+    for id in [&fixture.w0, &fixture.w1, &fixture.w2] {
+        workspace.add_remote((*id).clone());
+    }
+
+    let outcome = client
+        .coordinator(fixture.repository_id, &semantic, &workspace)
+        .fetch()
+        .unwrap();
+    assert_eq!(
+        client.refs.read_ref("remotes/origin/main").unwrap(),
+        fixture.r0
+    );
+    assert!(!outcome.unnamed_heads.contains(&broken));
+    client.assert_local_authority_unchanged();
+}
+
+#[test]
+fn fetch_errors_if_remote_discovery_advertises_an_incomplete_unnamed_tip() {
+    let fixture = Fixture::new();
+    let missing_parent = RepositoryRevisionId::from_object_id(ObjectId::from_bytes([0x99; 32]));
+    let broken = put_revision(
+        &fixture.store,
+        vec![missing_parent],
+        SemanticStateId::from_object_id(fixture.initial_state),
+        WorkspaceSnapshotId::new(vec![0x13]),
+        None,
+    );
+    let client = fixture.fetch_client();
+    let semantic = MemorySemanticTransport::new(fixture.repository_id);
+    semantic.seed_store(&fixture.store);
+    semantic.set_reference("main", fixture.r0);
+    semantic.advertise_unnamed_head(broken);
+    let workspace = MemoryWorkspaceTransport::default();
+    for id in [&fixture.w0, &fixture.w1, &fixture.w2] {
+        workspace.add_remote((*id).clone());
+    }
+
+    let result = client
+        .coordinator(fixture.repository_id, &semantic, &workspace)
+        .fetch();
+    assert!(matches!(
+        result,
+        Err(RemoteError::MissingRemoteObject(id)) if id == missing_parent.as_object_id()
+    ));
+    assert!(client.refs.list_remote_refs().unwrap().is_empty());
     client.assert_local_authority_unchanged();
 }
 
@@ -565,6 +759,113 @@ fn partial_fetch_keeps_remote_tracking_and_local_authority_unchanged() {
     // Valid immutable semantic bytes already fetched are safe to retain.
     client.objects.get(fixture.r1.as_object_id()).unwrap();
     fixture.assert_local_authority_unchanged();
+    client.assert_local_authority_unchanged();
+}
+
+#[test]
+fn fetch_preflights_invalid_tracking_names_before_transferring_content() {
+    let fixture = Fixture::new();
+    let client = fixture.fetch_client();
+    let semantic = MemorySemanticTransport::new(fixture.repository_id);
+    semantic.seed_store(&fixture.store);
+    semantic.set_reference("main", fixture.r0);
+    semantic.set_reference("bad?name", fixture.r1);
+    let workspace = MemoryWorkspaceTransport::default();
+
+    let result = client
+        .coordinator(fixture.repository_id, &semantic, &workspace)
+        .fetch();
+
+    assert!(matches!(
+        result,
+        Err(RemoteError::RefStore(
+            kat::repository::ref_store::RefStoreError::Parse(_)
+        ))
+    ));
+    assert!(client.refs.list_remote_refs().unwrap().is_empty());
+    assert!(client.objects.get(fixture.r1.as_object_id()).is_err());
+    client.assert_local_authority_unchanged();
+}
+
+#[test]
+fn fetch_preflights_tracking_name_path_collisions_before_transferring_content() {
+    let fixture = Fixture::new();
+    let client = fixture.fetch_client();
+    let semantic = MemorySemanticTransport::new(fixture.repository_id);
+    semantic.seed_store(&fixture.store);
+    semantic.set_reference("topic", fixture.r0);
+    semantic.set_reference("topic/branch", fixture.r1);
+    let workspace = MemoryWorkspaceTransport::default();
+
+    let result = client
+        .coordinator(fixture.repository_id, &semantic, &workspace)
+        .fetch();
+
+    assert!(matches!(
+        result,
+        Err(RemoteError::RefStore(
+            kat::repository::ref_store::RefStoreError::Parse(_)
+        ))
+    ));
+    assert!(client.refs.list_remote_refs().unwrap().is_empty());
+    assert!(client.objects.get(fixture.r1.as_object_id()).is_err());
+    client.assert_local_authority_unchanged();
+}
+
+#[test]
+fn fetch_reports_per_reference_cas_partial_success_without_moving_local_authority() {
+    let fixture = Fixture::new();
+    let client = fixture.fetch_client();
+    let semantic = MemorySemanticTransport::new(fixture.repository_id);
+    semantic.seed_store(&fixture.store);
+    semantic.set_reference("a", fixture.r1);
+    semantic.set_reference("b", fixture.r2);
+    semantic.set_reference("c", fixture.r0);
+    let workspace = MemoryWorkspaceTransport::default();
+    for id in [&fixture.w0, &fixture.w1, &fixture.w2] {
+        workspace.add_remote((*id).clone());
+    }
+    let mut lock = client._dir.path().join(".kat/refs/remotes/origin/c");
+    let mut extension = lock.extension().unwrap_or_default().to_os_string();
+    extension.push(".lock");
+    lock.set_extension(extension);
+    fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    fs::write(lock, b"held by another writer").unwrap();
+
+    let outcome = client
+        .coordinator(fixture.repository_id, &semantic, &workspace)
+        .fetch()
+        .unwrap();
+
+    assert_eq!(
+        outcome
+            .updated
+            .iter()
+            .map(|reference| reference.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a", "b"]
+    );
+    assert_eq!(outcome.failed.len(), 1);
+    assert_eq!(outcome.failed[0].remote, "origin");
+    assert_eq!(outcome.failed[0].name, "c");
+    assert_eq!(outcome.failed[0].expected, None);
+    assert_eq!(outcome.failed[0].target, Some(fixture.r0));
+    assert!(matches!(
+        outcome.failed[0].error,
+        kat::repository::ref_store::RefStoreError::Conflict
+    ));
+    assert_eq!(
+        client.refs.read_ref("remotes/origin/a").unwrap(),
+        fixture.r1
+    );
+    assert_eq!(
+        client.refs.read_ref("remotes/origin/b").unwrap(),
+        fixture.r2
+    );
+    assert!(matches!(
+        client.refs.read_ref("remotes/origin/c"),
+        Err(kat::repository::ref_store::RefStoreError::NotFound)
+    ));
     client.assert_local_authority_unchanged();
 }
 

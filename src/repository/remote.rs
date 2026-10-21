@@ -19,13 +19,14 @@ use crate::repository::ref_store::{FileRefStore, RefStoreError};
 
 /// A point-in-time view of a remote's references and unnamed revision tips.
 ///
-/// `unnamed_heads` are derived observations, not mutable references. The
-/// coordinator verifies their complete closures before returning them.
+/// `unnamed_heads` are derived observations, not mutable references. A
+/// transport must advertise only heads with complete dependency closures; the
+/// coordinator independently verifies every reported closure.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RemoteReferences {
     /// Mutable remote references, each of which can be published with CAS.
     pub named: Vec<NamedReference>,
-    /// Unnamed tips derived from the remote's known revision graph.
+    /// Closure-complete unnamed tips derived from the remote's revision graph.
     pub unnamed_heads: Vec<RepositoryRevisionId>,
 }
 
@@ -59,7 +60,10 @@ pub enum RemoteTransportError {
 
 /// The semantic side of a logical remote.
 pub trait SemanticTransport {
-    /// Lists named references and read-only unnamed revision tips for a repo.
+    /// Lists named references and closure-complete unnamed tips for a logical
+    /// remote, including its associated workspace transport. Advertising an
+    /// incomplete tip violates the contract; fetch verifies every reported
+    /// closure and returns an error if it is incomplete.
     fn list_references(
         &self,
         repository_id: RepositoryId,
@@ -73,6 +77,8 @@ pub trait SemanticTransport {
     ) -> Result<Option<Vec<u8>>, RemoteTransportError>;
 
     /// Stores canonical object bytes under `id`; duplicate publication is idempotent.
+    /// Objects reachable from a successfully published reference must remain
+    /// retrievable while that reference remains reachable.
     fn store_object(
         &self,
         repository_id: RepositoryId,
@@ -81,6 +87,8 @@ pub trait SemanticTransport {
     ) -> Result<(), RemoteTransportError>;
 
     /// Moves a named reference only when its current target equals `expected`.
+    /// A successful publication must retain its complete semantic and physical
+    /// dependency closure while the reference remains reachable.
     fn compare_and_swap_reference(
         &self,
         repository_id: RepositoryId,
@@ -109,6 +117,8 @@ pub trait WorkspaceTransport {
     fn fetch_snapshot(&self, id: &WorkspaceSnapshotId) -> Result<(), RemoteTransportError>;
 
     /// Publishes a locally available snapshot into remote immutable storage.
+    /// Snapshots reachable from a published reference must remain retrievable
+    /// while that reference remains reachable.
     fn publish_snapshot(&self, id: &WorkspaceSnapshotId) -> Result<(), RemoteTransportError>;
 }
 
@@ -180,9 +190,9 @@ pub enum RemoteError {
     /// The remote returned the same unnamed DAG tip more than once.
     #[error("remote returned duplicate unnamed DAG tip {0}")]
     DuplicateUnnamedHead(RepositoryRevisionId),
-    /// A remote-tracking ref changed while fetch was transferring content.
-    #[error("remote-tracking reference {0} changed concurrently")]
-    TrackingReferenceConflict(String),
+    /// The revision-parent graph contains a cycle.
+    #[error("repository revision parent graph contains a cycle")]
+    RevisionParentCycle,
     /// The destination did not retain the verified semantic closure.
     #[error("remote semantic closure differs from the verified local closure")]
     SemanticClosureMismatch,
@@ -191,11 +201,33 @@ pub enum RemoteError {
     PhysicalClosureMismatch,
 }
 
-/// The verified result of a fetch. Unnamed heads are returned without creating refs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One remote-tracking reference update that failed after content verification.
+#[derive(Debug)]
+pub struct ReferenceUpdateFailure {
+    /// Remote namespace containing the reference.
+    pub remote: String,
+    /// Reference name relative to that remote.
+    pub name: String,
+    /// Target observed before this fetch, if any.
+    pub expected: Option<RepositoryRevisionId>,
+    /// New target, or `None` when fetch was removing a stale tracking ref.
+    pub target: Option<RepositoryRevisionId>,
+    /// Local reference-store failure. Other reference updates continue.
+    pub error: RefStoreError,
+}
+
+/// The verified result of fetch. Tracking updates may partially succeed; content
+/// integrity failures are returned as `Err` before any tracking ref is changed.
+#[derive(Debug)]
 pub struct FetchOutcome {
-    /// Remote references recorded in `refs/remotes/<remote>/…`.
-    pub references: Vec<RemoteReference>,
+    /// References newly created or advanced in `refs/remotes/<remote>/…`.
+    pub updated: Vec<RemoteReference>,
+    /// References already at the discovered target.
+    pub unchanged: Vec<RemoteReference>,
+    /// Previously tracked references removed because they no longer exist remotely.
+    pub removed: Vec<RemoteReference>,
+    /// Per-reference tracking-store failures after all content was verified.
+    pub failed: Vec<ReferenceUpdateFailure>,
     /// Verified unnamed DAG tips, derived from the remote view.
     pub unnamed_heads: Vec<RepositoryRevisionId>,
 }
@@ -230,8 +262,9 @@ impl<'a> RemoteCoordinator<'a> {
         }
     }
 
-    /// Fetches remote immutable content, verifies complete closures, then updates
-    /// only the local remote-tracking references.
+    /// Fetches and verifies all immutable content before updating only local
+    /// remote-tracking references. Tracking updates use independent CAS operations;
+    /// failures are reported in the outcome and do not roll back successful siblings.
     pub fn fetch(&self) -> Result<FetchOutcome, RemoteError> {
         // Capture expected local observations before network work. A competing
         // fetch must not be overwritten by a stale response.
@@ -245,6 +278,7 @@ impl<'a> RemoteCoordinator<'a> {
 
         let remote = self.semantic.list_references(self.repository_id)?;
         let remote = validate_remote_references(remote)?;
+        validate_tracking_namespace(self.refs, &self.remote_name, &remote.named, &previous)?;
         let roots = remote
             .named
             .iter()
@@ -298,45 +332,64 @@ impl<'a> RemoteCoordinator<'a> {
             .iter()
             .map(|reference| (reference.name.clone(), reference.target))
             .collect::<BTreeMap<_, _>>();
+        let mut outcome = FetchOutcome {
+            updated: Vec::new(),
+            unchanged: Vec::new(),
+            removed: Vec::new(),
+            failed: Vec::new(),
+            unnamed_heads: remote.unnamed_heads,
+        };
         for (name, target) in &named {
+            let reference = RemoteReference {
+                remote: self.remote_name.clone(),
+                name: name.clone(),
+                target: *target,
+            };
+            if previous.get(name) == Some(target) {
+                outcome.unchanged.push(reference);
+                continue;
+            }
             let path = self.tracking_path(name);
-            if let Err(error) =
-                self.refs
-                    .compare_and_swap_ref(&path, previous.get(name).copied(), *target)
+            match self
+                .refs
+                .compare_and_swap_ref(&path, previous.get(name).copied(), *target)
             {
-                if matches!(error, RefStoreError::Conflict) {
-                    return Err(RemoteError::TrackingReferenceConflict(name.clone()));
-                }
-                return Err(error.into());
+                Ok(()) => outcome.updated.push(reference),
+                Err(error) => outcome.failed.push(ReferenceUpdateFailure {
+                    remote: self.remote_name.clone(),
+                    name: name.clone(),
+                    expected: previous.get(name).copied(),
+                    target: Some(*target),
+                    error,
+                }),
             }
         }
         for (name, target) in &previous {
             if !named.contains_key(name) {
                 let path = self.tracking_path(name);
-                if let Err(error) = self.refs.delete_ref(&path, *target) {
-                    if matches!(error, RefStoreError::Conflict) {
-                        return Err(RemoteError::TrackingReferenceConflict(name.clone()));
-                    }
-                    return Err(error.into());
+                match self.refs.delete_ref(&path, *target) {
+                    Ok(()) => outcome.removed.push(RemoteReference {
+                        remote: self.remote_name.clone(),
+                        name: name.clone(),
+                        target: *target,
+                    }),
+                    Err(error) => outcome.failed.push(ReferenceUpdateFailure {
+                        remote: self.remote_name.clone(),
+                        name: name.clone(),
+                        expected: Some(*target),
+                        target: None,
+                        error,
+                    }),
                 }
             }
         }
-
-        Ok(FetchOutcome {
-            references: named
-                .into_iter()
-                .map(|(name, target)| RemoteReference {
-                    remote: self.remote_name.clone(),
-                    name,
-                    target,
-                })
-                .collect(),
-            unnamed_heads: remote.unnamed_heads,
-        })
+        Ok(outcome)
     }
 
     /// Publishes a complete local revision closure, then CAS-updates one remote
-    /// named reference. Partial immutable uploads are intentionally retained.
+    /// named reference. Revision parents are uploaded before children. Successfully
+    /// published references retain their full closure; partial immutable uploads
+    /// remain safe to retry and may later be collected if unreachable.
     pub fn publish(
         &self,
         name: &str,
@@ -361,22 +414,17 @@ impl<'a> RemoteCoordinator<'a> {
         }
 
         // Keep the physical snapshot available before exposing semantic objects.
-        // RepositoryRevision objects are written after their semantic closure.
-        let mut objects = closure.objects.clone();
-        objects.sort_by_key(|(id, kind)| (*kind == ObjectKind::RepositoryRevision, *id));
-        for (id, kind) in &objects {
+        for (id, kind) in &closure.objects {
             if *kind != ObjectKind::RepositoryRevision {
                 let bytes = self.objects.get(*id)?;
                 self.semantic
                     .store_object(self.repository_id, *id, &bytes)?;
             }
         }
-        for (id, kind) in &objects {
-            if *kind == ObjectKind::RepositoryRevision {
-                let bytes = self.objects.get(*id)?;
-                self.semantic
-                    .store_object(self.repository_id, *id, &bytes)?;
-            }
+        for revision in &closure.revision_order {
+            let id = revision.as_object_id();
+            let bytes = self.objects.get(id)?;
+            self.semantic.store_object(self.repository_id, id, &bytes)?;
         }
 
         // Re-read every destination object and verify its hash, canonical form,
@@ -411,6 +459,7 @@ impl<'a> RemoteCoordinator<'a> {
 struct RevisionClosure {
     objects: Vec<(ObjectId, ObjectKind)>,
     snapshots: Vec<WorkspaceSnapshotId>,
+    revision_order: Vec<RepositoryRevisionId>,
 }
 
 fn walk_closure(
@@ -424,6 +473,7 @@ fn walk_closure(
     let mut snapshots = BTreeSet::new();
     let mut change_results = HashMap::<ObjectId, ObjectId>::new();
     let mut revision_changes = Vec::<(ChangeRevisionId, SemanticStateId)>::new();
+    let mut revision_parents = BTreeMap::<RepositoryRevisionId, Vec<RepositoryRevisionId>>::new();
 
     while let Some((id, required_kind)) = pending.pop() {
         if let Some(previous_kind) = expected.get(&id) {
@@ -458,6 +508,10 @@ fn walk_closure(
         }
         match &object.payload {
             CanonicalPayload::RepositoryRevision(revision) => {
+                revision_parents.insert(
+                    RepositoryRevisionId::from_object_id(id),
+                    revision.parents.clone(),
+                );
                 if let Some(change) = revision.semantic_change {
                     revision_changes.push((change, revision.semantic_state));
                 }
@@ -489,7 +543,79 @@ fn walk_closure(
     Ok(RevisionClosure {
         objects,
         snapshots: snapshots.into_iter().collect(),
+        revision_order: revision_upload_order(&revision_parents)?,
     })
+}
+
+fn revision_upload_order(
+    parents: &BTreeMap<RepositoryRevisionId, Vec<RepositoryRevisionId>>,
+) -> Result<Vec<RepositoryRevisionId>, RemoteError> {
+    let mut remaining = parents
+        .iter()
+        .map(|(revision, parents)| (*revision, parents.len()))
+        .collect::<BTreeMap<_, _>>();
+    let mut children = BTreeMap::<RepositoryRevisionId, Vec<RepositoryRevisionId>>::new();
+    for (revision, revision_parents) in parents {
+        for parent in revision_parents {
+            children.entry(*parent).or_default().push(*revision);
+        }
+    }
+    let mut ready = remaining
+        .iter()
+        .filter_map(|(revision, count)| (*count == 0).then_some(*revision))
+        .collect::<BTreeSet<_>>();
+    let mut order = Vec::with_capacity(parents.len());
+    while let Some(parent) = ready.pop_first() {
+        order.push(parent);
+        if let Some(descendants) = children.get(&parent) {
+            for child in descendants {
+                let count = remaining.get_mut(child).expect("revision in closure");
+                *count -= 1;
+                if *count == 0 {
+                    ready.insert(*child);
+                }
+            }
+        }
+    }
+    if order.len() != parents.len() {
+        return Err(RemoteError::RevisionParentCycle);
+    }
+    Ok(order)
+}
+
+fn validate_tracking_namespace(
+    refs: &FileRefStore,
+    remote_name: &str,
+    incoming: &[NamedReference],
+    previous: &BTreeMap<String, RepositoryRevisionId>,
+) -> Result<(), RemoteError> {
+    if remote_name.contains('/') {
+        return Err(RefStoreError::Parse("invalid remote name".into()).into());
+    }
+    refs.validate_ref_name(&format!("remotes/{remote_name}"))?;
+    let names = incoming
+        .iter()
+        .map(|reference| reference.name.as_str())
+        .chain(previous.keys().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    for name in &names {
+        refs.validate_ref_name(&format!("remotes/{remote_name}/{name}"))?;
+        let mut prefix = String::new();
+        let mut segments = name.split('/').peekable();
+        while let Some(segment) = segments.next() {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(segment);
+            if segments.peek().is_some() && names.contains(prefix.as_str()) {
+                return Err(RefStoreError::Parse(format!(
+                    "conflicting remote reference names: {prefix} and {name}"
+                ))
+                .into());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn verify_same_closure(

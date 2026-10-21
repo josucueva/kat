@@ -298,11 +298,13 @@ revision was published later.
 
 Unnamed DAG heads are read-only observations derived from the available
 `RepositoryRevision` graph. KAT does not store or mutate a separate `Head`
-object. The semantic transport reports named references and unnamed DAG-tip
-revision IDs. The coordinator verifies each reported tip's complete dependency
-closure before treating it as usable. A complete, unreferenced revision may
-remain discoverable after a named-reference CAS loses a race; it does not move
-that named reference or any local authority.
+object. Discovery must advertise only tips whose complete revision, semantic,
+and physical dependency closure is available and verifiable. The coordinator
+independently verifies every reported tip; if discovery advertises an
+incomplete tip, fetch returns an integrity error instead of silently filtering
+it. A complete, unreferenced revision may remain discoverable after a
+named-reference CAS loses a race; it does not move that named reference or any
+local authority.
 
 ---
 
@@ -405,18 +407,28 @@ fetch(remote)
 
 may:
 
-1. discover named references and unnamed DAG tips;
-2. fetch and verify every required canonical object in their recursive revision
+1. discover named references and closure-complete unnamed DAG tips;
+2. validate remote names and local tracking-namespace conflicts before transfer;
+3. fetch and verify every required canonical object in their recursive revision
    and semantic dependency closures;
-3. fetch and verify required physical snapshots that are not locally
+4. fetch and verify required physical snapshots that are not locally
    available;
-4. update remote-tracking references for named remote references.
+5. update remote-tracking references for named remote references using one CAS
+   per reference.
 
 If a required object or snapshot is missing or unavailable, fetch does not
-update remote-tracking references. Successfully transferred immutable objects
-may remain locally and be reused by a retry. Unnamed heads are returned as
-read-only discovery results; they do not create or move a local named
+update any remote-tracking reference. Successfully transferred immutable
+objects may remain locally and be reused by a retry. Unnamed heads are returned
+as read-only discovery results; they do not create or move a local named
 reference.
+
+Tracking updates are independent CAS operations, not a transaction across all
+references. Fetch reports `updated`, `unchanged`, `removed`, and `failed`
+references. If a later CAS fails after earlier updates succeed, those earlier
+updates remain, the failed reference remains unchanged, and fetch reports the
+partial outcome. A tracking-update failure does not undo verified content or
+successful sibling updates. Content-integrity failures occur before this stage
+and are returned as errors without changing tracking references.
 
 Fetch never changes the local `refs/accepted` semantic state, local named
 references, workspace base, or working tree. Updating
@@ -610,7 +622,8 @@ Conceptually:
 
 ```text
 1. make every required physical snapshot remotely available;
-2. store required semantic objects and `RepositoryRevision` objects;
+2. store required semantic objects and `RepositoryRevision` objects, uploading
+   revision parents before children;
 3. retrieve/check the remote objects and verify the complete semantic and
    physical closure;
 4. compare-and-swap the requested named reference.
@@ -622,6 +635,15 @@ The important invariant is that a named reference moves only after the
 revision is complete. A failed transfer or verification leaves the named
 reference unchanged. Uploaded immutable objects are retained for retry or
 later collection; rollback is unnecessary.
+
+**Retention contract:** while a successfully published named reference remains
+reachable, its complete semantic and physical dependency closure must remain
+retrievable. This includes every recursively referenced `RepositoryRevision`,
+semantic dependency, and `WorkspaceSnapshot`. Destination verification before
+CAS alone is insufficient if concurrent collection can remove verified
+content. Concrete retention and publication/collection synchronization are
+deferred to Phase 12; Phase 11 tests the contract with transports that retain
+published closure content.
 
 ---
 
@@ -1538,6 +1560,38 @@ Expected:
 same logical KAT repository
 history remains valid
 ```
+
+---
+
+### REM-11: Interrupted revision upload and unnamed-tip discovery
+
+An interrupted transfer stores revision parents before attempting children. An
+older or corrupted remote may still contain an incomplete revision tip.
+
+Expected:
+
+- complete named references remain fetchable;
+- discovery does not advertise the incomplete unnamed tip;
+- fetch independently verifies every advertised closure;
+- if discovery advertises an incomplete tip, fetch returns an integrity error;
+- local named references, accepted state, workspace base, and working tree do
+  not change.
+
+---
+
+### REM-12: Multi-reference fetch partially updates tracking refs
+
+Fetch verifies all content before applying independent tracking-reference CAS
+operations. If one later CAS fails after earlier updates succeed, the outcome
+identifies the successful and failed references.
+
+Expected:
+
+- earlier successful tracking updates remain;
+- the failed tracking reference remains unchanged;
+- no local named reference, accepted state, workspace base, or working tree
+  changes;
+- invalid names and tracking-namespace collisions fail before content transfer.
 
 ---
 
