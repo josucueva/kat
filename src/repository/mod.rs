@@ -5,6 +5,7 @@ pub mod author;
 pub mod change;
 pub mod conflicts;
 pub mod error;
+pub mod hub;
 pub mod init;
 pub mod materialize;
 pub mod metadata;
@@ -65,6 +66,7 @@ pub use change::{
     validate_unlink_element_invariants, validate_update_element_invariants,
     validate_update_element_ontology,
 };
+pub use hub::TrustedHubSemanticTransport;
 pub use open::{Repository, open_repository};
 pub use query::{
     ArtifactAccountability, ArtifactAccountabilityReport, ArtifactAccountabilitySummary,

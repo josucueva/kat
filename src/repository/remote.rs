@@ -618,6 +618,18 @@ fn validate_tracking_namespace(
     Ok(())
 }
 
+pub(crate) fn verify_revision_closure(
+    root: RepositoryRevisionId,
+    load: impl FnMut(ObjectId) -> Result<Vec<u8>, RemoteError>,
+) -> Result<Vec<WorkspaceSnapshotId>, RemoteError> {
+    walk_closure(
+        &[(root.as_object_id(), ObjectKind::RepositoryRevision)],
+        load,
+        |_, _| Ok(()),
+    )
+    .map(|closure| closure.snapshots)
+}
+
 fn verify_same_closure(
     local: &RevisionClosure,
     remote: &RevisionClosure,

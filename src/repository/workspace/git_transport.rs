@@ -585,6 +585,42 @@ impl ControlledGitBackend {
     pub fn binding(&self) -> GitWorkspaceBinding {
         self.binding
     }
+
+    /// Revalidates the active retention policy and the tree behind every
+    /// lineage ref for this KAT snapshot.
+    pub fn verify_snapshot_integrity(
+        &self,
+        id: &WorkspaceSnapshotId,
+    ) -> Result<bool, RemoteTransportError> {
+        Self::open(&self.path, self.binding)?;
+        let repo = Repository::open_bare(&self.path).map_err(other)?;
+        let prefix = snapshot_ref_prefix(id);
+        let mut refs = Vec::new();
+        for reference in repo.references_glob(&format!("{prefix}*")).map_err(other)? {
+            let reference = reference.map_err(other)?;
+            let name = reference.name().map_err(other)?;
+            let suffix = name
+                .strip_prefix(&prefix)
+                .ok_or_else(|| RemoteTransportError::SnapshotIntegrity(id.clone()))?;
+            let target = suffix
+                .parse::<git2::Oid>()
+                .map_err(|_| RemoteTransportError::SnapshotIntegrity(id.clone()))?;
+            if target.to_string() != suffix {
+                return Err(RemoteTransportError::SnapshotIntegrity(id.clone()));
+            }
+            if reference.kind() != Some(git2::ReferenceType::Direct)
+                || reference.target() != Some(target)
+            {
+                return Err(RemoteTransportError::SnapshotIntegrity(id.clone()));
+            }
+            refs.push((name.to_owned(), target));
+        }
+        if refs.is_empty() {
+            return Ok(false);
+        }
+        verify_fetched_snapshot(&repo, id, &refs)?;
+        Ok(true)
+    }
 }
 
 fn binding_contents(binding: GitWorkspaceBinding) -> String {

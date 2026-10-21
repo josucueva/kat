@@ -329,6 +329,8 @@ impl FileRefStore {
         Ok(())
     }
 
+    /// Lists every local named ref. A malformed ref fails the listing instead
+    /// of being silently hidden from callers.
     pub fn list_local_refs(
         &self,
     ) -> Result<Vec<crate::domain::reference::NamedReference>, RefStoreError> {
@@ -363,12 +365,11 @@ impl FileRefStore {
                         .to_string_lossy()
                         .to_string();
                     let name = format!("local/{}", rel_path);
-                    if let Ok(target) = self.read_ref(&name) {
-                        refs.push(crate::domain::reference::NamedReference {
-                            name: rel_path,
-                            target,
-                        });
-                    }
+                    let target = self.read_ref(&name)?;
+                    refs.push(crate::domain::reference::NamedReference {
+                        name: rel_path,
+                        target,
+                    });
                 }
             }
         }
