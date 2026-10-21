@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10 frozen. Phase 11 complete and frozen. The Phase 12.0 transport contract is frozen; Phase 12 implementation and deployment acceptance remain pending. Step 12.1 hardens local snapshot retention. No controlled deployment backend has been configured or verified.
+Phase 10, Phase 11, Phase 12.0, and Phase 12.1 are frozen. Phase 12 implementation and deployment acceptance remain pending. Phase 12.2 is planned as three verifiable stages: controlled Git backend, concrete workspace transport, then retention and failure validation. No controlled server has been configured or verified.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -18,6 +18,7 @@ Phase 10 frozen. Phase 11 complete and frozen. The Phase 12.0 transport contract
 | Phase 11 | `c5d8029`, `9c9d01c`, `a065de8` | Complete. Step 11.1 satisfies the planned transport abstraction criteria; parent-first uploads, complete unnamed-tip discovery, structured fetch partial outcomes, and retention contract are covered. Source review found no distinct 11.2 workflow in the plan. Remote-backed workflows and live retention enforcement are Phase 12 work. Verification reported: 631 workspace tests and 16 remote tests pass. |
 | Phase 12.0 | `6f03dd3`, `0ee8b36` | Transport contract frozen in [phase12-transport-design.md](phase12-transport-design.md). KAT-controlled retention and repository binding are specified; deployment-level backend verification remains pending. |
 | Phase 12.1 | `2989582` | Complete. Local snapshot representation recording fails closed unless the embedded Git repository and direct protection ref verify; mapping writes are atomic and reads validate protection refs. Workspace Git tests and the full verification gate pass. |
+| Phase 12.2 | Planned | Controlled local Git server, Git-backed `WorkspaceTransport`, then server retention and failure acceptance tests. Hub semantic publication remains out of scope until this backend passes. |
 
 ## 1. Objective
 
@@ -621,6 +622,21 @@ Implement abstractions for remote syncing.
 - [x] Validate protection refs whenever representations are loaded; propagate integrity errors through workspace operations.
 - [x] Cover missing repository, conflicting/missing protection refs, failed recording without representation exposure, and recovery after repair.
 - Notes: An interrupted mapping write may leave an orphan protection ref, which is safe and retryable. If post-write ref verification fails, lookups reject the mapping until the ref is repaired. This step does not establish server-side ref immutability or GC retention.
+### Step 12.2: Controlled physical transport and retention enforcement
+- Status: Planned; execute the three stages in order. No Hub semantic reference publication in this step.
+- Stage 12.2.1 — Controlled Git backend:
+  - Provision a local bare Git server bound to one KAT `RepositoryId` and `WorkspaceBackendId`.
+  - Enforce create-only `refs/kat/lineage/**` updates on the server; reject ref updates and deletion through supported Git operations.
+  - Run server-side GC and prove protected commits remain retrievable. Define privileged administrator and storage-durability assumptions.
+- Stage 12.2.2 — Concrete workspace transport:
+  - Implement the frozen `WorkspaceTransport` contract over the configured Git repository; operations cannot select another destination.
+  - Transfer only KAT lineage refs, independently read them back, and recompute `WorkspaceSnapshotId` from fetched trees.
+  - Record local representations only after ref, commit, and snapshot identity verification.
+- Stage 12.2.3 — Retention and failure validation:
+  - Test repository-binding mismatch, denied updates/deletions, interrupted upload and retry, concurrent GC, read-back integrity, and subsequent fetch after GC.
+  - Keep Hub semantic publication disabled until every preceding stage passes.
+- Acceptance: after successful physical publication, the bound server still serves the exact snapshot after GC; client-visible mutation/deletion attempts fail; mismatched binding or tree identity fails closed; retry is idempotent.
+- Trust boundary: the guarantee covers ordinary Git protocol clients and supported KAT administration. Trusted host administrators and underlying storage durability remain explicit deployment assumptions; unrestricted root-level ref/hook changes and physical storage loss are outside the guarantee.
 ### Goal
 Implement the actual remote sync via KAT Hub/Git.
 ### Design inputs

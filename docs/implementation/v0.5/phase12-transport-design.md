@@ -112,6 +112,25 @@ that policy against a host administrator. External providers are not Phase 12
 v1 targets unless a provider-specific integration proves equivalent create-only
 retention and lets the Hub verify that enforcement.
 
+## Administrative trust boundary and durability assumptions
+
+The retention policy covers ordinary Git protocol clients and supported KAT
+administrative operations. The server-side receive policy rejects lineage-ref
+updates and deletions for every client, including the transport identity. No
+supported maintenance operation removes or rewrites a lineage ref; ordinary
+`git gc` and repository integrity checks are allowed. Policy deployment and
+repository binding changes are privileged control-plane actions and must be
+audited and visible to publication verification.
+
+Host administrators with unrestricted filesystem or process privileges remain
+trusted. They can replace hooks, rewrite refs, or delete repository data, so
+the guarantee does not cover malicious or accidental root-level changes. The
+deployment must define its storage durability level (including filesystem or
+volume guarantees, backups, and recovery procedures) and monitor repository
+integrity. A successful publication promises survival across supported Git
+operations and garbage collection under those assumptions; it does not promise
+survival of arbitrary administrator action or underlying storage loss.
+
 The [GitHub reference API](https://docs.github.com/en/rest/git/refs) documents
 creation of fully qualified refs, while GitHub's
 [ruleset documentation](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)

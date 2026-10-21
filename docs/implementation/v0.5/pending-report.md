@@ -31,6 +31,8 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 **Goal:** Implement the actual remote sync via KAT Hub/Git.
 - Design: [`phase12-transport-design.md`](phase12-transport-design.md), drafted in `6f03dd3` and reviewed/amended in `0ee8b36`, defines canonical-byte transfer, Git lineage refs, publication ordering, repository binding, and recovery. The transport contract is frozen independently of deployment proof. The retention guarantee requires a KAT-controlled Git backend with server-enforced create-only lineage refs, remote read-back/tree verification, and Hub-side verification of the bound backend before CAS.
 - Phase 12.1 is complete in `2989582`: local snapshot recording requires the embedded Git repo and a verified direct protection ref, mapping updates are atomic, and lookups reject missing or mismatched protection refs. Missing-repository, conflicting/missing-ref, and recovery cases pass; the full build, test, formatting, and Clippy gate passed.
+- Phase 12.2 is staged in the implementation plan: first prove create-only refs and GC retention on a controlled local Git server; then implement the bound Git `WorkspaceTransport`; finally exercise ref attacks, interrupted transfers, retries, and GC. Hub semantic publication remains blocked on that acceptance evidence.
+- The deployment trust boundary covers ordinary Git clients and supported maintenance operations. Unrestricted host administrators and underlying storage loss are trusted deployment risks; the service must state its durability and recovery assumptions.
 - GitHub's fully qualified ref API and documented branch/tag rulesets do not prove retention for `refs/kat/*`. This repository's `origin` is only its project-source remote, not evidence of a configured KAT workspace host.
 - Before transport implementation: provision a KAT-controlled workspace backend and verify its binding, immutable-ref policy, read-back tree identity, and survival through Git GC. No endpoint schema, CLI wiring, or production network code has been added.
 - Implement the actual Publish protocol:
@@ -56,4 +58,4 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 
 ## Next Steps
 
-Review the Phase 12 design, then implement the Git workspace transport and KAT Hub semantic transport before CLI wiring.
+Complete the three Phase 12.2 stages in order. Proceed to Hub semantic publication only after the controlled backend and physical transport pass the retention acceptance gate.
