@@ -1,6 +1,6 @@
 # v0.5 Implementation Pending Report
 
-This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phases 10 and 11 are frozen. The Phase 12 transport/publication design is drafted; concrete remote integration remains next.**
+This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phases 10 and 11 are frozen. The Phase 12 transport/publication design is committed; concrete remote integration remains next.**
 
 ## What Has Been Completed
 
@@ -29,7 +29,7 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 
 ### Phase 12: KAT Hub and Git remote integration
 **Goal:** Implement the actual remote sync via KAT Hub/Git.
-- Design: [`phase12-transport-design.md`](phase12-transport-design.md) defines exact canonical-byte transfer, Git lineage refs, publication ordering, append-only retention, GC behavior, and recovery semantics. No endpoint schema, CLI wiring, or production network code has been added.
+- Design: [`phase12-transport-design.md`](phase12-transport-design.md), committed as `6f03dd3`, defines exact canonical-byte transfer, Git lineage refs, publication ordering, append-only retention, GC behavior, and recovery semantics. No endpoint schema, CLI wiring, or production network code has been added.
 - Implement the actual Publish protocol:
   1. Ensure physical snapshot available remotely.
   2. Upload required semantic immutable objects.

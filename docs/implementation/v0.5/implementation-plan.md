@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10 frozen. Phase 11 complete and frozen. Phase 12 transport and publication design drafted; implementation pending. Initial retention uses append-only Hub objects and protected Git lineage refs, so concurrent Git GC cannot remove referenced snapshots.
+Phase 10 frozen. Phase 11 complete and frozen. Phase 12 transport and publication design committed; implementation pending. Initial retention uses append-only Hub objects and protected Git lineage refs, so concurrent Git GC cannot remove referenced snapshots.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -16,7 +16,7 @@ Phase 10 frozen. Phase 11 complete and frozen. Phase 12 transport and publicatio
 | Phase 10.10 | `7676223` | Complete. Versioned JSON collaboration interface; MI-COL checks pass in `tests/collaboration_json.rs`. |
 | Phase 10.11 | `7676223` | Complete. E2E-01..10 pass through separate CLI processes; session compatibility, physical snapshot binding, candidate cleanup, and NamedReference preservation checked. Phase 10 frozen. |
 | Phase 11 | `c5d8029`, `9c9d01c`, `a065de8` | Complete. Step 11.1 satisfies the planned transport abstraction criteria; parent-first uploads, complete unnamed-tip discovery, structured fetch partial outcomes, and retention contract are covered. Source review found no distinct 11.2 workflow in the plan. Remote-backed workflows and live retention enforcement are Phase 12 work. Verification reported: 631 workspace tests and 16 remote tests pass. |
-| Phase 12.0 | Pending tracker checkpoint | Transport and publication design drafted in [phase12-transport-design.md](phase12-transport-design.md); concrete transport implementation remains pending. |
+| Phase 12.0 | `6f03dd3` | Design drafted and committed in [phase12-transport-design.md](phase12-transport-design.md). Concrete transport implementation remains pending. |
 
 ## 1. Objective
 
@@ -607,7 +607,7 @@ Implement abstractions for remote syncing.
 
 ## Phase 12: KAT Hub and Git remote integration
 ### Step 12.0: Concrete transport and publication design
-- Status: Design drafted; implementation pending.
+- Status: Design committed; implementation pending.
 - [x] Define semantic and Git-backed workspace transfer, reference visibility, retention, GC, and failure/recovery behavior without changing Phase 11 interfaces.
 - Notes: The repository contains no KAT Hub service target. Phase 12 implementation must integrate an existing Hub service or add a separately deployable service component before claiming a complete Hub transport.
 ### Goal
