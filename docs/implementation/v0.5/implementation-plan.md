@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, the trusted local Hub semantic core, and the Phase 12.4 Hub/Git integration acceptance are complete locally. Network exposure, deployment authentication, production retention proof, and storage durability acceptance remain pending.
+Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, the trusted local Hub semantic core, and the Phase 12.4 Hub/Git integration acceptance are complete locally. The Phase 12.5 service-access contract is drafted and awaiting review; network implementation, deployment authentication, production retention proof, and storage durability acceptance remain pending.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -23,6 +23,7 @@ Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, the trusted local 
 | Phase 12.2.3 | `517e102` | Complete locally. The loopback tests cover partial publication/retry, concurrent identical publication, rejected in-flight publication during aggressive GC, and read-back/fetch after GC. Hub publication and deployment-level durability proof remain pending. |
 | Phase 12.3 | `8a02b56` | Complete locally. Added a file-backed `SemanticTransport` with immutable canonical objects, repository-scoped named-ref CAS, fixed controlled-Git binding, closure/tree verification before CAS, and complete unnamed-tip discovery. Five Hub acceptance tests pass; full gate: 649 tests, build, fmt, and Clippy pass. This is trusted in-process code, not a network service. |
 | Phase 12.4 | `bd3eb73` | Complete locally. A loopback end-to-end acceptance test publishes a semantic and physical revision through `RemoteCoordinator`, the file-backed Hub, and `GitWorkspaceTransport`, then reopens both transports and fetches it into a second initialized KAT repository. It covers missing physical content, backend mismatch, interrupted upload/retry, stale CAS, and preservation of the receiving repository's local refs, accepted state, workspace base, active lineage, and working tree. Full gate: 650 tests, build, fmt, and Clippy pass. Network and deployment guarantees remain pending. |
+| Phase 12.5 design | `899aa57` | Drafted the remote service and authorization contract. Selects HTTPS JSON for the existing `SemanticTransport` and Git smart HTTP behind the same repository-scoped read/publish grant policy. The contract preserves the frozen transport traits and fixed Hub/backend binding. Interface freeze and implementation are pending review. |
 
 ## 1. Objective
 
@@ -711,6 +712,15 @@ Implement the actual remote sync via KAT Hub/Git.
 - Notes: The acceptance test uses a Unix loopback `git daemon` and the trusted in-process Hub core. It proves integrated local behavior only; it does not establish network authentication, production retention, or deployment durability.
 ### Not included in Steps 12.3–12.4
 - Remote authentication, network endpoint/client, and production deployment policy proof. The local core must not be exposed to untrusted processes.
+
+### Step 12.5: Remote service access and authorization design
+- Status: Draft contract (`899aa57`); interface freeze pending review.
+- [x] Define a versioned HTTPS JSON API and status mapping for the existing `SemanticTransport` operations.
+- [x] Define repository-scoped read and publish capabilities; keep repository provisioning, backend binding, and retention policy outside ordinary client APIs.
+- [x] Require the paired Git endpoint to use HTTPS Git smart protocol and the same grant registry, with read permission for fetch and publish permission for push.
+- [x] Specify token handling, TLS, error disclosure, and preservation of existing fetch/publication authority semantics.
+- [ ] Freeze the contract after review, then implement and test the authenticated semantic service/client and paired Git access boundary before remote CLI wiring.
+- Notes: The contract is recorded in [phase12-service-design.md](phase12-service-design.md). No network code is included. Bearer credentials require TLS; production deployment policy, token provisioning/revocation, retention, and durability still need implementation and evidence.
 
 ## Phase 13: Migration and compatibility
 ### Goal
