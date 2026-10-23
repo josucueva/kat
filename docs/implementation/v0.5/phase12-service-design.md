@@ -2,9 +2,9 @@
 
 ## Status
 
-Draft contract for review. Phase 12.4 remains complete locally; no network
-service or remote CLI is implemented by this design checkpoint. Freeze the
-service boundary before adding network code.
+Frozen contract. Phase 12.4 remains complete locally; no network service or
+remote CLI is implemented by this design checkpoint. Implement the shared
+authorization verifier and HTTP boundary tests before exposing endpoints.
 
 ## Goal
 
@@ -71,21 +71,39 @@ storage details. Internal service failures return a generic `5xx` response.
 
 ### 2. Authorization model
 
-Use operator-provisioned, high-entropy opaque bearer capabilities. Each grant
-is bound to exactly one `RepositoryId` and one scope:
+Use operator-provisioned, opaque bearer capabilities with at least 256 bits of
+randomness. The token is an opaque secret, not a self-contained JWT. The
+operator-managed grant record binds its SHA-256 verifier to exactly one
+`RepositoryId`, a scope, a required audience set, and a mandatory UTC expiry:
 
 - `read`: discover refs and fetch canonical objects.
 - `publish`: read access plus immutable object upload and named-reference CAS.
+- `semantic-api` and `workspace-git` are distinct audiences. A credential
+  usable by both endpoints must explicitly list both audiences.
 
-The service stores only a cryptographic digest of each token, compares token
-verifiers in constant time, and never accepts credentials in URL query
-parameters or request bodies. The HTTP semantic API uses the standard
-`Authorization: Bearer` header. A wrong-repository request is rejected before
-calling the Hub and returns the same `404` used for an unknown repository.
+One shared authorization verifier is called by both the Hub API and Git
+gateway with `(token, repository_id, audience, action)`. It checks the token
+digest in constant time, repository binding, audience, scope, and expiry for
+every HTTP request. `publish` implies `read`. The semantic API uses the
+standard `Authorization: Bearer` header. Git smart HTTP uses standard Basic
+authentication over TLS: username `kat`, with the same opaque token as the
+password. The gateway validates that password through the same verifier; the
+username carries no identity or permission. Credentials are never accepted in
+URL query parameters or request bodies.
+
+Missing, malformed, unknown, expired, or revoked credentials return `401` and
+never fall back to anonymous access. A valid token with insufficient scope
+returns `403`; a request for a repository outside that token's binding returns
+the same `404` as an unknown repository. The service does not reveal whether
+the other repository or its objects exist.
 
 There is no token issuance, repository provisioning, binding mutation, or
-retention-policy endpoint. Operators provision and revoke grants out of band;
-revocation takes effect when the service reloads the grant file or restarts.
+retention-policy endpoint. Operators provision and revoke grants out of band.
+Every request checks the current shared policy snapshot; removing a grant and
+atomically reloading the policy revokes it. A failed policy reload disables
+authorization until a valid policy is loaded, rather than leaving stale grants
+active. Expired grants are denied on the next request without reload.
+
 The local client receives a token at runtime from its caller. It must not write
 the token into `.kat` repository metadata, a remote URL, logs, or diagnostics.
 Later CLI work can connect that runtime input to an operating-system
@@ -94,10 +112,18 @@ credential store.
 ### 3. Physical Git endpoint
 
 Expose the controlled backend only through Git smart HTTP over HTTPS. The
-service-side gateway uses the same grant registry and token as the semantic
-API: Git HTTP Basic authentication carries the opaque token as the password;
-the username is a fixed non-identity label. The gateway authorizes
-`git-upload-pack` with `read` and `git-receive-pack` with `publish`, and maps
+gateway checks authorization at both ref discovery and pack execution:
+
+| Git HTTP request | Required permission |
+| --- | --- |
+| `GET info/refs?service=git-upload-pack` | `read` |
+| `POST git-upload-pack` | `read` |
+| `GET info/refs?service=git-receive-pack` | `publish` |
+| `POST git-receive-pack` | `publish` |
+
+Reject unknown services, malformed paths, and mismatched discovery/pack
+operations before invoking Git. Each request is independently authenticated;
+discovery success does not authorize a later pack request. The gateway maps
 the authenticated repository directly to its immutable configured backend.
 `GitWorkspaceTransport` obtains the token at runtime through Git's credential
 callback; it does not persist it in `workspace-remote.json`.
@@ -130,25 +156,26 @@ side.
 
 ## Acceptance tests before service exposure
 
-1. Read capability can list refs and fetch exact object bytes, but cannot
-   upload objects or CAS a ref; publish capability can perform both.
-2. Missing credentials, invalid credentials, cross-repository paths, and
-   wrong-scope requests fail without revealing whether another repository or
-   object exists.
-3. No request can create, replace, or delete the Hub-to-Git binding or change
-   the retention policy.
-4. A valid semantic publication and fetch use the fixed paired Git backend;
-   a missing physical snapshot or mismatched backend prevents CAS.
-5. Git smart HTTP fetch and push use the same repository grants: read-only
-   tokens cannot push, publish tokens can fetch and push only their bound
-   repository, and direct unauthenticated Git access is unavailable.
-6. An interrupted physical or semantic upload leaves named-reference authority
-   unchanged; retry succeeds. A stale CAS leaves the current target unchanged.
-7. The HTTP client rejects non-HTTPS remote URLs except explicit loopback test
-   setup, and no credential is serialized into repository configuration or
-   emitted in logs.
-8. Fetch through the network client preserves the receiving local ref, accepted
-   state, workspace base, active lineage, and working tree.
+| ID | Required behavior |
+| --- | --- |
+| AUTH-01 | Missing credential is rejected. |
+| AUTH-02 | Expired or revoked credential is rejected. |
+| AUTH-03 | A grant for another repository is rejected without disclosing repository/object existence. |
+| AUTH-04 | Read grant permits Hub discovery and exact object downloads. |
+| AUTH-05 | Read grant rejects object upload and named-reference CAS. |
+| AUTH-06 | Read grant permits Git fetch but rejects Git push. |
+| AUTH-07 | Publish grant permits authorized object uploads and CAS. |
+| AUTH-08 | Publish grant permits Git fetch and push only for its bound repository. |
+| AUTH-09 | Ordinary clients cannot alter backend binding or retention policy. |
+| AUTH-10 | Credentials are absent from logs, URLs, persisted state, and error output. |
+| AUTH-11 | Authorization does not bypass semantic closure, physical identity, binding, retention, or CAS validation. |
+| AUTH-12 | Hub and Git decisions use the same repository grant, scope, expiry, and revocation state. |
+| AUTH-13 | Both `info/refs` discovery and pack `POST` are independently authorized; upload-pack requires read and receive-pack requires publish. |
+| AUTH-14 | Direct unauthenticated Git access and anonymous fallback are unavailable. |
+| AUTH-15 | Tests send real HTTP requests through the service boundary; they do not test only the verifier in isolation. |
+| AUTH-16 | The HTTP client rejects non-HTTPS URLs except explicit loopback test setup and does not persist credentials. |
+| AUTH-17 | Network fetch preserves the receiving local ref, accepted state, workspace base, active lineage, and working tree. |
+| AUTH-18 | Interrupted upload leaves named-reference authority unchanged; retry succeeds, and stale CAS preserves the current target. |
 
 ## Trust assumptions and limits
 
