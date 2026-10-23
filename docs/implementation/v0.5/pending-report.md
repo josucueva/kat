@@ -1,6 +1,6 @@
 # v0.5 Implementation Pending Report
 
-This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phases 10 and 11 are frozen. The Phase 12.0 transport contract is frozen, and the local Phase 12.3 Hub semantic core is implemented. Network access and deployment acceptance remain pending.**
+This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phases 10 and 11 are frozen. The Phase 12.0 transport contract is frozen, and Phases 12.1–12.4 have completed their local implementation and integration milestones. Network access and deployment acceptance remain pending.**
 
 ## What Has Been Completed
 
@@ -19,6 +19,7 @@ All core reconciliation, conflict resolution, topology traversal, and collaborat
 - Phase 10.11: Ten local collaboration E2E scenarios through separate `kat` processes, covering clean and conflicted merges, semantic resolution without materialization, physical edits, abort, advance, switch, restart, and NamedReference preservation. The version-1 session format gained an optional clean physical snapshot ID; older sessions recover it from immutable inputs only. Candidate state and Git protection refs are checked across restart and after cleanup.
 - Phase 11.1: Frozen transport abstraction with semantic/workspace separation, recursive closure verification, parent-first uploads, closure-complete unnamed-tip discovery, per-reference tracking CAS outcomes, and a documented retention contract. Reported verification: 631 workspace tests and 16 remote tests pass.
 - Phase 12.3 (`8a02b56`): Added `TrustedHubSemanticTransport`, a file-backed local Hub core. It stores exact canonical object bytes by repository and object ID, persists KAT named refs with per-name CAS, fixes each repository to one controlled Git backend, and checks policy, semantic closure, and snapshot trees before CAS. Discovery advertises only verified unnamed tips and fails closed for invalid named refs. Five Hub acceptance tests cover interrupted upload/retry, missing dependencies, backend/policy drift, concurrent CAS, reopen, and coordinator publish/fetch. Full gate: 649 tests plus build, formatting, and Clippy passed.
+- Phase 12.4 (`bd3eb73`): Added one loopback integration acceptance test composing the real `RemoteCoordinator`, file-backed Hub, controlled Git server, and `GitWorkspaceTransport`. It publishes a revision with semantic and physical changes, reopens Hub and Git transports, and fetches into a second initialized KAT repository. It verifies rejection of missing physical content and backend mismatch, interrupted transfer with retry, stale CAS, exact semantic-object transfer, and preservation of the receiving local ref, accepted state, workspace base, active lineage, and working tree. Full gate: 650 tests, build, formatting, and Clippy passed.
 
 ## What Remains Pending
 
@@ -40,8 +41,8 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 - GitHub's fully qualified ref API and documented branch/tag rulesets do not prove retention for `refs/kat/*`. This repository's `origin` is only its project-source remote, not evidence of a configured KAT workspace host.
 - Phase 12.2 local implementation is complete. Its loopback backend and transport are not deployment proof. Phase 12.3 verifies the controlled backend's local policy files/configuration and reads snapshot refs and trees before CAS, but this does not verify production service startup, host controls, backups, or storage durability.
 - The Hub core is trusted in-process only. It has no network listener, endpoint schema, authentication, or CLI wiring. The Hub data root must be protected by deployment operating-system permissions; the library does not configure ACLs. Do not expose this core to untrusted processes.
-- Remaining remote integration: add the authenticated service adapter/client or an operator-managed single-process deployment, exercise the Hub together with `GitWorkspaceTransport`, and wire remote CLI workflows.
-- **Tests**: Fetch semantics, publication failures and race conditions, network drop retries.
+- Remaining Phase 12 work: define and implement the authenticated service adapter/client or an explicitly trusted single-process deployment, then wire remote CLI workflows. The Hub and Git workspace transport have now been exercised together locally; network authentication and deployment controls remain unverified.
+- **Tests**: Network failure/retry behavior, service authorization, deployment retention and durability, and end-to-end remote CLI workflows.
 
 ### Phase 13: Migration and compatibility
 **Goal:** Migrate v0.4 repositories to v0.5 seamlessly.

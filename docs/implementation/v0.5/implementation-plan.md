@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, and the trusted local Hub semantic core are complete. Network exposure, deployment authentication, production retention proof, and storage durability acceptance remain pending.
+Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, the trusted local Hub semantic core, and the Phase 12.4 Hub/Git integration acceptance are complete locally. Network exposure, deployment authentication, production retention proof, and storage durability acceptance remain pending.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -22,6 +22,7 @@ Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, and the trusted lo
 | Phase 12.2.2 | `1f5d8e2` | Complete. The Git `WorkspaceTransport` persists an immutable remote binding, verifies the server's repository/backend marker, transfers lineage refs, and recomputes `WorkspaceSnapshotId` from remote trees before exposing local representations. Seven loopback transport tests pass. |
 | Phase 12.2.3 | `517e102` | Complete locally. The loopback tests cover partial publication/retry, concurrent identical publication, rejected in-flight publication during aggressive GC, and read-back/fetch after GC. Hub publication and deployment-level durability proof remain pending. |
 | Phase 12.3 | `8a02b56` | Complete locally. Added a file-backed `SemanticTransport` with immutable canonical objects, repository-scoped named-ref CAS, fixed controlled-Git binding, closure/tree verification before CAS, and complete unnamed-tip discovery. Five Hub acceptance tests pass; full gate: 649 tests, build, fmt, and Clippy pass. This is trusted in-process code, not a network service. |
+| Phase 12.4 | `bd3eb73` | Complete locally. A loopback end-to-end acceptance test publishes a semantic and physical revision through `RemoteCoordinator`, the file-backed Hub, and `GitWorkspaceTransport`, then reopens both transports and fetches it into a second initialized KAT repository. It covers missing physical content, backend mismatch, interrupted upload/retry, stale CAS, and preservation of the receiving repository's local refs, accepted state, workspace base, active lineage, and working tree. Full gate: 650 tests, build, fmt, and Clippy pass. Network and deployment guarantees remain pending. |
 
 ## 1. Objective
 
@@ -701,7 +702,14 @@ Implement the actual remote sync via KAT Hub/Git.
 - [x] Discover only closure-complete unnamed DAG tips; fail listing when a named ref or ref file is invalid.
 - [x] Test interrupted upload/retry, missing semantic and physical dependencies, invalid backend binding, policy drift, CAS race, Hub reopen, and publish/fetch through `RemoteCoordinator` with a test workspace transport; Hub-side snapshot verification uses the controlled Git repository.
 - Notes: This first Hub service boundary is a trusted in-process file-backed core. It has no network listener, endpoint schema, authentication, or CLI wiring. The deployment must restrict the Hub data root with operating-system permissions; the library does not set ACLs. Production retention, durability, and administrative trust remain unverified.
-### Out of scope for this phase
+### Step 12.4: Hub and Git transport integration
+- Status: Complete locally (`bd3eb73`).
+- [x] Compose `RemoteCoordinator`, `TrustedHubSemanticTransport`, and `GitWorkspaceTransport` against the same controlled Git backend and publish one revision with both semantic and physical changes.
+- [x] Reject publication when a required physical snapshot is absent or the Hub/workspace backend binding differs; verify an interrupted physical upload leaves the named reference unchanged and can be retried.
+- [x] Verify stale CAS cannot advance the named reference, then reopen the Hub and Git transports and fetch the complete closure into a second initialized KAT repository.
+- [x] Confirm fetch preserves the receiving repository's local named ref, accepted state, workspace base, active Git lineage, and working-tree bytes while transferring exact canonical objects and snapshots.
+- Notes: The acceptance test uses a Unix loopback `git daemon` and the trusted in-process Hub core. It proves integrated local behavior only; it does not establish network authentication, production retention, or deployment durability.
+### Not included in Steps 12.3–12.4
 - Remote authentication, network endpoint/client, and production deployment policy proof. The local core must not be exposed to untrusted processes.
 
 ## Phase 13: Migration and compatibility
