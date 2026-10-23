@@ -9,14 +9,31 @@ use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
 
 use git2::{Repository, Signature};
-use kat::domain::identity::{RepositoryId, WorkspaceSnapshotId};
+use kat::domain::change::ChangeRevision;
+use kat::domain::element::{KnowledgeElementVersion, Lifecycle};
+use kat::domain::identity::{
+    ChangeId, ChangeRevisionId, ElementId, ObjectId, RepositoryId, RepositoryRevisionId,
+    SemanticStateId, WorkspaceSnapshotId,
+};
+use kat::domain::operation::Operation;
+use kat::domain::property::PropertyValue;
+use kat::domain::revision::RepositoryRevision;
+use kat::domain::state::{ElementStateEntry, SemanticState};
 use kat::domain::workspace::WorkspaceBackend;
+use kat::encoding::canonical_bytes;
+use kat::encoding::object::{CanonicalObject, CanonicalPayload};
+use kat::repository::hub::TrustedHubSemanticTransport;
 use kat::repository::init::init_repository;
-use kat::repository::remote::{RemoteTransportError, WorkspaceTransport};
+use kat::repository::object_store::ObjectStore;
+use kat::repository::ref_store::FileRefStore;
+use kat::repository::remote::{
+    RemoteCoordinator, RemoteTransportError, SemanticTransport, WorkspaceTransport,
+};
 use kat::repository::workspace::git::GitWorkspaceBackend;
 use kat::repository::workspace::git_transport::{
     ControlledGitBackend, GitWorkspaceBinding, GitWorkspaceTransport, WorkspaceBackendId,
 };
+use kat::repository::workspace::state::read_workspace_state;
 use tempfile::TempDir;
 
 struct GitDaemon {
@@ -672,4 +689,338 @@ fn git_workspace_transport_rejects_a_remote_with_a_different_repository_binding(
         Err(RemoteTransportError::Other(message))
             if message == "workspace Git backend binding mismatch"
     ));
+}
+
+fn put_payload(objects: &ObjectStore, payload: CanonicalPayload) -> ObjectId {
+    let bytes = canonical_bytes(&CanonicalObject { payload }).unwrap();
+    objects.put(&bytes).unwrap()
+}
+
+#[test]
+fn hub_and_git_transports_publish_then_fetch_a_complete_revision() {
+    let server_root = tempfile::tempdir().unwrap();
+    let server_path = server_root.path().join("workspace.git");
+    let source_dir = tempfile::tempdir().unwrap();
+    let source_root = source_dir.path();
+    let source_init = init_repository(source_root).unwrap();
+    let source_backend = GitWorkspaceBackend::init(source_root).unwrap();
+    let base_snapshot = source_backend.create_snapshot(&[]).unwrap();
+    let source_objects = ObjectStore::new(source_root.join(".kat"));
+    let base_revision = RepositoryRevisionId::from_object_id(put_payload(
+        &source_objects,
+        CanonicalPayload::RepositoryRevision(RepositoryRevision {
+            parents: vec![],
+            semantic_state: SemanticStateId::from_object_id(source_init.state),
+            workspace_snapshot: base_snapshot.clone(),
+            semantic_change: None,
+        }),
+    ));
+    let source_refs = FileRefStore::new(source_root.join(".kat"));
+    source_refs
+        .compare_and_swap_ref("local/main", None, base_revision)
+        .unwrap();
+    kat::repository::workspace::init_workspace(source_root, base_revision).unwrap();
+
+    fs::write(
+        source_root.join("remote.txt"),
+        "semantic and physical update\n",
+    )
+    .unwrap();
+    let candidate_snapshot = source_backend
+        .create_snapshot(&[PathBuf::from("remote.txt")])
+        .unwrap();
+    let element_id = ElementId::new();
+    let version_id = put_payload(
+        &source_objects,
+        CanonicalPayload::KnowledgeElementVersion(KnowledgeElementVersion {
+            element_id,
+            type_id: "kat.core/requirement".into(),
+            lifecycle: Lifecycle::Active,
+            properties: vec![(
+                "title".into(),
+                PropertyValue::Text("Fetched from the Hub".into()),
+            )],
+        }),
+    );
+    let candidate_state = put_payload(
+        &source_objects,
+        CanonicalPayload::SemanticState(SemanticState {
+            ontology_version: source_init.ontology,
+            elements: vec![ElementStateEntry {
+                element_id,
+                version: version_id,
+            }],
+            relationships: vec![],
+        }),
+    );
+    let change_object = put_payload(
+        &source_objects,
+        CanonicalPayload::ChangeRevision(ChangeRevision {
+            change_id: ChangeId::new(),
+            base_states: vec![source_init.state],
+            result_state: candidate_state,
+            operations: vec![Operation::CreateElement {
+                new_version: version_id,
+            }],
+            dependencies: vec![],
+            description: Some("Add the remotely published requirement".into()),
+        }),
+    );
+    let candidate_revision = RepositoryRevisionId::from_object_id(put_payload(
+        &source_objects,
+        CanonicalPayload::RepositoryRevision(RepositoryRevision {
+            parents: vec![base_revision],
+            semantic_state: SemanticStateId::from_object_id(candidate_state),
+            workspace_snapshot: candidate_snapshot.clone(),
+            semantic_change: Some(ChangeRevisionId::from_object_id(change_object)),
+        }),
+    ));
+
+    let binding = GitWorkspaceBinding {
+        repository_id: source_init.repository_id,
+        workspace_backend_id: WorkspaceBackendId::new(),
+    };
+    ControlledGitBackend::provision(&server_path, binding).unwrap();
+    let server = start_git_daemon(server_root);
+    let source_transport =
+        GitWorkspaceTransport::configure(source_root, &server.url, binding).unwrap();
+    let hub_dir = tempfile::tempdir().unwrap();
+    let hub_root = hub_dir.path().join("hub");
+    let hub = TrustedHubSemanticTransport::provision(&hub_root, binding, &server_path).unwrap();
+
+    source_transport.publish_snapshot(&base_snapshot).unwrap();
+    assert!(
+        !source_transport
+            .remote_snapshot_available(&candidate_snapshot)
+            .unwrap()
+    );
+    for id in [
+        source_init.ontology,
+        source_init.state,
+        version_id,
+        candidate_state,
+        change_object,
+        base_revision.as_object_id(),
+        candidate_revision.as_object_id(),
+    ] {
+        let bytes = source_objects.get(id).unwrap();
+        hub.store_object(source_init.repository_id, id, &bytes)
+            .unwrap();
+    }
+    assert_eq!(
+        hub.compare_and_swap_reference(
+            source_init.repository_id,
+            "main",
+            None,
+            candidate_revision,
+        ),
+        Err(RemoteTransportError::SnapshotIntegrity(
+            candidate_snapshot.clone()
+        ))
+    );
+    assert!(
+        hub.list_references(source_init.repository_id)
+            .unwrap()
+            .named
+            .is_empty()
+    );
+
+    let mismatched_binding = GitWorkspaceBinding {
+        workspace_backend_id: WorkspaceBackendId::new(),
+        ..binding
+    };
+    assert!(ControlledGitBackend::open(&server_path, mismatched_binding).is_err());
+    assert!(
+        TrustedHubSemanticTransport::provision(&hub_root, mismatched_binding, &server_path)
+            .is_err()
+    );
+    let mismatch_dir = tempfile::tempdir().unwrap();
+    init_repository(mismatch_dir.path()).unwrap();
+    fs::copy(
+        source_root.join(".kat/repository.toml"),
+        mismatch_dir.path().join(".kat/repository.toml"),
+    )
+    .unwrap();
+    GitWorkspaceBackend::init(mismatch_dir.path()).unwrap();
+    let mismatched_transport =
+        GitWorkspaceTransport::configure(mismatch_dir.path(), &server.url, mismatched_binding)
+            .unwrap();
+    assert!(
+        mismatched_transport
+            .remote_snapshot_available(&base_snapshot)
+            .is_err()
+    );
+
+    let candidate_commit =
+        GitWorkspaceBackend::get_snapshot_representations(source_root, &candidate_snapshot)
+            .unwrap()[0]
+            .commit;
+    let candidate_ref = format!(
+        "refs/kat/lineage/{}/{candidate_commit}",
+        candidate_snapshot.to_hex()
+    );
+    let hook_path = server_path.join("hooks/pre-receive");
+    let original_hook = fs::read(&hook_path).unwrap();
+    fs::write(
+        &hook_path,
+        format!(
+            "#!/bin/sh\nwhile IFS=' ' read -r old new ref; do\n    if [ \"$ref\" = '{candidate_ref}' ]; then\n        echo 'injected physical transfer interruption' >&2\n        exit 1\n    fi\ndone\nexit 0\n"
+        ),
+    )
+    .unwrap();
+    let interrupted = {
+        let publisher = RemoteCoordinator::new(
+            source_init.repository_id,
+            "origin",
+            &source_objects,
+            &source_refs,
+            &hub,
+            &source_transport,
+        );
+        publisher.publish("main", None, candidate_revision)
+    };
+    fs::write(&hook_path, original_hook).unwrap();
+    assert!(
+        interrupted.is_err(),
+        "interrupted publish unexpectedly succeeded"
+    );
+    assert!(
+        Repository::open_bare(&server_path)
+            .unwrap()
+            .find_reference(&candidate_ref)
+            .is_err()
+    );
+    assert!(
+        hub.list_references(source_init.repository_id)
+            .unwrap()
+            .named
+            .is_empty()
+    );
+
+    let source_accepted = source_refs.read_accepted().unwrap();
+    {
+        let publisher = RemoteCoordinator::new(
+            source_init.repository_id,
+            "origin",
+            &source_objects,
+            &source_refs,
+            &hub,
+            &source_transport,
+        );
+        publisher.publish("main", None, candidate_revision).unwrap();
+        assert!(matches!(
+            publisher.publish("main", None, candidate_revision),
+            Err(kat::repository::remote::RemoteError::Transport(
+                RemoteTransportError::ReferenceConflict
+            ))
+        ));
+    }
+    assert_eq!(source_refs.read_ref("local/main").unwrap(), base_revision);
+    assert_eq!(source_refs.read_accepted().unwrap(), source_accepted);
+    assert_eq!(
+        hub.list_references(source_init.repository_id)
+            .unwrap()
+            .named[0]
+            .target,
+        candidate_revision
+    );
+
+    drop(source_transport);
+    drop(hub);
+    let reopened_hub =
+        TrustedHubSemanticTransport::open(&hub_root, source_init.repository_id).unwrap();
+    let reopened_source_transport = GitWorkspaceTransport::open(source_root).unwrap();
+    assert!(
+        reopened_source_transport
+            .remote_snapshot_available(&candidate_snapshot)
+            .unwrap()
+    );
+
+    let target_dir = tempfile::tempdir().unwrap();
+    let target_root = target_dir.path();
+    let target_init = init_repository(target_root).unwrap();
+    fs::copy(
+        source_root.join(".kat/repository.toml"),
+        target_root.join(".kat/repository.toml"),
+    )
+    .unwrap();
+    let target_backend = GitWorkspaceBackend::init(target_root).unwrap();
+    fs::write(target_root.join("keep.txt"), "receiver working tree\n").unwrap();
+    let local_snapshot = target_backend
+        .create_snapshot(&[PathBuf::from("keep.txt")])
+        .unwrap();
+    let target_objects = ObjectStore::new(target_root.join(".kat"));
+    let local_revision = RepositoryRevisionId::from_object_id(put_payload(
+        &target_objects,
+        CanonicalPayload::RepositoryRevision(RepositoryRevision {
+            parents: vec![],
+            semantic_state: SemanticStateId::from_object_id(target_init.state),
+            workspace_snapshot: local_snapshot,
+            semantic_change: None,
+        }),
+    ));
+    let target_refs = FileRefStore::new(target_root.join(".kat"));
+    target_refs
+        .compare_and_swap_ref("local/main", None, local_revision)
+        .unwrap();
+    kat::repository::workspace::init_workspace(target_root, local_revision).unwrap();
+    let accepted_before = target_refs.read_accepted().unwrap();
+    let workspace_before = read_workspace_state(target_root).unwrap();
+    let active_lineage_before = GitWorkspaceBackend::read_active_lineage_for_test(target_root);
+    let working_tree_before = fs::read(target_root.join("keep.txt")).unwrap();
+    let target_transport =
+        GitWorkspaceTransport::configure(target_root, &server.url, binding).unwrap();
+    drop(target_transport);
+    let reopened_target_transport = GitWorkspaceTransport::open(target_root).unwrap();
+
+    let fetcher = RemoteCoordinator::new(
+        source_init.repository_id,
+        "origin",
+        &target_objects,
+        &target_refs,
+        &reopened_hub,
+        &reopened_target_transport,
+    );
+    let fetched = fetcher.fetch().unwrap();
+    assert_eq!(fetched.updated.len(), 1);
+    assert_eq!(fetched.updated[0].target, candidate_revision);
+    assert_eq!(
+        target_refs.read_ref("remotes/origin/main").unwrap(),
+        candidate_revision
+    );
+    assert_eq!(target_refs.read_ref("local/main").unwrap(), local_revision);
+    assert_eq!(target_refs.read_accepted().unwrap(), accepted_before);
+    assert_eq!(read_workspace_state(target_root).unwrap(), workspace_before);
+    assert_eq!(
+        GitWorkspaceBackend::read_active_lineage_for_test(target_root),
+        active_lineage_before
+    );
+    assert_eq!(
+        fs::read(target_root.join("keep.txt")).unwrap(),
+        working_tree_before
+    );
+    assert!(
+        reopened_target_transport
+            .local_snapshot_available(&base_snapshot)
+            .unwrap()
+    );
+    assert!(
+        reopened_target_transport
+            .local_snapshot_available(&candidate_snapshot)
+            .unwrap()
+    );
+    for id in [
+        source_init.ontology,
+        source_init.state,
+        version_id,
+        candidate_state,
+        change_object,
+        base_revision.as_object_id(),
+        candidate_revision.as_object_id(),
+    ] {
+        assert_eq!(
+            target_objects.get(id).unwrap(),
+            source_objects.get(id).unwrap()
+        );
+    }
 }
