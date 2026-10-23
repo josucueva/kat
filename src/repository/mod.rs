@@ -1,6 +1,7 @@
 //! Physical repository: object store, reference store, metadata,
 //! initialization, and open/integrity.
 
+pub mod auth;
 pub mod author;
 pub mod change;
 pub mod conflicts;
@@ -31,6 +32,10 @@ pub use session::{
     mark_draft_session_stale, read_draft_session, write_draft_session_atomic,
 };
 
+pub use auth::{
+    AuthorizationAction, AuthorizationAudience, AuthorizationError, AuthorizationGrant,
+    AuthorizationPolicy, AuthorizationScope, AuthorizationVerifier,
+};
 pub use change::{
     AccountArtifactInput, ChangeContext, ChangeError, CommitOutcome, CreateElementInput,
     DeprecateElementInput, LinkElementInput, PersistedAccountChange, PersistedChange,
