@@ -2,9 +2,9 @@
 
 ## Status
 
-Frozen contract. Phase 12.4 remains complete locally; no network service or
-remote CLI is implemented by this design checkpoint. Implement the shared
-authorization verifier and HTTP boundary tests before exposing endpoints.
+Frozen contract. Step 12.5.1's verifier and Step 12.5.2's authenticated Hub
+JSON API/client are implemented locally. The Git smart HTTP gateway, remote
+CLI, and deployment verification remain pending.
 
 ## Goal
 
@@ -55,6 +55,20 @@ adapter implements the existing `SemanticTransport` contract:
 | Store object | `PUT .../objects/{object_id}` | `204`; body is the exact canonical bytes |
 | CAS named ref | `PUT .../reference-cas` | JSON `{ "name", "expected", "new" }`; `204` on success |
 
+The references response is versioned JSON containing `named` and
+`unnamed_heads`; the client rejects unknown versions and verifies downloaded
+canonical object hashes and encodings. The listener is supplied by the
+deployment and must sit behind the trusted TLS terminator on its private side.
+The client sends `Connection: close` for every operation. The trusted proxy
+must preserve that one-request-per-upstream-connection behavior, so rejected
+requests with unread bodies cannot leave bytes to be parsed as another request.
+
+The initial service limits each canonical object request/response to 64 MiB,
+each CAS request body to 64 KiB, and references JSON to 1 MiB. It limits each
+Hub service process to 100 requests per second; the trusted proxy must add
+per-client quotas and request timeouts when exposed to multiple clients. A
+limit rejection does not write an object or move a reference.
+
 The CAS name is in the JSON body so names containing `/` do not depend on URL
 path escaping. The server validates canonical object hashes and encodings,
 reference names, semantic closure, the fixed backend binding, and the physical
@@ -68,6 +82,9 @@ or repository outside the credential's scope, `409` for stale CAS, and `422`
 for invalid object, ref, or closure data. Error responses use a small versioned
 JSON envelope and do not expose filesystem paths, token values, or internal
 storage details. Internal service failures return a generic `5xx` response.
+Invalid destination data is distinct from internal service failure in the
+transport error result so invalid closures map to `422` while storage faults
+remain `5xx`.
 
 ### 2. Authorization model
 
@@ -81,8 +98,8 @@ operator-managed grant record binds its SHA-256 verifier to exactly one
 - `semantic-api` and `workspace-git` are distinct audiences. A credential
   usable by both endpoints must explicitly list both audiences.
 
-One shared authorization verifier is called by both the Hub API and Git
-gateway with `(token, repository_id, audience, action)`. It checks the token
+The Hub API and Git gateway share one authorization verifier instance and call
+it with `(token, repository_id, audience, action)`. It checks the token
 digest in constant time, repository binding, audience, scope, and expiry for
 every HTTP request. `publish` implies `read`. The semantic API uses the
 standard `Authorization: Bearer` header. Git smart HTTP uses standard Basic
@@ -104,7 +121,10 @@ atomically reloading the policy revokes it. A failed policy reload disables
 authorization until a valid policy is loaded, rather than leaving stale grants
 active. Expired grants are denied on the next request without reload.
 
-The local client receives a token at runtime from its caller. It must not write
+The HTTPS client uses certificate validation, has a 30-second request timeout,
+does not follow redirects, and rejects HTTP endpoints. Its only plaintext HTTP
+path is a private test constructor that accepts literal loopback IPs. The local
+client receives a token at runtime from its caller. It must not write
 the token into `.kat` repository metadata, a remote URL, logs, or diagnostics.
 Later CLI work can connect that runtime input to an operating-system
 credential store.

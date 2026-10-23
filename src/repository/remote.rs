@@ -50,6 +50,10 @@ pub enum RemoteTransportError {
     /// The endpoint could not verify a physical snapshot.
     #[error("workspace snapshot integrity check failed for {0:?}")]
     SnapshotIntegrity(WorkspaceSnapshotId),
+    /// The destination rejected invalid canonical data, a reference name, or
+    /// an incomplete semantic publication closure.
+    #[error("remote rejected invalid KAT data")]
+    InvalidData,
     /// A compare-and-swap found a different current reference value.
     #[error("remote reference changed concurrently")]
     ReferenceConflict,

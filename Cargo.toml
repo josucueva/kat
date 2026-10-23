@@ -18,6 +18,7 @@ git2 = "0.21.0"
 hex = "0.4.3"
 subtle = "2.6"
 tiny_http = "0.12"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 # ObjectStore tests use real temp directories with automatic cleanup.

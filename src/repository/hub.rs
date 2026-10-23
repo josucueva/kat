@@ -138,9 +138,10 @@ impl TrustedHubSemanticTransport {
         let objects = self.objects();
         let snapshots =
             verify_revision_closure(target, |id| read_object(&objects, id)).map_err(|error| {
-                other(format!(
-                    "repository revision closure is incomplete: {error}"
-                ))
+                match error {
+                    RemoteError::ObjectStore(_) => other(error),
+                    _ => RemoteTransportError::InvalidData,
+                }
             })?;
         for snapshot in snapshots {
             if !backend.verify_snapshot_integrity(&snapshot)? {
@@ -263,7 +264,8 @@ impl SemanticTransport for TrustedHubSemanticTransport {
         let backend = self.verify_binding(repository_id)?;
         let refs = self.refs();
         let path = format!("local/{name}");
-        refs.validate_ref_name(&path).map_err(other)?;
+        refs.validate_ref_name(&path)
+            .map_err(|_| RemoteTransportError::InvalidData)?;
         self.verify_candidate(new, &backend)?;
         refs.compare_and_swap_ref(&path, expected, new)
             .map_err(map_ref_error)

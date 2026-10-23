@@ -328,7 +328,7 @@ fn validate_token(token: &str) -> Result<(), AuthorizationError> {
     }
 }
 
-fn valid_token(token: &str) -> bool {
+pub(crate) fn valid_token(token: &str) -> bool {
     token.len() >= MIN_TOKEN_LEN
         && token
             .bytes()
