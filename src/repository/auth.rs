@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -256,6 +257,23 @@ impl AuthorizationVerifier {
             action,
         )
     }
+
+    /// Extracts the Git smart HTTP `kat:<token>` Basic credential and applies
+    /// the shared workspace-Git grant policy.
+    pub fn authorize_git_basic_headers(
+        &self,
+        headers: &[Header],
+        repository_id: RepositoryId,
+        action: AuthorizationAction,
+    ) -> Result<(), AuthorizationError> {
+        let token = basic_git_token(headers)?;
+        self.authorize(
+            &token,
+            repository_id,
+            AuthorizationAudience::WorkspaceGit,
+            action,
+        )
+    }
 }
 
 /// Safe authorization failures. These values never contain a credential.
@@ -318,6 +336,43 @@ fn bearer_token(headers: &[Header]) -> Result<&str, AuthorizationError> {
         return Err(AuthorizationError::Unauthenticated);
     }
     Ok(token)
+}
+
+fn basic_git_token(headers: &[Header]) -> Result<String, AuthorizationError> {
+    let mut authorization = headers
+        .iter()
+        .filter(|header| header.field.equiv("Authorization"));
+    let value = authorization
+        .next()
+        .ok_or(AuthorizationError::Unauthenticated)?
+        .value
+        .as_str();
+    if authorization.next().is_some() {
+        return Err(AuthorizationError::Unauthenticated);
+    }
+    let mut parts = value.split_ascii_whitespace();
+    if !parts
+        .next()
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("Basic"))
+    {
+        return Err(AuthorizationError::Unauthenticated);
+    }
+    let encoded = parts.next().ok_or(AuthorizationError::Unauthenticated)?;
+    if parts.next().is_some() {
+        return Err(AuthorizationError::Unauthenticated);
+    }
+    let credentials = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| AuthorizationError::Unauthenticated)?;
+    let credentials =
+        std::str::from_utf8(&credentials).map_err(|_| AuthorizationError::Unauthenticated)?;
+    let (username, token) = credentials
+        .split_once(':')
+        .ok_or(AuthorizationError::Unauthenticated)?;
+    if username != "kat" || !valid_token(token) {
+        return Err(AuthorizationError::Unauthenticated);
+    }
+    Ok(token.to_owned())
 }
 
 fn validate_token(token: &str) -> Result<(), AuthorizationError> {

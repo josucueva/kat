@@ -4,12 +4,15 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use git2::{Direction, PushOptions, RemoteCallbacks, Repository};
+use git2::{
+    Cred, Direction, FetchOptions, PushOptions, RemoteCallbacks, RemoteRedirect, Repository,
+};
 use uuid::Uuid;
 
 use crate::domain::identity::{RepositoryId, WorkspaceSnapshotId};
 use crate::domain::workspace::{WorkspaceBackend, WorkspaceBackendError};
 use crate::encoding::hash::hash_workspace_snapshot;
+use crate::repository::auth::valid_token;
 use crate::repository::metadata::RepositoryMetadata;
 use crate::repository::remote::{RemoteTransportError, WorkspaceTransport};
 use crate::repository::workspace::git::{GitWorkspaceBackend, collect_git_tree};
@@ -58,6 +61,7 @@ pub struct GitWorkspaceTransport {
     project_root: PathBuf,
     binding: GitWorkspaceBinding,
     url: String,
+    token: Option<String>,
 }
 
 impl GitWorkspaceTransport {
@@ -68,8 +72,8 @@ impl GitWorkspaceTransport {
         binding: GitWorkspaceBinding,
     ) -> Result<Self, RemoteTransportError> {
         let url = url.into();
-        if url.trim().is_empty() {
-            return Err(other("workspace Git remote URL is empty"));
+        if !safe_workspace_remote_url(&url) {
+            return Err(other("workspace Git remote URL is invalid"));
         }
         verify_local_repository_binding(project_root, binding)?;
 
@@ -106,7 +110,7 @@ impl GitWorkspaceTransport {
     /// Opens the saved binding after checking it against local repository metadata.
     pub fn open(project_root: &Path) -> Result<Self, RemoteTransportError> {
         let saved = read_saved_workspace_remote(&workspace_remote_config_path(project_root))?;
-        if saved.version != 1 || saved.url.trim().is_empty() {
+        if saved.version != 1 || !safe_workspace_remote_url(&saved.url) {
             return Err(other("workspace Git remote configuration is invalid"));
         }
         verify_local_repository_binding(project_root, saved.binding)?;
@@ -115,11 +119,99 @@ impl GitWorkspaceTransport {
             project_root: project_root.to_path_buf(),
             binding: saved.binding,
             url: saved.url,
+            token: None,
         })
+    }
+
+    /// Supplies a runtime-only token for an HTTPS Git smart HTTP endpoint.
+    /// The token is never written to the repository's remote configuration.
+    pub fn with_runtime_token(mut self, token: &str) -> Result<Self, RemoteTransportError> {
+        if !valid_token(token) || self.url.contains(token) || !safe_https_endpoint(&self.url) {
+            return Err(other("invalid authenticated workspace Git configuration"));
+        }
+        self.disable_git_redirects()?;
+        self.token = Some(token.to_owned());
+        Ok(self)
+    }
+
+    /// Opens the configured remote and supplies its runtime-only HTTPS token.
+    pub fn open_with_runtime_token(
+        project_root: &Path,
+        token: &str,
+    ) -> Result<Self, RemoteTransportError> {
+        Self::open(project_root)?.with_runtime_token(token)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_loopback_runtime_token(
+        mut self,
+        token: &str,
+    ) -> Result<Self, RemoteTransportError> {
+        let authority = self
+            .url
+            .strip_prefix("http://")
+            .and_then(|rest| rest.split('/').next())
+            .unwrap_or("");
+        let host = if authority.starts_with('[') {
+            authority
+                .find(']')
+                .map(|end| &authority[1..end])
+                .unwrap_or("")
+        } else {
+            authority.split(':').next().unwrap_or("")
+        };
+        let loopback = host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback());
+        if !cfg!(test)
+            || !loopback
+            || !valid_token(token)
+            || self.url.contains(token)
+            || authority.contains('@')
+            || self.url.contains(['?', '#'])
+        {
+            return Err(other("invalid authenticated workspace Git configuration"));
+        }
+        self.disable_git_redirects()?;
+        self.token = Some(token.to_owned());
+        Ok(self)
     }
 
     pub fn binding(&self) -> GitWorkspaceBinding {
         self.binding
+    }
+
+    fn remote_callbacks(&self) -> RemoteCallbacks<'_> {
+        let mut callbacks = RemoteCallbacks::new();
+        if let Some(token) = self.token.as_deref() {
+            callbacks.credentials(move |_url, _username, _allowed| {
+                Cred::userpass_plaintext("kat", token)
+            });
+        }
+        callbacks
+    }
+
+    fn disable_git_redirects(&self) -> Result<(), RemoteTransportError> {
+        let repo =
+            Repository::open_bare(self.project_root.join(".kat/physical/git")).map_err(other)?;
+        // `connect_auth` has no redirect option, so libgit2 reads this local override.
+        repo.config()
+            .map_err(other)?
+            .set_bool("http.followRedirects", false)
+            .map_err(other)
+    }
+
+    fn keep_authenticated_redirects_disabled(
+        &self,
+        repo: &Repository,
+    ) -> Result<(), RemoteTransportError> {
+        if self.token.is_some() {
+            repo.config()
+                .map_err(other)?
+                .set_bool("http.followRedirects", false)
+                .map_err(other)?;
+        }
+        Ok(())
     }
 
     fn list_snapshot_refs(
@@ -128,20 +220,24 @@ impl GitWorkspaceTransport {
         id: &WorkspaceSnapshotId,
     ) -> Result<Vec<(String, git2::Oid)>, RemoteTransportError> {
         self.verify_remote_binding()?;
+        self.keep_authenticated_redirects_disabled(repo)?;
         let prefix = snapshot_ref_prefix(id);
         let mut remote = repo.remote_anonymous(&self.url).map_err(other)?;
-        remote.connect(Direction::Fetch).map_err(other)?;
-        let advertised = remote
-            .list()
-            .map_err(other)?
-            .iter()
-            .filter_map(|head| {
-                head.name()
-                    .strip_prefix(&prefix)
-                    .map(|suffix| (head.name().to_owned(), suffix.to_owned(), head.oid()))
-            })
-            .collect::<Vec<_>>();
-        remote.disconnect().map_err(other)?;
+        let advertised = {
+            let connection = remote
+                .connect_auth(Direction::Fetch, Some(self.remote_callbacks()), None)
+                .map_err(other)?;
+            connection
+                .list()
+                .map_err(other)?
+                .iter()
+                .filter_map(|head| {
+                    head.name()
+                        .strip_prefix(&prefix)
+                        .map(|suffix| (head.name().to_owned(), suffix.to_owned(), head.oid()))
+                })
+                .collect::<Vec<_>>()
+        };
 
         let mut refs = advertised
             .into_iter()
@@ -163,18 +259,29 @@ impl GitWorkspaceTransport {
         let temp = TemporaryGitRepository::new()?;
         let repo = Repository::open_bare(temp.path()).map_err(other)?;
         let mut remote = repo.remote_anonymous(&self.url).map_err(other)?;
-        remote.connect(Direction::Fetch).map_err(other)?;
-        let target = remote
-            .list()
-            .map_err(other)?
-            .iter()
-            .find(|head| head.name() == BINDING_REF)
-            .map(|head| head.oid());
-        remote.disconnect().map_err(other)?;
+        let target = {
+            let connection = remote
+                .connect_auth(Direction::Fetch, Some(self.remote_callbacks()), None)
+                .map_err(other)?;
+            connection
+                .list()
+                .map_err(other)?
+                .iter()
+                .find(|head| head.name() == BINDING_REF)
+                .map(|head| head.oid())
+        };
         let target = target.ok_or_else(|| other("workspace Git backend binding is missing"))?;
         let refspec = format!("{BINDING_REF}:{BINDING_REF}");
+        let mut options = FetchOptions::new();
+        options
+            .remote_callbacks(self.remote_callbacks())
+            .follow_redirects(RemoteRedirect::None);
         remote
-            .fetch(&[refspec], None, Some("KAT workspace binding verification"))
+            .fetch(
+                &[refspec],
+                Some(&mut options),
+                Some("KAT workspace binding verification"),
+            )
             .map_err(other)?;
         let reference = repo.find_reference(BINDING_REF).map_err(other)?;
         if reference.kind() != Some(git2::ReferenceType::Direct)
@@ -221,14 +328,23 @@ impl GitWorkspaceTransport {
         if refs.len() != destinations.len() {
             return Err(other("snapshot ref transfer plan is inconsistent"));
         }
+        self.keep_authenticated_redirects_disabled(repo)?;
         let refspecs = refs
             .iter()
             .zip(destinations)
             .map(|((source, _), destination)| format!("{source}:{destination}"))
             .collect::<Vec<_>>();
         let mut remote = repo.remote_anonymous(&self.url).map_err(other)?;
+        let mut options = FetchOptions::new();
+        options
+            .remote_callbacks(self.remote_callbacks())
+            .follow_redirects(RemoteRedirect::None);
         remote
-            .fetch(&refspecs, None, Some("KAT workspace snapshot transfer"))
+            .fetch(
+                &refspecs,
+                Some(&mut options),
+                Some("KAT workspace snapshot transfer"),
+            )
             .map_err(other)
     }
 }
@@ -310,6 +426,7 @@ impl WorkspaceTransport for GitWorkspaceTransport {
             .map_err(other)?;
         let repo =
             Repository::open_bare(self.project_root.join(".kat/physical/git")).map_err(other)?;
+        self.keep_authenticated_redirects_disabled(&repo)?;
         let refs = reps
             .iter()
             .map(|rep| (snapshot_ref_name(id, rep.commit), rep.commit))
@@ -328,7 +445,7 @@ impl WorkspaceTransport for GitWorkspaceTransport {
             let mut remote = repo.remote_anonymous(&self.url).map_err(other)?;
             let mut rejection = None;
             {
-                let mut callbacks = RemoteCallbacks::new();
+                let mut callbacks = self.remote_callbacks();
                 // libgit2 reports receive-hook rejections through this callback.
                 callbacks.push_update_reference(|refname, status| {
                     if let Some(status) = status {
@@ -337,7 +454,9 @@ impl WorkspaceTransport for GitWorkspaceTransport {
                     Ok(())
                 });
                 let mut options = PushOptions::new();
-                options.remote_callbacks(callbacks);
+                options
+                    .remote_callbacks(callbacks)
+                    .follow_redirects(RemoteRedirect::None);
                 remote.push(&[refspec], Some(&mut options)).map_err(other)?;
             }
             if let Some(rejection) = rejection {
@@ -370,7 +489,12 @@ impl TemporaryGitRepository {
     fn new() -> Result<Self, RemoteTransportError> {
         let path =
             std::env::temp_dir().join(format!("kat-workspace-verify-{}.git", Uuid::new_v4()));
-        Repository::init_bare(&path).map_err(other)?;
+        Repository::init_bare(&path)
+            .map_err(other)?
+            .config()
+            .map_err(other)?
+            .set_bool("http.followRedirects", false)
+            .map_err(other)?;
         Ok(Self(path))
     }
 
@@ -663,6 +787,33 @@ fn parse_repository_id(contents: &str) -> Option<RepositoryId> {
 
 fn other(error: impl std::fmt::Display) -> RemoteTransportError {
     RemoteTransportError::Other(error.to_string())
+}
+
+fn safe_https_endpoint(url: &str) -> bool {
+    let Some(authority_and_path) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = authority_and_path.split('/').next().unwrap_or_default();
+    !authority.is_empty()
+        && !authority.contains('@')
+        && !authority.contains('?')
+        && !authority.contains('#')
+        && !url.contains('?')
+        && !url.contains('#')
+        && !url.chars().any(char::is_whitespace)
+}
+
+fn safe_workspace_remote_url(url: &str) -> bool {
+    let Some((scheme, authority_and_path)) = url.split_once("://") else {
+        return false;
+    };
+    let authority = authority_and_path.split('/').next().unwrap_or_default();
+    !scheme.is_empty()
+        && !authority.is_empty()
+        && !authority.contains('@')
+        && !url.contains('?')
+        && !url.contains('#')
+        && !url.chars().any(char::is_whitespace)
 }
 
 #[cfg(unix)]

@@ -6,6 +6,7 @@ pub mod author;
 pub mod change;
 pub mod conflicts;
 pub mod error;
+pub mod git_http;
 pub mod http;
 pub mod hub;
 pub mod init;
@@ -72,6 +73,7 @@ pub use change::{
     validate_unlink_element_invariants, validate_update_element_invariants,
     validate_update_element_ontology,
 };
+pub use git_http::GitHttpGateway;
 pub use http::{HttpSemanticTransport, HubHttpService};
 pub use hub::TrustedHubSemanticTransport;
 pub use open::{Repository, open_repository};

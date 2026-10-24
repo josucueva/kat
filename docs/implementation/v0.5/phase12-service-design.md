@@ -2,9 +2,9 @@
 
 ## Status
 
-Frozen contract. Step 12.5.1's verifier and Step 12.5.2's authenticated Hub
-JSON API/client are implemented locally. The Git smart HTTP gateway, remote
-CLI, and deployment verification remain pending.
+Frozen contract. Steps 12.5.1–12.5.3 are implemented locally: the shared
+verifier, authenticated Hub JSON API/client, and paired Git smart HTTP gateway.
+Remote CLI workflows and deployment verification remain pending.
 
 ## Goal
 
@@ -131,8 +131,14 @@ credential store.
 
 ### 3. Physical Git endpoint
 
-Expose the controlled backend only through Git smart HTTP over HTTPS. The
-gateway checks authorization at both ref discovery and pack execution:
+Expose the controlled backend only through Git smart HTTP over HTTPS. One
+`GitHttpGateway` instance is fixed to one `RepositoryId`, one
+`WorkspaceBackendId`, and one controlled bare repository. Its only accepted
+routes are `/v1/repositories/{repository_id}/git/info/refs` with one of the
+two exact `service` query values below, plus the matching `git-upload-pack`
+or `git-receive-pack` POST path. Client paths never select a filesystem path.
+
+The gateway checks authorization at both ref discovery and pack execution:
 
 | Git HTTP request | Required permission |
 | --- | --- |
@@ -146,7 +152,27 @@ operations before invoking Git. Each request is independently authenticated;
 discovery success does not authorize a later pack request. The gateway maps
 the authenticated repository directly to its immutable configured backend.
 `GitWorkspaceTransport` obtains the token at runtime through Git's credential
-callback; it does not persist it in `workspace-remote.json`.
+callback; it does not persist it in `workspace-remote.json`. Configuration
+rejects URL user-info and query strings. Runtime credentials require HTTPS,
+and the embedded libgit2 repository disables redirects for discovery as well
+as pack transfers.
+
+`GitHttpGateway` revalidates the controlled backend binding and receive policy
+before invoking Git's `git http-backend` CGI for the single fixed repository.
+It passes no client path or authorization header to Git; after the shared
+verifier accepts the request, CGI receives only the fixed `REMOTE_USER=kat`
+identity. The controlled backend's create-only pre-receive hook remains the
+ref-mutation gate. Gateway errors are generic and CGI stderr is suppressed.
+
+The gateway caps each request and Git response at 256 MiB, returns
+`Connection: close`, and limits each service instance to 100 requests per
+second. It currently handles requests serially, so one large pack transfer
+blocks later requests to that instance. It buffers the request and response,
+so one request can use roughly 512 MiB of memory. The trusted proxy must enforce
+request timeouts, client quotas, one-request upstream connections, and TLS; the
+service itself does not terminate TLS. The gateway launches the server-side
+Git executable through the trusted service process `PATH`, which must be
+controlled along with the backend and hook environment.
 
 Do not expose the current unauthenticated `git://` loopback server as a remote
 service. It remains a test fixture. The bare backend is private to the service
@@ -196,6 +222,13 @@ side.
 | AUTH-16 | The HTTP client rejects non-HTTPS URLs except explicit loopback test setup and does not persist credentials. |
 | AUTH-17 | Network fetch preserves the receiving local ref, accepted state, workspace base, active lineage, and working tree. |
 | AUTH-18 | Interrupted upload leaves named-reference authority unchanged; retry succeeds, and stale CAS preserves the current target. |
+
+Step 12.5.3's local tests exercise the Git routes over real loopback HTTP with
+libgit2, including read-only fetch, publish push, create-only ref rejection,
+expiry/revocation, wrong-repository hiding, backend binding checks, and one
+shared Hub/Git verifier. They do not prove that a deployment prevents direct
+access to the bare backend or establish the authenticated end-to-end
+`RemoteCoordinator` scenarios in AUTH-17 and AUTH-18.
 
 ## Trust assumptions and limits
 
