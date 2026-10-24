@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, the trusted local Hub semantic core, and the Phase 12.4 Hub/Git integration acceptance are complete locally. The Phase 12.5 contract is frozen; Step 12.5.1 (shared authorization verifier) is complete at `d991db4`, and Step 12.5.2 (authenticated Hub JSON API/client) is complete at `25c315e`. The paired Git gateway remains pending. Remote CLI wiring, deployment authentication, production retention proof, and storage durability acceptance remain pending.
+Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, the trusted local Hub semantic core, and the Phase 12.4 Hub/Git integration acceptance are complete locally. The Phase 12.5 contract is frozen; Steps 12.5.1 (`d991db4`), 12.5.2 (`25c315e`), and 12.5.3 (`743f2de`) are implemented locally. The authenticated end-to-end coordinator gate, remote CLI workflows, deployment authentication, production retention proof, and storage durability acceptance remain pending.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -26,6 +26,7 @@ Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, the trusted local 
 | Phase 12.5 design | `899aa57`, `0b1f5c8` | Contract frozen. Defines repository-bound read/publish grants, semantic and Git audiences, expiry/revocation, secret handling, independent Git discovery/pack authorization, and AUTH-01..18. |
 | Phase 12.5.1 | `d991db4` | Complete. Added hash-only, repository-bound read/publish grants with separate audiences, per-request expiry/revocation/scope checks, constant-time token digest comparison, fail-closed policy reload, and loopback HTTP boundary tests. Full gate: 654 tests, build, fmt, and Clippy pass. |
 | Phase 12.5.2 | `25c315e` | Complete locally. Added the authenticated Hub JSON service and HTTPS client implementing the existing `SemanticTransport`; one shared verifier instance supports the paired Git gateway. Loopback acceptance tests cover read/publish grants, discovery and exact object transfer, CAS success/stale conflict, wrong-repository hiding, invalid object/closure rejection, URL credential/query rejection, body limits, and redacted errors. `RemoteTransportError::InvalidData` distinguishes client data rejection from internal storage failure for `422` mapping. Full gate: workspace tests, build, fmt, Clippy, and generated assets clean. The listener still requires the trusted TLS proxy and its one-request upstream behavior. |
+| Phase 12.5.3 | `743f2de` | Complete locally. Added `GitHttpGateway`, fixed to one controlled backend, with Basic-token read/publish checks at discovery and pack requests. It revalidates backend policy, invokes Git's fixed-path smart HTTP CGI, caps packs at 256 MiB, and preserves the create-only lineage hook. `GitWorkspaceTransport` now accepts a runtime HTTPS token through libgit2 callbacks, disables redirects, and rejects credential/query URLs without persisting the token. Seven gateway tests cover real Git HTTP fetch/push, read-only denial, expired credentials, shared Hub/Git revocation, binding mismatch, unsafe refs, and request limits. Full gate: build, workspace tests, fmt, Clippy, and generated assets passed. The gateway is serial and buffers up to 256 MiB each way; TLS proxy/deployment controls remain pending. |
 
 ## 1. Objective
 
@@ -716,16 +717,17 @@ Implement the actual remote sync via KAT Hub/Git.
 - Remote authentication, network endpoint/client, and production deployment policy proof. The local core must not be exposed to untrusted processes.
 
 ### Step 12.5: Remote service access and authorization
-- Status: Contract frozen (`0b1f5c8`); network implementation in progress.
+- Status: Contract frozen (`0b1f5c8`); Steps 12.5.1–12.5.3 are complete locally.
 - [x] Define a versioned HTTPS JSON API and status mapping for the existing `SemanticTransport` operations.
 - [x] Define shared repository-bound read/publish grants, semantic/Git audiences, mandatory expiry, out-of-band revocation, and fail-closed policy reload.
 - [x] Require independent authorization of Git smart HTTP discovery and pack requests through the same verifier used by the Hub API.
 - [x] Freeze the authorization matrix AUTH-01..18, publication closure gate, TLS boundary, and secret-redaction requirements.
 - [x] Implement the shared authorization verifier and real HTTP request boundary tests (`d991db4`).
-- [ ] Implement the authenticated Hub API and semantic client without changing `SemanticTransport`.
-- [ ] Implement the paired Git smart HTTP gateway with repository binding and read/publish authorization.
-- [ ] Pass AUTH-01..18 through integrated Hub/Git requests before adding remote CLI workflows.
-- Notes: The frozen contract is recorded in [phase12-service-design.md](phase12-service-design.md). No network endpoints are included yet. Deployment grant provisioning, production retention, and storage durability still need implementation and evidence.
+- [x] Implement the authenticated Hub API and semantic client without changing `SemanticTransport` (`25c315e`).
+- [x] Implement the paired Git smart HTTP gateway with repository binding and read/publish authorization (`743f2de`).
+- [x] Exercise Git discovery and pack requests with a real libgit2 HTTP client; verify create-only refs and shared Hub/Git grant revocation.
+- [ ] Run the full authenticated `RemoteCoordinator` acceptance path for AUTH-17 and AUTH-18 before remote CLI workflows.
+- Notes: The frozen contract and implemented service limits are recorded in [phase12-service-design.md](phase12-service-design.md). Local tests do not prove deployment isolation, TLS proxy behavior, production retention, or storage durability.
 
 ## Phase 13: Migration and compatibility
 ### Goal
