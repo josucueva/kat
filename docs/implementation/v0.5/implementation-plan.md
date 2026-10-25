@@ -731,13 +731,14 @@ Implement the actual remote sync via KAT Hub/Git.
 - Notes: The frozen contract and implemented service limits are recorded in [phase12-service-design.md](phase12-service-design.md). Local loopback tests do not prove deployment isolation, TLS proxy behavior, production retention, or storage durability.
 
 ### Step 12.5.4: Remote CLI workflows
-- Status: Complete locally (`11e47b8`); deployment acceptance remains pending.
+- Status: Complete locally (`11e47b8`), with push/topology contract hardening in `54bbaa4`; deployment acceptance remains pending.
 - [x] Add credential-free `remote add` and `remote list` configuration backed by immutable Hub/repository/backend identity and the existing fixed Git workspace binding.
+- [x] Check the configured repository against local metadata and the authenticated Hub on each request; verify the live Git backend binding before physical snapshot access.
 - [x] Add `fetch`, `push`, and `sync` commands that delegate transfers and CAS to `RemoteCoordinator`; keep local authority changes explicit.
 - [x] Supply credentials only through runtime `KAT_REMOTE_TOKEN`; support an optional runtime `KAT_REMOTE_CA_FILE` for a trusted private CA. Neither is written to repository configuration.
-- [x] Define push as publishing the current clean workspace base revision, only when it matches the accepted semantic state; read the current remote target and pass it as the explicit CAS expectation.
+- [x] Define push as publishing the current clean workspace base revision, only when it matches the accepted semantic state; require an existing remote target to be an ancestor, then pass the observed target as the explicit CAS expectation.
 - [x] Preserve `fetch` per-reference partial outcomes in human and versioned JSON errors; report sync topology without reconciling or moving the workspace base.
-- [x] Test configuration across separate CLI processes, full authenticated publish/fetch, all four topology states, stale CAS, partial tracking updates, read-only/invalid/revoked credentials, and authority preservation.
+- [x] Test configuration across separate CLI processes, full authenticated publish/fetch, all six topology states, stale and non-fast-forward pushes, partial tracking updates, live backend identity mismatch, read-only/invalid/revoked credentials, and authority preservation.
 - Notes: `cargo test --test remote_cli --test remote_cli_e2e` covers process restarts and authenticated loopback Hub/Git services. This does not establish production TLS/proxy isolation, direct-backend access control, retention, or storage durability.
 
 ## Phase 13: Migration and compatibility

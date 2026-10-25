@@ -150,9 +150,12 @@ kat sync origin
 references only. A partial tracking update returns an error and lists each
 reference that updated, stayed unchanged, was removed, or failed. `push`
 publishes the current workspace base revision when its semantic state matches
-the accepted state and the working tree is clean. It reads the remote target
-and uses that value as the expected target for named-reference CAS. `sync`
-fetches observations and reports `Same`, `LocalAhead`, `OtherAhead`, or
-`Diverged` relative to the workspace base; it does not reconcile or move
+the accepted state and the working tree is clean. When the named remote
+reference exists, its current target must be an ancestor of the local revision;
+an ordinary push cannot replace a newer or divergent target. The observed
+target is also the expected value for named-reference CAS, which catches a
+concurrent update after ancestry validation. `sync` fetches observations and
+reports `Same`, `LocalAhead`, `OtherAhead`, `Diverged`, `AmbiguousMergeBase`, or
+`Unrelated` relative to the workspace base; it does not reconcile or move
 workspace authority. Each command accepts `--json` for the versioned machine
 result envelope.
