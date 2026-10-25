@@ -1,6 +1,6 @@
 # v0.5 Implementation Pending Report
 
-This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phases 10 and 11 are frozen. The Phase 12.0 transport contract is frozen, and Phases 12.1–12.4 have completed their local implementation and integration milestones. The Phase 12.5 authorization contract is frozen in `0b1f5c8`; Steps 12.5.1 (`d991db4`), 12.5.2 (`25c315e`), 12.5.3 (`743f2de`), AUTH-17/18 (`8712523`), and Step 12.5.4 (`11e47b8`) remote CLI workflows with contract hardening (`54bbaa4`) are complete locally. Deployment verification remains pending.**
+This report outlines the remaining work for KAT v0.5. **Phases 10 and 11 are frozen. Phase 12.0–12.5 remote design, local implementations, authenticated workflows, and CLI contract review are complete locally; deployment verification remains pending. Phase 13 migration remains pending. Phase 14 now has a coverage audit and scenario specification in [system-acceptance.md](system-acceptance.md); execution is pending Phase 13 and the user-path prerequisites recorded in that specification.**
 
 ## What Has Been Completed
 
@@ -30,14 +30,14 @@ All core reconciliation, conflict resolution, topology traversal, and collaborat
 
 ## What Remains Pending
 
-The remaining effort focuses on deployment acceptance, compatibility migration, and distributed end-to-end verification.
+The remaining effort is compatibility migration, full-system local acceptance, then separate deployment acceptance. Deployment work is not the next milestone.
 
 ### Phase 11: Remote abstraction — Complete
 
 Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan contains no separate 11.2 repository workflow step; actual remote-backed `sync`/`push` is assigned to Phase 12. No additional wrapper around `RemoteCoordinator` is planned because it already coordinates the existing local stores and injected transports.
 
 ### Phase 12: KAT Hub and Git remote integration
-**Goal:** Implement the actual remote sync via KAT Hub/Git.
+**Status:** Local implementation and authenticated CLI workflow complete; deployment acceptance remains pending.
 - Design: [`phase12-transport-design.md`](phase12-transport-design.md), drafted in `6f03dd3` and reviewed/amended in `0ee8b36`, defines canonical-byte transfer, Git lineage refs, publication ordering, repository binding, and recovery. The transport contract is frozen independently of deployment proof. The retention guarantee requires a KAT-controlled Git backend with server-enforced create-only lineage refs, remote read-back/tree verification, and Hub-side verification of the bound backend before CAS.
 - Phase 12.1 is complete in `2989582`: local snapshot recording requires the embedded Git repo and a verified direct protection ref, mapping updates are atomic, and lookups reject missing or mismatched protection refs. Missing-repository, conflicting/missing-ref, and recovery cases pass; the full build, test, formatting, and Clippy gate passed.
 - Phase 12.2.1 is complete in `facf800` and tracked in `32d1de8`: the controlled bare backend binds one repository and backend ID, and its receive hook allows lineage-ref creation while rejecting updates, deletions, and non-lineage writes. Loopback tests cover binding mismatch, policy drift, and client mutation rejection.
@@ -59,11 +59,11 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 - **Tests**: v0.4 repo without Git, v0.4 repo inside Git, clean/dirty physical workspace, interrupted/repeated migration.
 
 ### Phase 14: End-to-end evaluation
-**Goal:** Validate full workflow between multiple users.
-- Execute the distributed empirical scenario matrix, beyond the local Phase 10 E2E-01 through E2E-10 workflows.
-- Includes scenarios for semantic conflicts, physical merge conflicts, combined evolution, publication races, and external Git movements.
-- **Tests**: All E2E scenarios pass matching expected state exactly.
+**Goal:** Validate KAT v0.5 as a complete user-facing software repository across semantic and physical work, multiple users, reconciliation, and failure recovery.
+- The coverage audit and SYS-01..SYS-05 scenario specification are in [system-acceptance.md](system-acceptance.md). No system scenario is yet accepted.
+- Phase 13 migration is a precondition. The audit also identifies that the current CLI tests use helpers to provision a workspace/revision and same-identity peer repositories; the supported user paths need to be resolved before these workflows can be accepted end to end.
+- **Tests**: Execute SYS-01..SYS-05 through separate CLI processes, asserting persisted repository state as well as command results; then run the full Rust and canonical-vector gates.
 
 ## Next Steps
 
-Verify TLS proxy behavior, direct backend isolation, retention, and storage durability against the deployment; local loopback tests are not production proof.
+Complete Phase 13 migration, resolve the user-path prerequisites in the Phase 14 audit, then build and execute the local SYS-01..SYS-05 acceptance harness. Keep performance characterization and TLS/proxy isolation, backend retention, and storage durability as separate deployment-readiness gates.

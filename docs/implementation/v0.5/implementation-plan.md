@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, the trusted local Hub semantic core, Phase 12.4 Hub/Git integration, and Phase 12.5 AUTH-17/18 acceptance are complete locally. The Phase 12.5 contract is frozen; Steps 12.5.1 (`d991db4`), 12.5.2 (`25c315e`), and 12.5.3 (`743f2de`) are implemented locally, and AUTH-17/18 passed in `8712523`. Remote CLI workflows, deployment authentication, production retention proof, and storage durability acceptance remain pending.
+Phases 10 and 11 are frozen. Phase 12's transport, Hub, authenticated remote workflows, and CLI contract review are complete locally (`54bbaa4`, `e93a140`); deployment verification remains pending. Phase 13 migration is not complete. Phase 14 has a coverage audit and scenario specification in [system-acceptance.md](system-acceptance.md); execution remains pending Phase 13 and the user-path prerequisites identified there.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -28,6 +28,8 @@ Phase 10, Phase 11, Phase 12.0, Phase 12.1, local Phase 12.2, the trusted local 
 | Phase 12.5.2 | `25c315e` | Complete locally. Added the authenticated Hub JSON service and HTTPS client implementing the existing `SemanticTransport`; one shared verifier instance supports the paired Git gateway. Loopback acceptance tests cover read/publish grants, discovery and exact object transfer, CAS success/stale conflict, wrong-repository hiding, invalid object/closure rejection, URL credential/query rejection, body limits, and redacted errors. `RemoteTransportError::InvalidData` distinguishes client data rejection from internal storage failure for `422` mapping. Full gate: workspace tests, build, fmt, Clippy, and generated assets clean. The listener still requires the trusted TLS proxy and its one-request upstream behavior. |
 | Phase 12.5.3 | `743f2de` | Complete locally. Added `GitHttpGateway`, fixed to one controlled backend, with Basic-token read/publish checks at discovery and pack requests. It revalidates backend policy, invokes Git's fixed-path smart HTTP CGI, caps packs at 256 MiB, and preserves the create-only lineage hook. `GitWorkspaceTransport` now accepts a runtime HTTPS token through libgit2 callbacks, disables redirects, and rejects credential/query URLs without persisting the token. Seven gateway tests cover real Git HTTP fetch/push, read-only denial, expired credentials, shared Hub/Git revocation, binding mismatch, unsafe refs, and request limits. Full gate: build, workspace tests, fmt, Clippy, and generated assets passed. The gateway is serial and buffers up to 256 MiB each way; TLS proxy/deployment controls remain pending. |
 | Phase 12.5 AUTH-17/18 | `8712523` | Complete locally. Real loopback HTTP acceptance tests run `RemoteCoordinator` through `HttpSemanticTransport` and `GitWorkspaceTransport`. AUTH-17 publishes a semantic and physical revision with publish access, recreates clients, then fetches with read access into a second repository and verifies closure, tracking refs, and local-authority preservation. AUTH-18 revokes publish access after one canonical object and the physical snapshots transfer, verifies the Hub rejects the next object upload without advancing its named ref, checks read-only and wrong-repository grants and shared revocation, then retries successfully and confirms stale CAS cannot overwrite the target. Full workspace gate and generated-asset checks pass. |
+| Phase 12.5.4 | `11e47b8`, `42bab72` | Complete locally. Authenticated `remote add/list`, `fetch`, `push`, and `sync` workflows persist no credentials and are exercised in separate CLI processes. |
+| Phase 12.5 CLI contract review | `54bbaa4`, `e93a140` | Complete locally. Push enforces fast-forward ancestry before CAS; topology retains all six outcomes; live endpoint binding and partial fetch JSON outcomes are covered. Deployment acceptance remains pending. |
 
 ## 1. Objective
 
@@ -753,7 +755,8 @@ Migrate v0.4 repositories to v0.5 seamlessly.
 ### Traceability
 - Existing canonical v0.4 objects remain byte-for-byte unchanged.
 ### Preconditions
-- Phase 12 complete.
+- Phase 12 local implementation and transport contracts complete.
+- Production deployment acceptance is a separate gate and is not a precondition for local migration or Phase 14 system acceptance.
 ### Design constraints
 - Migration compatibility constraint applies from Phase 1 onward. No phase may rewrite existing v0.4 canonical objects.
 ### Implementation work
@@ -780,37 +783,39 @@ Migrate v0.4 repositories to v0.5 seamlessly.
 
 ## Phase 14: End-to-end evaluation
 ### Goal
-Validate full workflow between multiple users.
+Validate KAT v0.5 as a complete user-facing software repository across semantic and physical development, multiple users, reconciliation, failures, retries, restarts, and repository integrity.
 ### Design inputs
-- Entire v0.5 feature set.
+- Entire v0.5 feature set, `docs/vision/use-cases.md`, `docs/specification/invariants.md`, `collaboration-invariants.md`, and [system-acceptance.md](system-acceptance.md).
 ### Traceability
-- Validates the entire collaboration and distributed version control feature set.
+- Maps UC-001..UC-008, collaboration invariants, and remote authority rules to repeatable CLI scenarios and persistent-state assertions.
 ### Preconditions
 - Phases 1-13 complete.
+- The supported CLI can create a local workspace/revision from semantic and physical work and can create a same-`RepositoryId` developer copy. The current CLI test fixtures use library helpers for these setup transitions; see [system-acceptance.md](system-acceptance.md).
 ### Design constraints
-- Must use empirical scenario matrix.
+- Use separate real `kat` processes and persistent isolated repository roots.
+- Assert durable refs, objects, workspace bases, Git snapshots, and working-tree contents in addition to exit codes and output.
+- Reuse existing component/conformance tests; do not duplicate them as system tests.
+- Keep local loopback acceptance separate from deployment proof.
 ### Implementation work
-- Execute scenario matrix.
+- Status: Coverage audit and SYS-01..SYS-05 specification drafted; no system scenario has been executed or accepted.
+- Complete the existing Phase 14 milestone by executing SYS-01..SYS-05 in `system-acceptance.md` after its preconditions are met.
 ### Tests
-- E2E-01 Independent semantic collaboration (R0 -> RA, RB; sync; reconcile -> RC).
-- E2E-02 same semantic identity conflict.
-- E2E-03 physical-only divergence.
-- E2E-04 physical merge conflict.
-- E2E-05 semantic + physical combined evolution.
-- E2E-06 Artifact becomes stale after clean reconcile.
-- E2E-07 offline work then publication.
-- E2E-08 CAS publication race.
-- E2E-09 failed remote publication and retry.
-- E2E-10 external Git movement detected.
+- SYS-01 Build and reopen a software repository; cover UC-001..UC-008.
+- SYS-02 Two developers evolve independently and converge.
+- SYS-03 Resolve simultaneous semantic and physical conflicts.
+- SYS-04 Interrupt publication, restart, and retry.
+- SYS-05 Fail closed on repository-integrity faults.
+- Existing Phase 10 E2E-01..10 remain the local collaboration suite; system IDs use `SYS-*` to avoid identifier collisions.
 ### Regression checks
 - `cargo test --workspace`, `cargo fmt --check`, `cargo clippy ... -D warnings`.
 - ALL Canonical vectors.
 ### Failure / recovery cases
-- Covered by the E2E failure scenarios, particularly E2E-08 and E2E-09.
+- SYS-04 and SYS-05 compare authority and persisted state before and after failures, restarts, and retries.
 ### Acceptance criteria
-- All E2E scenarios pass matching expected state exactly.
+- Local-1..Local-5 in `system-acceptance.md` pass with recorded evidence; no scenario is considered passed from component-test evidence alone.
+- Readiness-1 performance characterization and Deployment-1 infrastructure proof remain separate gates.
 ### Artifacts produced
-- E2E test suite.
+- Repeatable system-acceptance harness and evidence report.
 ### Out of scope for this phase
 - Adding new features based on test outcome.
 
