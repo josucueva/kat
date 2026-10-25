@@ -159,6 +159,11 @@ persists its semantic objects, and advances the accepted semantic head. It does
 not capture physical edits, create a `RepositoryRevision`, move the workspace
 base, or move a named reference.
 
+Until `kat record` binds that semantic head into a complete revision, the
+active complete software revision remains the workspace base. `status` must
+show that accepted semantic state is ahead of the base and has not yet been
+recorded as a `RepositoryRevision`; push remains unavailable in that state.
+
 `kat record [PATH ...]` explicitly creates a complete local
 `RepositoryRevision` from the workspace's current accepted semantic head and
 physical working tree. Previously tracked paths remain tracked and their

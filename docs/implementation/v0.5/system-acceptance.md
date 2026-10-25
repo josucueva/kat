@@ -113,10 +113,12 @@ local revision-capture workflows available.
    its requirement/constraint, the implementation and validation to their
    semantic targets, and the Artifact to the represented implementation.
    Run `kat check`, `kat validate`, and `kat commit`, then `kat record` without
-   paths. Verify this creates a semantic-only revision and reuses the initial
-   physical snapshot. Exercise update, supersede, deprecate, and accountability
-   operations on suitable elements while preserving at least one active trace
-   path; accept and record the resulting semantic state.
+   paths. Between `kat commit` and `kat record`, verify `status` reports the
+   accepted semantic head as not yet bound to a complete revision and `push`
+   refuses it. Then verify recording creates a semantic-only revision and
+   reuses the initial physical snapshot. Exercise update, supersede, deprecate,
+   and accountability operations on suitable elements while preserving at
+   least one active trace path; accept and record the resulting semantic state.
 3. Add a tracked source file and an executable file by naming both paths to
    `kat record`. Verify this creates a physical-only revision with the expected
    bytes and executable mode. Then change semantic knowledge and a tracked file,
