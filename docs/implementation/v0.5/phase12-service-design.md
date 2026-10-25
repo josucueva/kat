@@ -2,9 +2,9 @@
 
 ## Status
 
-Frozen contract. Steps 12.5.1–12.5.3 are implemented locally: the shared
-verifier, authenticated Hub JSON API/client, and paired Git smart HTTP gateway.
-Remote CLI workflows and deployment verification remain pending.
+Frozen contract. Steps 12.5.1–12.5.3 and AUTH-17/18 are implemented and tested
+locally, as is Step 12.5.4 remote CLI integration. Deployment verification
+remains pending.
 
 ## Goal
 

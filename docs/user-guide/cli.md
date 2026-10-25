@@ -116,3 +116,43 @@ All identity-taking CLI commands (`show`, `update`, `deprecate`, `supersede`, `l
   * `account` resolves `artifact-id-or-prefix` against element IDs (and semantically requires the resolved element to be of type `kat.core/artifact`).
 * **Historical Traversal Boundary**: For `kat history --element <id-or-prefix>`, prefix resolution occurs against the current accepted `SemanticState` ($S_n$). Once resolved to an `ElementId`, history filtering traverses the complete historical change revision graph.
 * **Ambiguity Rejection**: If a prefix matches multiple candidates in the target resolution scope, execution is rejected with an explicit error listing matching candidates.
+
+## Remote Collaboration (v0.5)
+
+Configure one named Hub and workspace endpoint with the repository's fixed
+workspace backend identity:
+
+```text
+kat remote add origin \
+  --hub-url https://hub.example.test \
+  --git-url https://git.example.test/v1/repositories/REPOSITORY_ID/git \
+  --workspace-backend-id WORKSPACE_BACKEND_ID
+kat remote list
+```
+
+Replace `REPOSITORY_ID` and `WORKSPACE_BACKEND_ID` with the identities
+provisioned for this Hub repository. Each named remote and its workspace
+binding are immutable after creation.
+
+Remote configuration stores endpoint URLs and repository/backend identities.
+It does not store credentials. Set `KAT_REMOTE_TOKEN` in the command's runtime
+environment for `fetch`, `push`, or `sync`. Set `KAT_REMOTE_CA_FILE` when the
+Hub and Git endpoints use a trusted private CA; the PEM file is used by both
+transports and is not copied into the repository.
+
+```text
+kat fetch origin
+kat push origin main
+kat sync origin
+```
+
+`fetch` verifies and transfers complete content, then updates remote-tracking
+references only. A partial tracking update returns an error and lists each
+reference that updated, stayed unchanged, was removed, or failed. `push`
+publishes the current workspace base revision when its semantic state matches
+the accepted state and the working tree is clean. It reads the remote target
+and uses that value as the expected target for named-reference CAS. `sync`
+fetches observations and reports `Same`, `LocalAhead`, `OtherAhead`, or
+`Diverged` relative to the workspace base; it does not reconcile or move
+workspace authority. Each command accepts `--json` for the versioned machine
+result envelope.

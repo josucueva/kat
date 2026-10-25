@@ -718,7 +718,7 @@ Implement the actual remote sync via KAT Hub/Git.
 - Remote authentication, network endpoint/client, and production deployment policy proof. The local core must not be exposed to untrusted processes.
 
 ### Step 12.5: Remote service access and authorization
-- Status: Contract frozen (`0b1f5c8`); Steps 12.5.1–12.5.3 and AUTH-17/18 are complete locally. Remote CLI and deployment acceptance remain pending.
+- Status: Contract frozen (`0b1f5c8`); Steps 12.5.1–12.5.4 and AUTH-17/18 are complete locally. Deployment acceptance remains pending.
 - [x] Define a versioned HTTPS JSON API and status mapping for the existing `SemanticTransport` operations.
 - [x] Define shared repository-bound read/publish grants, semantic/Git audiences, mandatory expiry, out-of-band revocation, and fail-closed policy reload.
 - [x] Require independent authorization of Git smart HTTP discovery and pack requests through the same verifier used by the Hub API.
@@ -729,6 +729,16 @@ Implement the actual remote sync via KAT Hub/Git.
 - [x] Exercise Git discovery and pack requests with a real libgit2 HTTP client; verify create-only refs and shared Hub/Git grant revocation.
 - [x] Run the full authenticated `RemoteCoordinator` acceptance path for AUTH-17 and AUTH-18 before remote CLI workflows (`8712523`).
 - Notes: The frozen contract and implemented service limits are recorded in [phase12-service-design.md](phase12-service-design.md). Local loopback tests do not prove deployment isolation, TLS proxy behavior, production retention, or storage durability.
+
+### Step 12.5.4: Remote CLI workflows
+- Status: Complete locally (`11e47b8`); deployment acceptance remains pending.
+- [x] Add credential-free `remote add` and `remote list` configuration backed by immutable Hub/repository/backend identity and the existing fixed Git workspace binding.
+- [x] Add `fetch`, `push`, and `sync` commands that delegate transfers and CAS to `RemoteCoordinator`; keep local authority changes explicit.
+- [x] Supply credentials only through runtime `KAT_REMOTE_TOKEN`; support an optional runtime `KAT_REMOTE_CA_FILE` for a trusted private CA. Neither is written to repository configuration.
+- [x] Define push as publishing the current clean workspace base revision, only when it matches the accepted semantic state; read the current remote target and pass it as the explicit CAS expectation.
+- [x] Preserve `fetch` per-reference partial outcomes in human and versioned JSON errors; report sync topology without reconciling or moving the workspace base.
+- [x] Test configuration across separate CLI processes, full authenticated publish/fetch, all four topology states, stale CAS, partial tracking updates, read-only/invalid/revoked credentials, and authority preservation.
+- Notes: `cargo test --test remote_cli --test remote_cli_e2e` covers process restarts and authenticated loopback Hub/Git services. This does not establish production TLS/proxy isolation, direct-backend access control, retention, or storage durability.
 
 ## Phase 13: Migration and compatibility
 ### Goal
