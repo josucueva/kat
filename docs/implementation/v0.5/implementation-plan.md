@@ -752,6 +752,9 @@ Migrate v0.4 repositories to v0.5 seamlessly.
 - `kat record [PATH ...]` creates a complete local revision from the accepted semantic head and tracked physical working tree. Existing tracked paths are captured, missing paths are deletions, and new paths must be named explicitly. It advances only the workspace base, never a named reference.
 - Fresh v0.5 `kat init` and v0.4 migration use the same root-revision bootstrap rules: preserve the accepted semantic state, capture the existing non-ignored project tree as the initial physical snapshot, create a parentless root `RepositoryRevision`, and initialize the workspace base to that revision.
 - The complete command contract and the semantic-only, physical-only, and combined transitions are specified in [collaboration-workflow.md](collaboration-workflow.md).
+### Format and invocation
+- v0.4 uses repository metadata format 1; v0.5 uses format 2. The migration changes metadata and adds new repository/workspace state only; it never rewrites existing canonical objects.
+- Run migration explicitly with `kat migrate`. Opening a format-1 repository must fail with an actionable migration-required error instead of silently mutating it.
 ### Design inputs
 - `canonical-impact-audit.md`
 - `repository-revision-model.md`
@@ -785,7 +788,7 @@ Migrate v0.4 repositories to v0.5 seamlessly.
 ### Artifacts produced
 - Migration subsystem.
 ### Out of scope for this phase
-- Manual migration CLI flags.
+- Migration command flags or user-selected migration policies.
 
 ## Phase 14: End-to-end evaluation
 ### Goal
