@@ -645,6 +645,10 @@ fn is_literal_loopback(authority: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(all(test, unix))]
+#[path = "authenticated_remote_tests.rs"]
+mod authenticated_remote_tests;
+
 #[cfg(test)]
 impl HttpSemanticTransport {
     fn loopback(base_url: &str, token: &str) -> Result<Self, RemoteTransportError> {
