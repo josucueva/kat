@@ -230,8 +230,9 @@ cross-process fault/recovery scenario remains to be run.
 
 ## Release gates
 
-No gate is passed by this specification. The local acceptance score is **0/5**;
-performance and deployment gates are tracked separately.
+The current local score is **1/5**: only the regression/conformance baseline
+has passed. None of SYS-01..SYS-05 has been executed; performance and deployment
+gates are tracked separately.
 
 | Gate | Evidence required | Status |
 | --- | --- | --- |
@@ -239,13 +240,17 @@ performance and deployment gates are tracked separately.
 | Local-2: semantic and physical reconciliation | SYS-02 and SYS-03 preserve intended changes, conflicts, and ancestry. | Blocked by user-path prerequisites |
 | Local-3: failure isolation | SYS-04 and SYS-05 show no silent authority movement and successful recovery where promised. | Not run |
 | Local-4: remote publication integrity | Complete closure, CAS, fetch isolation, and retry pass through Hub and Git transports together. | Existing component evidence; system gate not run |
-| Local-5: regression and conformance | Full Rust verification gate and all canonical vectors pass at Phase 14 completion. | Not rerun for this audit |
+| Local-5: regression and conformance | `cargo test --workspace`, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, including canonical vectors. | Passed 2026-10-25 |
 | Readiness-1: performance | Memory, latency, and large-repository behavior characterized against stated limits. | Deferred |
 | Deployment-1: infrastructure guarantees | TLS/proxy isolation, access control, retention/GC, durability, and recovery verified in a named disposable deployment environment. | Deferred |
 
 The first five gates establish local system acceptance. Readiness-1 and
 Deployment-1 are separate release-readiness work; passing local tests must not
 be reported as deployment proof.
+
+The baseline run completed successfully on 2026-10-25: `cargo test --workspace`,
+`cargo fmt --check`, and `cargo clippy --workspace --all-targets -- -D warnings`.
+It verifies the existing suite, not the integrated SYS scenarios.
 
 ## Stateful sequence testing
 

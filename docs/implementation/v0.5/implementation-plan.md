@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phases 10 and 11 are frozen. Phase 12's transport, Hub, authenticated remote workflows, and CLI contract review are complete locally (`54bbaa4`, `e93a140`); deployment verification remains pending. Phase 13 migration is not complete. Phase 14 has a coverage audit and scenario specification in [system-acceptance.md](system-acceptance.md); execution remains pending Phase 13 and the user-path prerequisites identified there.
+Phases 10 and 11 are frozen. Phase 12's transport, Hub, authenticated remote workflows, and CLI contract review are complete locally (`54bbaa4`, `e93a140`); deployment verification remains pending. Phase 13 migration is not complete. Phase 14 has a coverage audit, scenario specification, and passing regression baseline in [system-acceptance.md](system-acceptance.md); SYS-01..SYS-05 remain pending Phase 13 and the user-path prerequisites identified there.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -30,6 +30,7 @@ Phases 10 and 11 are frozen. Phase 12's transport, Hub, authenticated remote wor
 | Phase 12.5 AUTH-17/18 | `8712523` | Complete locally. Real loopback HTTP acceptance tests run `RemoteCoordinator` through `HttpSemanticTransport` and `GitWorkspaceTransport`. AUTH-17 publishes a semantic and physical revision with publish access, recreates clients, then fetches with read access into a second repository and verifies closure, tracking refs, and local-authority preservation. AUTH-18 revokes publish access after one canonical object and the physical snapshots transfer, verifies the Hub rejects the next object upload without advancing its named ref, checks read-only and wrong-repository grants and shared revocation, then retries successfully and confirms stale CAS cannot overwrite the target. Full workspace gate and generated-asset checks pass. |
 | Phase 12.5.4 | `11e47b8`, `42bab72` | Complete locally. Authenticated `remote add/list`, `fetch`, `push`, and `sync` workflows persist no credentials and are exercised in separate CLI processes. |
 | Phase 12.5 CLI contract review | `54bbaa4`, `e93a140` | Complete locally. Push enforces fast-forward ancestry before CAS; topology retains all six outcomes; live endpoint binding and partial fetch JSON outcomes are covered. Deployment acceptance remains pending. |
+| Phase 14 coverage audit | `62ef064` | Mapped UC-001..UC-008, current suites, invariants, SYS-01..SYS-05, and the missing user-path prerequisites. Current workspace tests, formatting, and Clippy pass; full system scenarios remain pending. |
 
 ## 1. Objective
 
