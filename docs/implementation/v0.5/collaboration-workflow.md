@@ -13,7 +13,7 @@ Git state independently.
 This document defines:
 
 - local work;
-- local commit;
+- semantic Change commit and complete local revision recording;
 - synchronization;
 - publication;
 - repository movement;
@@ -21,8 +21,8 @@ This document defines:
 - reconciliation;
 - named references.
 
-It does not define exact CLI syntax, Git plumbing, remote protocols, or
-conflict object representation.
+It does not define Git plumbing, remote protocols, or conflict object
+representation.
 
 ---
 
@@ -70,7 +70,9 @@ work
     ↓
 check
     ↓
-commit locally
+commit semantic Change when needed
+    ↓
+record complete RepositoryRevision
     ↓
 sync
     ↓
@@ -79,7 +81,8 @@ push or reconcile
 
 Local repository evolution does not require network access.
 
-Remote publication is separate from local commit.
+Semantic Change acceptance, complete RepositoryRevision recording, and remote
+publication are separate operations.
 
 ---
 
@@ -146,31 +149,83 @@ accountability findings.
 
 ---
 
-## 5. Local commit
+## 5. Semantic Change commit and RepositoryRevision recording
 
-A local commit creates a new accepted `RepositoryRevision`.
+KAT has two local commit boundaries because a `ChangeRevision` and a complete
+software revision are different objects.
+
+`kat commit` keeps its existing meaning: it accepts the current draft Change,
+persists its semantic objects, and advances the accepted semantic head. It does
+not capture physical edits, create a `RepositoryRevision`, move the workspace
+base, or move a named reference.
+
+`kat record [PATH ...]` explicitly creates a complete local
+`RepositoryRevision` from the workspace's current accepted semantic head and
+physical working tree. Previously tracked paths remain tracked and their
+current contents are captured; absent paths are deletions. New paths enter the
+snapshot only when explicitly named. Other untracked and ignored paths remain
+outside the snapshot.
+
+The new revision has the current workspace base as its parent. Its semantic
+state is the current accepted semantic state. `semantic_change` identifies the
+accepted Change head when that semantic state differs from the parent's state;
+it is absent for a physical-only revision. An unchanged snapshot reuses the
+parent's `WorkspaceSnapshotId`.
+
+| Recorded transition | Semantic state | Workspace snapshot |
+| --- | --- | --- |
+| Semantic-only | Current accepted semantic state | Reused from parent |
+| Physical-only | Reused from parent | Captured tracked changes |
+| Combined | Current accepted semantic state | Captured tracked changes |
+
+Recording is rejected when there is an open semantic draft, an active
+reconciliation, an inconsistent physical backend, or no effective semantic or
+physical change. The command persists and validates immutable objects before it
+moves the workspace base. It does not move the accepted semantic head or any
+named reference. On failure, those authorities remain unchanged; any immutable
+objects already written are harmless and a retry must preserve the working
+tree.
 
 For example:
 
 ```text
 Workspace based on R42
 
-semantic result = S43
-physical result = W43
+kat author requirements.json
+kat check
+kat commit                    # accepts semantic Change C43 / state S43
+kat record src/new-module.rs  # records S43 with the captured physical tree
 
         ↓
 
 R43
 ├── parent = R42
 ├── semantic_state = S43
-└── workspace_snapshot = W43
+├── workspace_snapshot = W43
+└── semantic_change = C43
 ```
 
-The new revision becomes accepted local history.
+The semantic-only form omits the path argument and reuses the parent's
+snapshot. The physical-only form omits the path argument when changing or
+deleting already tracked files; a new untracked file must be named explicitly.
+
+Fresh `kat init` and v0.4 migration use the same repository-bootstrap rule to
+create a root `RepositoryRevision` with no parents and initialize the workspace
+base to it. Both capture the existing non-ignored project tree as the initial
+snapshot. A fresh root has no `semantic_change`; a migrated root records the
+existing accepted Change head when present. Migration preserves all
+pre-existing canonical object bytes; later `kat record` operations use the
+explicit-path rule above.
+
+The created `RepositoryRevision` becomes the active workspace base. It does
+not automatically move a local named reference. Repository heads remain
+derived from revision topology.
+
+The new revision becomes accepted local repository history.
 
 It is not automatically published remotely.
 
-After a successful commit, the workspace is based on the new revision.
+After successful recording, the workspace is based on the new revision.
 
 ---
 
@@ -403,7 +458,11 @@ check
     evaluate repository health
 
 commit
-    create an accepted local RepositoryRevision
+    accept the current semantic Change
+
+record
+    create a complete local RepositoryRevision from the accepted semantic
+    state and tracked physical working tree
 
 sync
     discover and fetch shared history

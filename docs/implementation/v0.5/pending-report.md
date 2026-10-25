@@ -56,15 +56,17 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 **Goal:** Migrate v0.4 repositories to v0.5 seamlessly.
 - Preserve every existing canonical object from v0.4 without mutation.
 - Detect v0.4 repositories and transition to v0.5.
-- Create first `RepositoryRevision` wrapper and initialize local workspace base.
+- Share root-revision bootstrap invariants between fresh `kat init` and v0.4 migration: capture the initial non-ignored tree, create a parentless `RepositoryRevision`, and initialize the workspace base. Do not create or move a named reference implicitly.
 - **Tests**: v0.4 repo without Git, v0.4 repo inside Git, clean/dirty physical workspace, interrupted/repeated migration.
 
 ### Phase 14: End-to-end evaluation
 **Goal:** Validate KAT v0.5 as a complete user-facing software repository across semantic and physical work, multiple users, reconciliation, and failure recovery.
+- The local revision command contract is now documented: `kat commit` continues to accept semantic Changes; a separate `kat record [PATH ...]` will create complete semantic-only, physical-only, or combined `RepositoryRevision`s and advance only the workspace base. New paths must be named explicitly. See [collaboration-workflow.md](collaboration-workflow.md).
+- Implement and accept `kat record` and same-identity `kat clone` before executing the system scenarios.
 - The coverage audit and SYS-01..SYS-05 scenario specification are in [system-acceptance.md](system-acceptance.md). No system scenario is yet accepted.
-- Phase 13 migration is a precondition. The audit also identifies that the current CLI tests use helpers to provision a workspace/revision and same-identity peer repositories; the supported user paths need to be resolved before these workflows can be accepted end to end.
+- Phase 13 migration is a precondition. The local revision contract is settled; implementation of `kat record` and `kat clone` remains required before these workflows can be accepted end to end.
 - **Tests**: Execute SYS-01..SYS-05 through separate CLI processes, asserting persisted repository state as well as command results; then run the full Rust and canonical-vector gates.
 
 ## Next Steps
 
-Complete Phase 13 migration, resolve the user-path prerequisites in the Phase 14 audit, then build and execute the local SYS-01..SYS-05 acceptance harness. Keep performance characterization and TLS/proxy isolation, backend retention, and storage durability as separate deployment-readiness gates.
+Complete Phase 13 migration and compatibility tests using the shared root bootstrap contract, then implement `kat record` and `kat clone`. After those user paths pass focused acceptance, execute the local SYS-01..SYS-05 harness. Keep performance characterization and TLS/proxy isolation, backend retention, and storage durability as separate deployment-readiness gates.

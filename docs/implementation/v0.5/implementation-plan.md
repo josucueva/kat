@@ -747,6 +747,11 @@ Implement the actual remote sync via KAT Hub/Git.
 ## Phase 13: Migration and compatibility
 ### Goal
 Migrate v0.4 repositories to v0.5 seamlessly.
+### Local revision contract
+- Keep `kat commit` as semantic Change acceptance; it does not create a complete `RepositoryRevision` or move the workspace base.
+- `kat record [PATH ...]` creates a complete local revision from the accepted semantic head and tracked physical working tree. Existing tracked paths are captured, missing paths are deletions, and new paths must be named explicitly. It advances only the workspace base, never a named reference.
+- Fresh v0.5 `kat init` and v0.4 migration use the same root-revision bootstrap rules: preserve the accepted semantic state, capture the existing non-ignored project tree as the initial physical snapshot, create a parentless root `RepositoryRevision`, and initialize the workspace base to that revision.
+- The complete command contract and the semantic-only, physical-only, and combined transitions are specified in [collaboration-workflow.md](collaboration-workflow.md).
 ### Design inputs
 - `canonical-impact-audit.md`
 - `repository-revision-model.md`
@@ -764,12 +769,12 @@ Migrate v0.4 repositories to v0.5 seamlessly.
 - Detect v0.4 repository.
 - Preserve every existing canonical object.
 - Capture/adopt initial physical workspace.
-- Create first `RepositoryRevision` wrapper.
-- Initialize local workspace base.
-- Initialize local head/reference metadata.
+- Reuse the root-revision bootstrap behavior used by fresh v0.5 initialization; create the first `RepositoryRevision` wrapper and initialize the local workspace base.
+- Do not create or move a local named reference implicitly; revision heads are derived from topology and local references remain optional.
 - Record repository format version transition.
 ### Tests
-- v0.4 repo without Git, v0.4 repo already inside Git, clean physical workspace, dirty physical workspace, migration interrupted, migration repeated, post-migration v0.4 `ObjectId`s unchanged.
+- Fresh `kat init` creates a root `RepositoryRevision`, Git-backed snapshot, and workspace base through the same bootstrap invariants as migration.
+- v0.4 repo without Git, v0.4 repo already inside Git, clean physical workspace, dirty physical workspace, migration interrupted, migration repeated, and post-migration v0.4 `ObjectId`s unchanged.
 ### Regression checks
 - `cargo test --workspace`, `cargo fmt --check`, `cargo clippy ... -D warnings`.
 - Post-migration v0.4 ObjectIds verified unchanged.
@@ -791,7 +796,7 @@ Validate KAT v0.5 as a complete user-facing software repository across semantic 
 - Maps UC-001..UC-008, collaboration invariants, and remote authority rules to repeatable CLI scenarios and persistent-state assertions.
 ### Preconditions
 - Phases 1-13 complete.
-- The supported CLI can create a local workspace/revision from semantic and physical work and can create a same-`RepositoryId` developer copy. The current CLI test fixtures use library helpers for these setup transitions; see [system-acceptance.md](system-acceptance.md).
+- The supported CLI can initialize a local workspace, create complete local revisions through `kat record`, and create a same-`RepositoryId` developer copy through `kat clone`. The current CLI test fixtures use library helpers for these setup transitions; see [system-acceptance.md](system-acceptance.md).
 ### Design constraints
 - Use separate real `kat` processes and persistent isolated repository roots.
 - Assert durable refs, objects, workspace bases, Git snapshots, and working-tree contents in addition to exit codes and output.
@@ -799,7 +804,9 @@ Validate KAT v0.5 as a complete user-facing software repository across semantic 
 - Keep local loopback acceptance separate from deployment proof.
 ### Implementation work
 - Status: Coverage audit and SYS-01..SYS-05 specification drafted; no system scenario has been executed or accepted.
-- Complete the existing Phase 14 milestone by executing SYS-01..SYS-05 in `system-acceptance.md` after its preconditions are met.
+- Implement `kat record [PATH ...]` for semantic-only, physical-only, and combined complete revisions without changing the established semantic meaning of `kat commit`.
+- Implement `kat clone` to establish a same-`RepositoryId` developer repository through the supported remote workflow.
+- Execute SYS-01..SYS-05 in `system-acceptance.md` after these user paths are available.
 ### Tests
 - SYS-01 Build and reopen a software repository; cover UC-001..UC-008.
 - SYS-02 Two developers evolve independently and converge.

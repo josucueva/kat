@@ -65,12 +65,16 @@ not substitutes for the integrated scenarios below.
 ## User-path prerequisites
 
 The current tests establish transport behavior using helpers that bypass two
-user-facing transitions required by the proposed scenarios:
+user-facing transitions required by the proposed scenarios. Their contracts
+are now defined in [collaboration-workflow.md](collaboration-workflow.md), but
+their implementation and system acceptance remain pending:
 
-1. `kat init` initializes semantic repository data. The CLI currently exposes
-   no workflow that initializes the Git workspace, captures changed physical
-   files, and records a new `RepositoryRevision`. `kat commit` publishes a
-   semantic Change; it does not capture a physical snapshot.
+1. Fresh `kat init` and v0.4 migration must create the same kind of initial
+   root `RepositoryRevision` and workspace base. `kat commit` remains semantic
+   Change acceptance. `kat record [PATH ...]` creates a complete local revision
+   from the current accepted semantic state and tracked physical tree, with
+   explicit paths required for newly tracked files. It must cover
+   semantic-only, physical-only, and combined revisions.
 2. The remote model specifies clone, but the CLI exposes no `kat clone` command.
    Current remote CLI tests use a test helper to copy repository identity,
    semantic objects, physical state, refs, and workspace base into peer
@@ -102,24 +106,28 @@ local revision-capture workflows available.
 
 **Steps:**
 
-1. Run `kat init`; initialize the supported workspace and record the initial
-   revision.
+1. Run `kat init`; verify it creates the root revision and workspace base
+   through the same bootstrap invariants used by v0.4 migration.
 2. In a draft Change, create an Intent, Requirement, Constraint, Design
    Decision, Implementation, Artifact, and Validation. Link the decision to
    its requirement/constraint, the implementation and validation to their
    semantic targets, and the Artifact to the represented implementation.
-   Exercise update, supersede, deprecate, and accountability operations on
-   suitable elements while preserving at least one active trace path.
-3. Add a tracked source file and an executable file. Run `kat check` and
-   `kat validate`, then commit the semantic Change. Use the supported workspace
-   workflow to capture the physical snapshot and bind it with the accepted
-   semantic state in a complete `RepositoryRevision`.
+   Run `kat check`, `kat validate`, and `kat commit`, then `kat record` without
+   paths. Verify this creates a semantic-only revision and reuses the initial
+   physical snapshot. Exercise update, supersede, deprecate, and accountability
+   operations on suitable elements while preserving at least one active trace
+   path; accept and record the resulting semantic state.
+3. Add a tracked source file and an executable file by naming both paths to
+   `kat record`. Verify this creates a physical-only revision with the expected
+   bytes and executable mode. Then change semantic knowledge and a tracked file,
+   commit the semantic Change, and record the combined revision.
 4. Exit all processes. Reopen and inspect with `status`, `show`, `history`,
    `trace`, `impact`, `artifacts`, and `validate`.
 
 **Expected:** Stable element and relationship identities; accepted semantic
-state and history survive reopen; the revision binds the expected semantic
-state and snapshot; tracked bytes and executable mode match; read/validation
+state and history survive reopen; semantic-only, physical-only, and combined
+revisions have the expected parents and component identities; tracked bytes
+and executable mode match; read/validation
 commands do not mutate accepted state; history explains the accepted Change.
 
 **Current status:** Blocked by the local workspace/revision capture user path.
