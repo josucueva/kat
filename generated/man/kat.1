@@ -79,6 +79,19 @@ Manage draft Change transactions explicitly
 .TP
 .BR kat\-init (1)
 Initialize a KAT repository
+.SH COLLABORATION
+.TP
+.BR kat\-remote (1)
+Configure credential-free Hub and workspace endpoints
+.TP
+.BR kat\-fetch (1)
+Fetch and verify remote content, updating remote-tracking refs only
+.TP
+.BR kat\-push (1)
+Publish a clean workspace revision through named-reference compare-and-swap
+.TP
+.BR kat\-sync (1)
+Fetch and report remote topology without moving workspace authority
 .SH BASIC WORKFLOW
 .nf
 Initialize:
@@ -110,4 +123,8 @@ Print version
 .BR kat\-author (1),
 .BR kat\-status (1),
 .BR kat\-check (1),
-.BR kat\-context (1)
+.BR kat\-context (1),
+.BR kat\-remote (1),
+.BR kat\-fetch (1),
+.BR kat\-push (1),
+.BR kat\-sync (1)

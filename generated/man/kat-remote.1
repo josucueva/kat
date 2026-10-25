@@ -1,0 +1,23 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH remote 1  "remote " 
+.SH NAME
+remote \- Manage credential\-free remote endpoint configuration
+.SH SYNOPSIS
+\fBremote\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Manage credential\-free remote endpoint configuration
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+remote\-add(1)
+Add one immutable remote endpoint binding
+.TP
+remote\-list(1)
+List configured remotes
+.TP
+remote\-help(1)
+Print this message or the help of the given subcommand(s)

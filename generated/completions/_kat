@@ -36,6 +36,31 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(fetch)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':remote -- Configured remote name:_default' \
+&& ret=0
+;;
+(push)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':remote -- Configured remote name:_default' \
+':reference -- Remote named reference to update (for example, main):_default' \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':remote -- Configured remote name:_default' \
+&& ret=0
+;;
 (reconcile)
 _arguments "${_arguments_options[@]}" : \
 '--json[Output structured machine JSON envelope]' \
@@ -467,6 +492,70 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(remote)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_kat__subcmd__remote_commands" \
+"*::: :->remote" \
+&& ret=0
+
+    case $state in
+    (remote)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-remote-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+'--hub-url=[HTTPS base URL of the KAT Hub API]:HUB_URL:_default' \
+'--git-url=[HTTPS Git smart HTTP URL for the bound workspace backend]:GIT_URL:_default' \
+'--workspace-backend-id=[WorkspaceBackendId configured by the Hub]:WORKSPACE_BACKEND_ID:_default' \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':name -- Local remote name:_default' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_kat__subcmd__remote__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-remote-help-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 ":: :_kat__subcmd__help_commands" \
@@ -480,6 +569,18 @@ _arguments "${_arguments_options[@]}" : \
         curcontext="${curcontext%:*:*}:kat-help-command-$line[1]:"
         case $line[1] in
             (status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(fetch)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(push)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sync)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -663,6 +764,30 @@ esac
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(remote)
+_arguments "${_arguments_options[@]}" : \
+":: :_kat__subcmd__help__subcmd__remote_commands" \
+"*::: :->remote" \
+&& ret=0
+
+    case $state in
+    (remote)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:kat-help-remote-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -680,6 +805,9 @@ esac
 _kat_commands() {
     local commands; commands=(
 'status:Show accepted repository state and current draft status' \
+'fetch:Fetch and verify remote content, updating remote-tracking refs only' \
+'push:Publish the current clean workspace revision using named-reference CAS' \
+'sync:Fetch a remote and report its topology relative to the workspace base' \
 'reconcile:Prepare semantic and physical histories for collaboration' \
 'conflicts:List active conflicts in the current reconciliation session' \
 'materialize:Exposes provisional physical state for human resolution' \
@@ -709,6 +837,7 @@ _kat_commands() {
 'account:Re-baseline artifact accountability (prefer kat author for normal authoring)' \
 'change:Manage draft Change transactions explicitly' \
 'init:Initialize a KAT repository' \
+'remote:Manage credential-free remote endpoint configuration' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'kat commands' commands "$@"
@@ -835,6 +964,11 @@ _kat__subcmd__deprecate_commands() {
     local commands; commands=()
     _describe -t commands 'kat deprecate commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__fetch_commands] )) ||
+_kat__subcmd__fetch_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat fetch commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__finalize_commands] )) ||
 _kat__subcmd__finalize_commands() {
     local commands; commands=()
@@ -844,6 +978,9 @@ _kat__subcmd__finalize_commands() {
 _kat__subcmd__help_commands() {
     local commands; commands=(
 'status:Show accepted repository state and current draft status' \
+'fetch:Fetch and verify remote content, updating remote-tracking refs only' \
+'push:Publish the current clean workspace revision using named-reference CAS' \
+'sync:Fetch a remote and report its topology relative to the workspace base' \
 'reconcile:Prepare semantic and physical histories for collaboration' \
 'conflicts:List active conflicts in the current reconciliation session' \
 'materialize:Exposes provisional physical state for human resolution' \
@@ -873,6 +1010,7 @@ _kat__subcmd__help_commands() {
 'account:Re-baseline artifact accountability (prefer kat author for normal authoring)' \
 'change:Manage draft Change transactions explicitly' \
 'init:Initialize a KAT repository' \
+'remote:Manage credential-free remote endpoint configuration' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'kat help commands' commands "$@"
@@ -962,6 +1100,11 @@ _kat__subcmd__help__subcmd__deprecate_commands() {
     local commands; commands=()
     _describe -t commands 'kat help deprecate commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__help__subcmd__fetch_commands] )) ||
+_kat__subcmd__help__subcmd__fetch_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help fetch commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__help__subcmd__finalize_commands] )) ||
 _kat__subcmd__help__subcmd__finalize_commands() {
     local commands; commands=()
@@ -1014,10 +1157,33 @@ _kat__subcmd__help__subcmd__ontology__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'kat help ontology show commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__help__subcmd__push_commands] )) ||
+_kat__subcmd__help__subcmd__push_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help push commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__help__subcmd__reconcile_commands] )) ||
 _kat__subcmd__help__subcmd__reconcile_commands() {
     local commands; commands=()
     _describe -t commands 'kat help reconcile commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__remote_commands] )) ||
+_kat__subcmd__help__subcmd__remote_commands() {
+    local commands; commands=(
+'add:Add one immutable remote endpoint binding' \
+'list:List configured remotes' \
+    )
+    _describe -t commands 'kat help remote commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__remote__subcmd__add_commands] )) ||
+_kat__subcmd__help__subcmd__remote__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help remote add commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__remote__subcmd__list_commands] )) ||
+_kat__subcmd__help__subcmd__remote__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help remote list commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__help__subcmd__resolve_commands] )) ||
 _kat__subcmd__help__subcmd__resolve_commands() {
@@ -1056,6 +1222,11 @@ _kat__subcmd__help__subcmd__supersede_commands() {
 _kat__subcmd__help__subcmd__switch_commands() {
     local commands; commands=()
     _describe -t commands 'kat help switch commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__help__subcmd__sync_commands] )) ||
+_kat__subcmd__help__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help sync commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__help__subcmd__trace_commands] )) ||
 _kat__subcmd__help__subcmd__trace_commands() {
@@ -1138,10 +1309,58 @@ _kat__subcmd__ontology__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'kat ontology show commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__push_commands] )) ||
+_kat__subcmd__push_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat push commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__reconcile_commands] )) ||
 _kat__subcmd__reconcile_commands() {
     local commands; commands=()
     _describe -t commands 'kat reconcile commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__remote_commands] )) ||
+_kat__subcmd__remote_commands() {
+    local commands; commands=(
+'add:Add one immutable remote endpoint binding' \
+'list:List configured remotes' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'kat remote commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__remote__subcmd__add_commands] )) ||
+_kat__subcmd__remote__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat remote add commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__remote__subcmd__help_commands] )) ||
+_kat__subcmd__remote__subcmd__help_commands() {
+    local commands; commands=(
+'add:Add one immutable remote endpoint binding' \
+'list:List configured remotes' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'kat remote help commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__remote__subcmd__help__subcmd__add_commands] )) ||
+_kat__subcmd__remote__subcmd__help__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat remote help add commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__remote__subcmd__help__subcmd__help_commands] )) ||
+_kat__subcmd__remote__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat remote help help commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__remote__subcmd__help__subcmd__list_commands] )) ||
+_kat__subcmd__remote__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat remote help list commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__remote__subcmd__list_commands] )) ||
+_kat__subcmd__remote__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat remote list commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__resolve_commands] )) ||
 _kat__subcmd__resolve_commands() {
@@ -1205,6 +1424,11 @@ _kat__subcmd__supersede_commands() {
 _kat__subcmd__switch_commands() {
     local commands; commands=()
     _describe -t commands 'kat switch commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__sync_commands] )) ||
+_kat__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat sync commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__trace_commands] )) ||
 _kat__subcmd__trace_commands() {

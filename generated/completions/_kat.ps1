@@ -26,6 +26,9 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('-V', '-V ', [CompletionResultType]::ParameterName, 'Print version')
             [CompletionResult]::new('--version', '--version', [CompletionResultType]::ParameterName, 'Print version')
             [CompletionResult]::new('status', 'status', [CompletionResultType]::ParameterValue, 'Show accepted repository state and current draft status')
+            [CompletionResult]::new('fetch', 'fetch', [CompletionResultType]::ParameterValue, 'Fetch and verify remote content, updating remote-tracking refs only')
+            [CompletionResult]::new('push', 'push', [CompletionResultType]::ParameterValue, 'Publish the current clean workspace revision using named-reference CAS')
+            [CompletionResult]::new('sync', 'sync', [CompletionResultType]::ParameterValue, 'Fetch a remote and report its topology relative to the workspace base')
             [CompletionResult]::new('reconcile', 'reconcile', [CompletionResultType]::ParameterValue, 'Prepare semantic and physical histories for collaboration')
             [CompletionResult]::new('conflicts', 'conflicts', [CompletionResultType]::ParameterValue, 'List active conflicts in the current reconciliation session')
             [CompletionResult]::new('materialize', 'materialize', [CompletionResultType]::ParameterValue, 'Exposes provisional physical state for human resolution')
@@ -55,6 +58,7 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('account', 'account', [CompletionResultType]::ParameterValue, 'Re-baseline artifact accountability (prefer kat author for normal authoring)')
             [CompletionResult]::new('change', 'change', [CompletionResultType]::ParameterValue, 'Manage draft Change transactions explicitly')
             [CompletionResult]::new('init', 'init', [CompletionResultType]::ParameterValue, 'Initialize a KAT repository')
+            [CompletionResult]::new('remote', 'remote', [CompletionResultType]::ParameterValue, 'Manage credential-free remote endpoint configuration')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
             break
         }
@@ -63,6 +67,24 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'kat;fetch' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'kat;push' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'kat;sync' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
         'kat;reconcile' {
@@ -372,8 +394,49 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
+        'kat;remote' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('add', 'add', [CompletionResultType]::ParameterValue, 'Add one immutable remote endpoint binding')
+            [CompletionResult]::new('list', 'list', [CompletionResultType]::ParameterValue, 'List configured remotes')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'kat;remote;add' {
+            [CompletionResult]::new('--hub-url', '--hub-url', [CompletionResultType]::ParameterName, 'HTTPS base URL of the KAT Hub API')
+            [CompletionResult]::new('--git-url', '--git-url', [CompletionResultType]::ParameterName, 'HTTPS Git smart HTTP URL for the bound workspace backend')
+            [CompletionResult]::new('--workspace-backend-id', '--workspace-backend-id', [CompletionResultType]::ParameterName, 'WorkspaceBackendId configured by the Hub')
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'kat;remote;list' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'kat;remote;help' {
+            [CompletionResult]::new('add', 'add', [CompletionResultType]::ParameterValue, 'Add one immutable remote endpoint binding')
+            [CompletionResult]::new('list', 'list', [CompletionResultType]::ParameterValue, 'List configured remotes')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'kat;remote;help;add' {
+            break
+        }
+        'kat;remote;help;list' {
+            break
+        }
+        'kat;remote;help;help' {
+            break
+        }
         'kat;help' {
             [CompletionResult]::new('status', 'status', [CompletionResultType]::ParameterValue, 'Show accepted repository state and current draft status')
+            [CompletionResult]::new('fetch', 'fetch', [CompletionResultType]::ParameterValue, 'Fetch and verify remote content, updating remote-tracking refs only')
+            [CompletionResult]::new('push', 'push', [CompletionResultType]::ParameterValue, 'Publish the current clean workspace revision using named-reference CAS')
+            [CompletionResult]::new('sync', 'sync', [CompletionResultType]::ParameterValue, 'Fetch a remote and report its topology relative to the workspace base')
             [CompletionResult]::new('reconcile', 'reconcile', [CompletionResultType]::ParameterValue, 'Prepare semantic and physical histories for collaboration')
             [CompletionResult]::new('conflicts', 'conflicts', [CompletionResultType]::ParameterValue, 'List active conflicts in the current reconciliation session')
             [CompletionResult]::new('materialize', 'materialize', [CompletionResultType]::ParameterValue, 'Exposes provisional physical state for human resolution')
@@ -403,10 +466,20 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('account', 'account', [CompletionResultType]::ParameterValue, 'Re-baseline artifact accountability (prefer kat author for normal authoring)')
             [CompletionResult]::new('change', 'change', [CompletionResultType]::ParameterValue, 'Manage draft Change transactions explicitly')
             [CompletionResult]::new('init', 'init', [CompletionResultType]::ParameterValue, 'Initialize a KAT repository')
+            [CompletionResult]::new('remote', 'remote', [CompletionResultType]::ParameterValue, 'Manage credential-free remote endpoint configuration')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
             break
         }
         'kat;help;status' {
+            break
+        }
+        'kat;help;fetch' {
+            break
+        }
+        'kat;help;push' {
+            break
+        }
+        'kat;help;sync' {
             break
         }
         'kat;help;reconcile' {
@@ -522,6 +595,17 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             break
         }
         'kat;help;init' {
+            break
+        }
+        'kat;help;remote' {
+            [CompletionResult]::new('add', 'add', [CompletionResultType]::ParameterValue, 'Add one immutable remote endpoint binding')
+            [CompletionResult]::new('list', 'list', [CompletionResultType]::ParameterValue, 'List configured remotes')
+            break
+        }
+        'kat;help;remote;add' {
+            break
+        }
+        'kat;help;remote;list' {
             break
         }
         'kat;help;help' {

@@ -18,6 +18,7 @@ pub mod query;
 pub mod reconcile;
 pub mod ref_store;
 pub mod remote;
+pub mod remote_config;
 pub mod resolve;
 pub mod resolve_conflicts;
 pub mod selector;

@@ -43,7 +43,8 @@ use kat::repository::session::{
 
 use clap::Parser;
 use kat::cli::machine_presenter::MachinePresenter;
-use kat::cli::{Cli, Command, OntologyCommands};
+use kat::cli::remote::{run_fetch, run_push, run_remote_add, run_remote_list, run_sync};
+use kat::cli::{Cli, Command, OntologyCommands, RemoteCommands};
 
 use kat::repository::query::{
     OntologySummary, OntologyTypeView, inspect_ontology, show_ontology_type,
@@ -71,6 +72,23 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Init => cmd_init(),
         Command::Status { compact, json } => run_status(compact, json),
+        Command::Fetch { remote, json } => run_fetch(remote, json),
+        Command::Push {
+            remote,
+            reference,
+            json,
+        } => run_push(remote, reference, json),
+        Command::Sync { remote, json } => run_sync(remote, json),
+        Command::Remote { command } => match command {
+            RemoteCommands::Add {
+                name,
+                hub_url,
+                git_url,
+                workspace_backend_id,
+                json,
+            } => run_remote_add(name, hub_url, git_url, workspace_backend_id, json),
+            RemoteCommands::List { json } => run_remote_list(json),
+        },
         Command::Reconcile { target, json } => run_reconcile(target, json),
         Command::Conflicts { json } => run_conflicts(json),
         Command::Materialize { json } => run_materialize(json),

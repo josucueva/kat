@@ -187,6 +187,11 @@ pub struct HttpSemanticTransport {
 }
 
 impl HttpSemanticTransport {
+    /// Validates a remote Hub URL without requiring a runtime credential.
+    pub fn validate_endpoint(base_url: &str) -> Result<(), RemoteTransportError> {
+        validate_base_url(base_url, false)
+    }
+
     /// Creates an HTTPS client with a runtime bearer capability.
     pub fn new(base_url: &str, token: &str) -> Result<Self, RemoteTransportError> {
         Self::build(base_url, token, false)
@@ -202,13 +207,21 @@ impl HttpSemanticTransport {
             return Err(configuration_error());
         }
         let https_only = !allow_loopback_http;
-        let agent = ureq::Agent::config_builder()
+        let mut builder = ureq::Agent::config_builder()
             .https_only(https_only)
             .http_status_as_error(false)
             .max_redirects(0)
-            .timeout_global(Some(Duration::from_secs(30)))
-            .build()
-            .new_agent();
+            .timeout_global(Some(Duration::from_secs(30)));
+        if let Some(ca_file) = std::env::var_os("KAT_REMOTE_CA_FILE") {
+            let pem = std::fs::read(ca_file).map_err(|_| configuration_error())?;
+            let certificate =
+                ureq::tls::Certificate::from_pem(&pem).map_err(|_| configuration_error())?;
+            let tls = ureq::tls::TlsConfig::builder()
+                .root_certs(vec![certificate].into())
+                .build();
+            builder = builder.tls_config(tls);
+        }
+        let agent = builder.build().new_agent();
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
             token: token.to_owned(),

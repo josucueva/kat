@@ -15,7 +15,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 clap_mangen = "0.2"
-git2 = "0.21.0"
+git2 = { version = "0.21.0", features = ["https"] }
 hex = "0.4.3"
 subtle = "2.6"
 tiny_http = "0.12"
@@ -24,3 +24,5 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 [dev-dependencies]
 # ObjectStore tests use real temp directories with automatic cleanup.
 tempfile = "3"
+rcgen = "0.13"
+rustls = "0.23"

@@ -65,6 +65,15 @@ pub struct GitWorkspaceTransport {
 }
 
 impl GitWorkspaceTransport {
+    /// Validates an HTTPS Git smart HTTP URL without contacting the server.
+    pub fn validate_authenticated_endpoint(url: &str) -> Result<(), RemoteTransportError> {
+        if safe_https_endpoint(url) {
+            Ok(())
+        } else {
+            Err(other("invalid authenticated workspace Git URL"))
+        }
+    }
+
     /// Saves a create-only remote binding for a local KAT repository.
     pub fn configure(
         project_root: &Path,
@@ -181,6 +190,11 @@ impl GitWorkspaceTransport {
         self.binding
     }
 
+    /// The credential-free URL pinned by the saved workspace remote.
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
     fn remote_callbacks(&self) -> RemoteCallbacks<'_> {
         let mut callbacks = RemoteCallbacks::new();
         if let Some(token) = self.token.as_deref() {
@@ -195,10 +209,19 @@ impl GitWorkspaceTransport {
         let repo =
             Repository::open_bare(self.project_root.join(".kat/physical/git")).map_err(other)?;
         // `connect_auth` has no redirect option, so libgit2 reads this local override.
-        repo.config()
-            .map_err(other)?
+        let mut config = repo.config().map_err(other)?;
+        config
             .set_bool("http.followRedirects", false)
-            .map_err(other)
+            .map_err(other)?;
+        if let Some(ca_file) = std::env::var_os("KAT_REMOTE_CA_FILE") {
+            let ca_file = ca_file
+                .to_str()
+                .ok_or_else(|| other("remote CA file path is invalid"))?;
+            // libgit2's OpenSSL transport uses process-wide certificate locations.
+            // Safety: the CLI configures this before issuing any Git request.
+            unsafe { git2::opts::set_ssl_cert_file(ca_file) }.map_err(other)?;
+        }
+        Ok(())
     }
 
     fn keep_authenticated_redirects_disabled(

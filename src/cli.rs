@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 
 pub mod context_presenter;
 pub mod machine_presenter;
+pub mod remote;
 
 /// KAT (Knowledge Abstraction Tracker)
 ///
@@ -48,6 +49,10 @@ Advanced authoring:
 
 Repository:
   init       Initialize a KAT repository
+  remote     Configure authenticated Hub and workspace endpoints
+  fetch      Fetch and verify a remote's content
+  push       Publish the current workspace revision to a remote reference
+  sync       Fetch and report topology without moving workspace authority
 
 Options:
 {options}
@@ -83,6 +88,42 @@ pub enum Command {
     // -----------------------------------------------------------------------
     // Collaboration
     // -----------------------------------------------------------------------
+    /// Fetch and verify remote content, updating remote-tracking refs only
+    #[command(next_help_heading = "Collaboration")]
+    Fetch {
+        /// Configured remote name
+        remote: String,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Publish the current clean workspace revision using named-reference CAS
+    #[command(next_help_heading = "Collaboration")]
+    Push {
+        /// Configured remote name
+        remote: String,
+
+        /// Remote named reference to update (for example, main)
+        reference: String,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Fetch a remote and report its topology relative to the workspace base
+    #[command(next_help_heading = "Collaboration")]
+    Sync {
+        /// Configured remote name
+        remote: String,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Prepare semantic and physical histories for collaboration
     ///
     /// Reconcile computes a 3-way merge between the workspace's local base
@@ -586,6 +627,45 @@ pub enum Command {
     /// Initialize a KAT repository
     #[command(next_help_heading = "Repository")]
     Init,
+
+    /// Manage credential-free remote endpoint configuration
+    #[command(next_help_heading = "Repository")]
+    Remote {
+        #[command(subcommand)]
+        command: RemoteCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RemoteCommands {
+    /// Add one immutable remote endpoint binding
+    Add {
+        /// Local remote name
+        name: String,
+
+        /// HTTPS base URL of the KAT Hub API
+        #[arg(long)]
+        hub_url: String,
+
+        /// HTTPS Git smart HTTP URL for the bound workspace backend
+        #[arg(long)]
+        git_url: String,
+
+        /// WorkspaceBackendId configured by the Hub
+        #[arg(long)]
+        workspace_backend_id: String,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List configured remotes
+    List {
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(clap::Subcommand, Debug, Clone)]
