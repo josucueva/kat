@@ -223,12 +223,14 @@ side.
 | AUTH-17 | Network fetch preserves the receiving local ref, accepted state, workspace base, active lineage, and working tree. |
 | AUTH-18 | Interrupted upload leaves named-reference authority unchanged; retry succeeds, and stale CAS preserves the current target. |
 
-Step 12.5.3's local tests exercise the Git routes over real loopback HTTP with
-libgit2, including read-only fetch, publish push, create-only ref rejection,
-expiry/revocation, wrong-repository hiding, backend binding checks, and one
-shared Hub/Git verifier. They do not prove that a deployment prevents direct
-access to the bare backend or establish the authenticated end-to-end
-`RemoteCoordinator` scenarios in AUTH-17 and AUTH-18.
+Steps 12.5.3 and AUTH-17/18 are exercised over loopback HTTP. The authenticated
+coordinator tests publish a semantic and physical revision through the Hub and
+Git gateway, reopen clients, fetch into a second repository, and verify local
+authority preservation. They also revoke publish access after physical content
+and one canonical object have transferred, confirm the next Hub upload is
+denied without reference movement, and verify authorized retry and stale CAS.
+These tests do not prove that a deployment prevents direct access to the bare
+backend or establish deployed TLS proxy, retention, or durability behavior.
 
 ## Trust assumptions and limits
 

@@ -1,6 +1,6 @@
 # v0.5 Implementation Pending Report
 
-This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phases 10 and 11 are frozen. The Phase 12.0 transport contract is frozen, and Phases 12.1–12.4 have completed their local implementation and integration milestones. The Phase 12.5 authorization contract is frozen in `0b1f5c8`; Steps 12.5.1 (`d991db4`), 12.5.2 (`25c315e`), and 12.5.3 (`743f2de`) are implemented locally. The full authenticated coordinator acceptance path and deployment verification remain pending.**
+This report outlines the remaining phases required to complete the v0.5 implementation plan. **Phases 10 and 11 are frozen. The Phase 12.0 transport contract is frozen, and Phases 12.1–12.4 have completed their local implementation and integration milestones. The Phase 12.5 authorization contract is frozen in `0b1f5c8`; Steps 12.5.1 (`d991db4`), 12.5.2 (`25c315e`), 12.5.3 (`743f2de`), and the AUTH-17/18 coordinator acceptance (`8712523`) are complete locally. Remote CLI workflows and deployment verification remain pending.**
 
 ## What Has Been Completed
 
@@ -25,6 +25,8 @@ All core reconciliation, conflict resolution, topology traversal, and collaborat
 - Phase 12.5.2 (`25c315e`): Added `HubHttpService` and `HttpSemanticTransport` without changing the `SemanticTransport` trait. Both service boundaries can share one `Arc<AuthorizationVerifier>`. Real loopback HTTP acceptance tests cover read/publish access, reference and object operations, stale CAS, wrong-repository hiding, invalid object/closure rejection, URL and query credential rejection, and credential-safe errors; size and rate limit boundary checks cover request caps. The endpoint uses HTTPS-only client URLs, certificate validation, redirects disabled, a 30-second timeout, and runtime-only tokens. Full gate: workspace build/tests, fmt, Clippy, and generated assets passed. The listener still depends on a trusted TLS proxy configured for one request per upstream connection.
 - Phase 12.5.3 (`743f2de`): Added `GitHttpGateway` for one fixed controlled backend, with shared-verifier Basic authentication on both smart HTTP discovery and pack operations. The gateway rechecks backend binding/retention policy per request, invokes `git http-backend` with a fixed backend path, limits request and response packs to 256 MiB, and retains the create-only lineage hook. `GitWorkspaceTransport` now accepts a runtime HTTPS token via libgit2 credentials, rejects credential/query URLs, disables redirects, and keeps the token out of persisted config. Seven loopback tests use real libgit2 HTTP fetch/push and cover grants, expiry/revocation shared with Hub, wrong repositories, binding mismatch, ref mutation rejection, and size limits. Full gate: formatting, build, workspace tests, Clippy, and generated assets passed. The instance handles requests serially and buffers request/response bodies; the proxy, Git executable/PATH, and backend must remain within the deployment trust boundary.
 
+- AUTH-17/18 (`8712523`): Added Unix loopback acceptance tests composing `RemoteCoordinator`, authenticated Hub HTTP, and authenticated Git smart HTTP. AUTH-17 publishes semantic and physical changes with publish access, reopens clients, then fetches with read access into a second repository; complete closure, tracking references, and preservation of local refs, accepted state, workspace base, active lineage, and working-tree bytes are checked. AUTH-18 transfers physical snapshots and one canonical object, then revokes publish access so the next real Hub HTTP object upload receives `403`; no named ref advances. Wrong-repository grants, read-only publication, shared Hub/Git revocation, authorized retry, and stale CAS are also checked. Full workspace tests, build, formatting, Clippy, and generated-asset checks pass. This is loopback evidence, not deployed TLS or retention proof.
+
 ## What Remains Pending
 
 The remaining effort focuses on concrete remote integration, compatibility migration, and distributed end-to-end verification.
@@ -45,8 +47,8 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 - GitHub's fully qualified ref API and documented branch/tag rulesets do not prove retention for `refs/kat/*`. This repository's `origin` is only its project-source remote, not evidence of a configured KAT workspace host.
 - Phase 12.2 local implementation is complete. Its loopback backend and transport are not deployment proof. Phase 12.3 verifies the controlled backend's local policy files/configuration and reads snapshot refs and trees before CAS, but this does not verify production service startup, host controls, backups, or storage durability.
 - The trusted Hub core remains in-process code; the new HTTP adapter adds the semantic authorization boundary but does not provide TLS termination, deployment provisioning, or CLI wiring. The Hub data root must be protected by deployment operating-system permissions; the library does not configure ACLs. Do not expose the raw Hub core to untrusted processes.
-- Remaining Phase 12.5 work: run authenticated `RemoteCoordinator` fetch/publish tests through both network transports, including receiving-workspace preservation, interrupted transfer/retry, and stale CAS (AUTH-17/18). Then wire remote CLI workflows. Deployment TLS proxy isolation, direct Git bypass prevention, retention, and storage durability remain separate acceptance gates.
-- **Tests**: Authenticated coordinator network flow, deployment retention/durability, and end-to-end remote CLI workflows.
+- Phase 12.5 AUTH-17/18 are complete locally. Next, wire remote CLI workflows. Deployment TLS proxy isolation, direct Git bypass prevention, retention, and storage durability remain separate acceptance gates.
+- **Tests**: Deployment retention/durability and end-to-end remote CLI workflows.
 
 ### Phase 13: Migration and compatibility
 **Goal:** Migrate v0.4 repositories to v0.5 seamlessly.
@@ -63,4 +65,4 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 
 ## Next Steps
 
-Run AUTH-17/18 through the authenticated Hub and Git transports before wiring remote CLI workflows. Then verify TLS proxy behavior, direct backend isolation, retention, and storage durability against the deployment; local loopback tests are not production proof.
+Wire the remote CLI workflows. Then verify TLS proxy behavior, direct backend isolation, retention, and storage durability against the deployment; local loopback tests are not production proof.
