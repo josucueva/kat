@@ -1,5 +1,6 @@
 //! User-facing remote configuration and fetch/push/sync workflows.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -205,6 +206,31 @@ pub fn run_push(name: String, reference: String, json: bool) -> ExitCode {
         );
     }
     let candidate = workspace.base_revision;
+    if let Some(expected) = expected {
+        match revision_has_ancestor(&repository, candidate, expected) {
+            Ok(true) => {}
+            Ok(false) => {
+                return failure(
+                    Some(&repository),
+                    json,
+                    "push",
+                    "PUSH_NON_FAST_FORWARD",
+                    format!(
+                        "remote reference {reference} at {expected} is not an ancestor of local revision {candidate}"
+                    ),
+                );
+            }
+            Err(error) => {
+                return failure(
+                    Some(&repository),
+                    json,
+                    "push",
+                    "PUSH_HISTORY_UNAVAILABLE",
+                    error,
+                );
+            }
+        }
+    }
     let coordinator = RemoteCoordinator::new(
         repository.metadata.repository_id,
         config.name(),
@@ -236,6 +262,29 @@ pub fn run_push(name: String, reference: String, json: bool) -> ExitCode {
         }
         Err(error) => remote_failure(&repository, &name, "push", error, json),
     }
+}
+
+fn revision_has_ancestor(
+    repository: &Repository,
+    descendant: RepositoryRevisionId,
+    ancestor: RepositoryRevisionId,
+) -> Result<bool, String> {
+    let mut pending = vec![descendant];
+    let mut visited = HashSet::new();
+    while let Some(current) = pending.pop() {
+        if current == ancestor {
+            return Ok(true);
+        }
+        if visited.insert(current) {
+            pending.extend(
+                repository
+                    .read_revision(current)
+                    .map_err(|error| error.to_string())?
+                    .parents,
+            );
+        }
+    }
+    Ok(false)
 }
 
 pub fn run_sync(name: String, json: bool) -> ExitCode {
@@ -511,10 +560,10 @@ fn topology_value(
             serde_json::json!({ "common_base": common_base }),
         ),
         DivergenceState::AmbiguousMergeBase { bases } => (
-            "Diverged",
+            "AmbiguousMergeBase",
             serde_json::json!({ "ambiguous_merge_bases": bases }),
         ),
-        DivergenceState::Unrelated => ("Diverged", serde_json::json!({ "unrelated": true })),
+        DivergenceState::Unrelated => ("Unrelated", serde_json::json!({ "unrelated": true })),
     };
     serde_json::json!({
         "reference": name,
@@ -658,4 +707,51 @@ fn failure_with_details(
         eprintln!("kat {command}: {message}");
     }
     ExitCode::FAILURE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::identity::ObjectId;
+
+    fn revision(value: u8) -> RepositoryRevisionId {
+        RepositoryRevisionId::from_object_id(ObjectId::from_bytes([value; 32]))
+    }
+
+    #[test]
+    fn topology_json_keeps_all_states_distinct() {
+        let base = revision(1);
+        let a = revision(2);
+        let b = revision(3);
+        let cases = [
+            (DivergenceState::Same, "Same"),
+            (DivergenceState::LocalAhead, "LocalAhead"),
+            (DivergenceState::OtherAhead, "OtherAhead"),
+            (DivergenceState::Diverged { common_base: base }, "Diverged"),
+            (
+                DivergenceState::AmbiguousMergeBase { bases: vec![a, b] },
+                "AmbiguousMergeBase",
+            ),
+            (DivergenceState::Unrelated, "Unrelated"),
+        ];
+
+        for (state, expected) in cases {
+            assert_eq!(topology_value("main", a, b, state)["state"], expected);
+        }
+        let ambiguous = topology_value(
+            "main",
+            a,
+            b,
+            DivergenceState::AmbiguousMergeBase { bases: vec![a, b] },
+        );
+        assert_eq!(
+            ambiguous["details"]["ambiguous_merge_bases"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let unrelated = topology_value("main", a, b, DivergenceState::Unrelated);
+        assert_eq!(unrelated["details"]["unrelated"], true);
+    }
 }

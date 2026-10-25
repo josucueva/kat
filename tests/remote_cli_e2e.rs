@@ -552,10 +552,17 @@ fn authenticated_cli_publish_fetch_sync_and_partial_failure_use_separate_process
         .create_snapshot(&[PathBuf::from("source.txt")])
         .unwrap();
     let source_repository = open_repository(&fixture.source_root).unwrap();
-    let next_revision = put_revision(
+    let source_semantic = SemanticStateId::from_object_id(source_repository.accepted.state);
+    let race_revision = put_revision(
         source_repository.object_store(),
         vec![fixture.base_revision],
-        SemanticStateId::from_object_id(source_repository.accepted.state),
+        source_semantic,
+        next_snapshot.clone(),
+    );
+    let next_revision = put_revision(
+        source_repository.object_store(),
+        vec![race_revision],
+        source_semantic,
         next_snapshot,
     );
     let source_workspace = read_workspace_state(&fixture.source_root).unwrap();
@@ -567,7 +574,7 @@ fn authenticated_cli_publish_fetch_sync_and_partial_failure_use_separate_process
     let base_revision = fixture.base_revision;
     fixture.hub_tls.set_before_reference_cas(move || {
         let hub = TrustedHubSemanticTransport::open(&hub_root, repository_id).unwrap();
-        hub.compare_and_swap_reference(repository_id, "main", Some(base_revision), winner_revision)
+        hub.compare_and_swap_reference(repository_id, "main", Some(base_revision), race_revision)
             .unwrap();
     });
     let stale_push = run_kat(
@@ -588,7 +595,7 @@ fn authenticated_cli_publish_fetch_sync_and_partial_failure_use_separate_process
             .find(|reference| reference.name == "main")
             .unwrap()
             .target,
-        winner_revision
+        race_revision
     );
 
     let retry_push = run_kat(
@@ -605,9 +612,52 @@ fn authenticated_cli_publish_fetch_sync_and_partial_failure_use_separate_process
     let retry_result: serde_json::Value = serde_json::from_slice(&retry_push.stdout).unwrap();
     assert_eq!(
         retry_result["data"]["expected_remote_target"],
-        winner_revision.to_string()
+        race_revision.to_string()
     );
     assert_eq!(authority(&fixture.source_root), source_before_push);
+
+    let mismatch_root = fixture._temp.path().join("mismatched-backend");
+    clone_at_base(
+        &fixture.source_root,
+        &mismatch_root,
+        fixture.base_revision,
+        &fixture.base_snapshot,
+    );
+    let wrong_backend_id = WorkspaceBackendId::new().to_string();
+    let mismatch_remote = run_kat(
+        &mismatch_root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "--hub-url",
+            &fixture.hub_url(),
+            "--git-url",
+            &fixture.git_url(),
+            "--workspace-backend-id",
+            &wrong_backend_id,
+            "--json",
+        ],
+        Some(READ_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(
+        mismatch_remote.status.success(),
+        "remote configuration failed: {}",
+        String::from_utf8_lossy(&mismatch_remote.stdout)
+    );
+    let mismatch_before = authority(&mismatch_root);
+    let mismatch_fetch = run_kat(
+        &mismatch_root,
+        &["fetch", "origin", "--json"],
+        Some(READ_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(!mismatch_fetch.status.success());
+    let mismatch_result: serde_json::Value =
+        serde_json::from_slice(&mismatch_fetch.stdout).unwrap();
+    assert_eq!(mismatch_result["error"]["code"], "REMOTE_BINDING_MISMATCH");
+    assert_eq!(authority(&mismatch_root), mismatch_before);
 
     let mut tracking_lock = fixture.target_root.join(".kat/refs/remotes/origin/winner");
     let mut extension = tracking_lock.extension().unwrap_or_default().to_os_string();
@@ -639,6 +689,13 @@ fn authenticated_cli_publish_fetch_sync_and_partial_failure_use_separate_process
         partial_result["error"]["details"]["fetch"]["failed"][0]["name"],
         "winner"
     );
+    let partial_fetch = &partial_result["error"]["details"]["fetch"];
+    for field in ["updated", "unchanged", "removed", "failed", "unnamed_heads"] {
+        assert!(
+            partial_fetch[field].is_array(),
+            "missing {field}: {partial_fetch}"
+        );
+    }
     assert_eq!(authority(&fixture.target_root), target_before_sync);
     let human_partial_sync = run_kat(
         &fixture.target_root,
@@ -674,6 +731,39 @@ fn authenticated_cli_publish_fetch_sync_and_partial_failure_use_separate_process
             .any(|item| item["reference"] == "main" && item["state"] == "OtherAhead")
     );
     assert_eq!(authority(&fixture.target_root), target_before_sync);
+    let before_non_fast_forward = authority(&fixture.target_root);
+    let remote_main_before_non_fast_forward = hub
+        .list_references(fixture.repository_id)
+        .unwrap()
+        .named
+        .iter()
+        .find(|reference| reference.name == "main")
+        .unwrap()
+        .target;
+    let non_fast_forward_push = run_kat(
+        &fixture.target_root,
+        &["push", "origin", "main", "--json"],
+        Some(PUBLISH_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(!non_fast_forward_push.status.success());
+    let non_fast_forward_result: serde_json::Value =
+        serde_json::from_slice(&non_fast_forward_push.stdout).unwrap();
+    assert_eq!(
+        non_fast_forward_result["error"]["code"],
+        "PUSH_NON_FAST_FORWARD"
+    );
+    assert_eq!(authority(&fixture.target_root), before_non_fast_forward);
+    assert_eq!(
+        hub.list_references(fixture.repository_id)
+            .unwrap()
+            .named
+            .iter()
+            .find(|reference| reference.name == "main")
+            .unwrap()
+            .target,
+        remote_main_before_non_fast_forward
+    );
     let before_old_push = authority(&fixture.target_root);
     let old_push = run_kat(
         &fixture.target_root,
