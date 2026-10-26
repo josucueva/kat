@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 pub mod context_presenter;
 pub mod machine_presenter;
@@ -25,6 +26,7 @@ Everyday workflow:
   author     Stage a semantic Change from declarative JSON
   check      Check consistency, evidence, accountability, and graph quality
   commit     Publish the current draft Change
+  record     Capture semantic and physical state as a repository revision
   abort      Discard the current draft Change
 
 Inspection:
@@ -327,6 +329,18 @@ pub enum Command {
     /// Machine JSON supported: --json flag.
     #[command(next_help_heading = "Everyday Workflow")]
     Commit {
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Record accepted semantic and tracked physical changes as a complete revision
+    #[command(next_help_heading = "Everyday Workflow")]
+    Record {
+        /// New workspace-relative files or symlinks to include
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+
         /// Output structured machine JSON envelope
         #[arg(long)]
         json: bool,

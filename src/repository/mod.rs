@@ -17,6 +17,7 @@ pub mod object_store;
 pub mod open;
 pub mod query;
 pub mod reconcile;
+pub mod record;
 pub mod ref_store;
 pub mod remote;
 pub mod remote_config;

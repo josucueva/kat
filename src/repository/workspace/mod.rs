@@ -108,6 +108,7 @@ pub fn update_workspace_base(
 pub struct WorkspaceSummary {
     pub id: WorkspaceId,
     pub base_revision: crate::domain::identity::RepositoryRevisionId,
+    pub accepted_semantic_state_recorded: bool,
     pub status: WorkspaceStatus,
 }
 
@@ -192,6 +193,8 @@ pub fn workspace_status(
     Ok(WorkspaceSummary {
         id: ws.id,
         base_revision: ws.base_revision,
+        accepted_semantic_state_recorded: revision.semantic_state.as_object_id()
+            == repo.accepted.state,
         status,
     })
 }

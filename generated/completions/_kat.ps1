@@ -40,6 +40,7 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('author', 'author', [CompletionResultType]::ParameterValue, 'Stage a semantic Change from declarative JSON')
             [CompletionResult]::new('check', 'check', [CompletionResultType]::ParameterValue, 'Check consistency, evidence, accountability, and graph quality')
             [CompletionResult]::new('commit', 'commit', [CompletionResultType]::ParameterValue, 'Publish the current draft Change')
+            [CompletionResult]::new('record', 'record', [CompletionResultType]::ParameterValue, 'Record accepted semantic and tracked physical changes as a complete revision')
             [CompletionResult]::new('abort', 'abort', [CompletionResultType]::ParameterValue, 'Discard the current draft Change')
             [CompletionResult]::new('list', 'list', [CompletionResultType]::ParameterValue, 'List knowledge elements in the current accepted state')
             [CompletionResult]::new('show', 'show', [CompletionResultType]::ParameterValue, 'Inspect a resolved knowledge element')
@@ -191,6 +192,12 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'kat;record' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
         'kat;abort' {
@@ -454,6 +461,7 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('author', 'author', [CompletionResultType]::ParameterValue, 'Stage a semantic Change from declarative JSON')
             [CompletionResult]::new('check', 'check', [CompletionResultType]::ParameterValue, 'Check consistency, evidence, accountability, and graph quality')
             [CompletionResult]::new('commit', 'commit', [CompletionResultType]::ParameterValue, 'Publish the current draft Change')
+            [CompletionResult]::new('record', 'record', [CompletionResultType]::ParameterValue, 'Record accepted semantic and tracked physical changes as a complete revision')
             [CompletionResult]::new('abort', 'abort', [CompletionResultType]::ParameterValue, 'Discard the current draft Change')
             [CompletionResult]::new('list', 'list', [CompletionResultType]::ParameterValue, 'List knowledge elements in the current accepted state')
             [CompletionResult]::new('show', 'show', [CompletionResultType]::ParameterValue, 'Inspect a resolved knowledge element')
@@ -528,6 +536,9 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             break
         }
         'kat;help;commit' {
+            break
+        }
+        'kat;help;record' {
             break
         }
         'kat;help;abort' {

@@ -208,6 +208,14 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(record)
+_arguments "${_arguments_options[@]}" : \
+'--json[Output structured machine JSON envelope]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::paths -- New workspace-relative files or symlinks to include:_files' \
+&& ret=0
+;;
 (abort)
 _arguments "${_arguments_options[@]}" : \
 '--json[Output structured machine JSON envelope]' \
@@ -654,6 +662,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(record)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (abort)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -829,6 +841,7 @@ _kat_commands() {
 'author:Stage a semantic Change from declarative JSON' \
 'check:Check consistency, evidence, accountability, and graph quality' \
 'commit:Publish the current draft Change' \
+'record:Record accepted semantic and tracked physical changes as a complete revision' \
 'abort:Discard the current draft Change' \
 'list:List knowledge elements in the current accepted state' \
 'show:Inspect a resolved knowledge element' \
@@ -1003,6 +1016,7 @@ _kat__subcmd__help_commands() {
 'author:Stage a semantic Change from declarative JSON' \
 'check:Check consistency, evidence, accountability, and graph quality' \
 'commit:Publish the current draft Change' \
+'record:Record accepted semantic and tracked physical changes as a complete revision' \
 'abort:Discard the current draft Change' \
 'list:List knowledge elements in the current accepted state' \
 'show:Inspect a resolved knowledge element' \
@@ -1184,6 +1198,11 @@ _kat__subcmd__help__subcmd__reconcile_commands() {
     local commands; commands=()
     _describe -t commands 'kat help reconcile commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__help__subcmd__record_commands] )) ||
+_kat__subcmd__help__subcmd__record_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help record commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__help__subcmd__remote_commands] )) ||
 _kat__subcmd__help__subcmd__remote_commands() {
     local commands; commands=(
@@ -1340,6 +1359,11 @@ _kat__subcmd__push_commands() {
 _kat__subcmd__reconcile_commands() {
     local commands; commands=()
     _describe -t commands 'kat reconcile commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__record_commands] )) ||
+_kat__subcmd__record_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat record commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__remote_commands] )) ||
 _kat__subcmd__remote_commands() {

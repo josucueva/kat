@@ -4,7 +4,7 @@
 //! invocation contract in `docs/cli.md`; the CLI layer only parses and
 //! dispatches, it never owns repository semantics.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str::FromStr;
 
@@ -112,6 +112,7 @@ fn main() -> ExitCode {
         } => run_author(claims_file, example, json),
         Command::Check { compact, json } => run_check(compact, json),
         Command::Commit { json } => run_commit(json),
+        Command::Record { paths, json } => run_record(paths, json),
         Command::Abort { json } => run_abort(json),
         Command::List {
             element_type,
@@ -1208,6 +1209,14 @@ fn print_repository_status(status: &RepositoryStatus) {
         println!(
             "  base:        {}",
             short_object_id(&ws.base_revision.as_object_id())
+        );
+        println!(
+            "  accepted semantic revision: {}",
+            if ws.accepted_semantic_state_recorded {
+                "recorded"
+            } else {
+                "unrecorded"
+            }
         );
 
         let sem_str = match &ws.status.semantic {
@@ -4253,6 +4262,63 @@ fn run_commit(json: bool) -> ExitCode {
             } else {
                 ExitCode::FAILURE
             }
+        }
+    }
+}
+
+fn run_record(paths: Vec<PathBuf>, json: bool) -> ExitCode {
+    let repository = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            if json {
+                MachinePresenter::present_error(None, "NotInRepository", &error.to_string());
+            } else {
+                eprintln!("kat record: {error}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match kat::repository::record::record_revision(repository.root_dir(), &paths) {
+        Ok(outcome) => {
+            if json {
+                MachinePresenter::present_success(&repository, &outcome);
+            } else {
+                println!("recorded repository revision");
+                println!("  revision_id:         {}", outcome.revision_id);
+                println!("  parent_revision_id:  {}", outcome.parent_revision_id);
+                println!(
+                    "  semantic_state_id:   {}",
+                    outcome.semantic_state_id.as_object_id()
+                );
+                println!("  workspace_snapshot:  {}", outcome.workspace_snapshot_id);
+                println!(
+                    "  semantic_change:     {}",
+                    outcome
+                        .semantic_change
+                        .map(|change| change.to_string())
+                        .unwrap_or_else(|| "none".into())
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            if json {
+                let code = match error {
+                    kat::repository::record::RecordError::InvalidPath { .. } => {
+                        "RECORD_INVALID_PATH"
+                    }
+                    kat::repository::record::RecordError::NoChanges => "RECORD_NO_CHANGES",
+                    kat::repository::record::RecordError::DraftOpen
+                    | kat::repository::record::RecordError::ReconciliationActive
+                    | kat::repository::record::RecordError::BackendMismatch => "RECORD_BLOCKED",
+                    _ => "RECORD_FAILED",
+                };
+                MachinePresenter::present_error(Some(&repository), code, &error.to_string());
+            } else {
+                eprintln!("kat record: {error}");
+            }
+            ExitCode::FAILURE
         }
     }
 }

@@ -117,6 +117,12 @@ kat artifacts            # Artifact authx-core-v1.jar returns to CURRENT status
 
 # 7. Reconstruct immutable change history
 kat history
+
+# 8. Record the accepted semantic state and current tracked files
+kat record
+
+# New files enter the tracked workspace only when named
+kat record src/new-module.rs
 ```
 
 ---
@@ -128,6 +134,8 @@ kat history
 | `kat init` | Initialize KAT and create the root software revision and workspace from the current nonignored project files. |
 | `kat migrate` | Explicitly migrate a v0.4 repository while preserving its canonical objects. |
 | `kat status` | Display a concise summary of current accepted repository status and health. |
+| `kat commit` | Accept the current semantic Change without moving the complete workspace revision. |
+| `kat record [PATH ...]` | Create a complete local revision from accepted semantics and tracked physical files; named references do not move. |
 | `kat create <type> --title "..."` | Create a new knowledge element (`requirement`, `constraint`, `design-decision`, `implementation`, `artifact`, etc.). |
 | `kat update <element-id> --title "..."` | Update properties on an existing active element (advances version ObjectId). |
 | `kat deprecate <element-id>` | Mark an active element as Deprecated. |

@@ -342,6 +342,58 @@ impl GitWorkspaceBackend {
             .collect()
     }
 
+    pub(crate) fn snapshot_paths(
+        &self,
+        id: &WorkspaceSnapshotId,
+    ) -> Result<Vec<PathBuf>, WorkspaceBackendError> {
+        let representations = Self::get_snapshot_representations(&self._project_root, id)?;
+        let representation = representations
+            .iter()
+            .find(|representation| {
+                Some(representation.commit) == Self::read_active_lineage(&self._project_root)
+            })
+            .or_else(|| representations.first())
+            .ok_or_else(|| WorkspaceBackendError::SnapshotNotFound(id.clone()))?;
+        let commit = self
+            ._repo
+            .find_commit(representation.commit)
+            .map_err(|error| WorkspaceBackendError::Io(std::io::Error::other(error.to_string())))?;
+        let tree = commit
+            .tree()
+            .map_err(|error| WorkspaceBackendError::Io(std::io::Error::other(error.to_string())))?;
+        let mut entries = Vec::new();
+        collect_git_tree(&self._repo, &tree, Path::new(""), &mut entries)?;
+        Ok(entries
+            .into_iter()
+            .map(|(path, _, _)| PathBuf::from(path))
+            .collect())
+    }
+
+    pub(crate) fn is_ignored(&self, path: &Path) -> Result<bool, WorkspaceBackendError> {
+        self._repo.status_should_ignore(path).map_err(|error| {
+            WorkspaceBackendError::Io(std::io::Error::other(format!(
+                "Failed to apply Git ignore rules to {}: {error}",
+                path.display()
+            )))
+        })
+    }
+
+    pub(crate) fn active_lineage(&self) -> Option<git2::Oid> {
+        Self::read_active_lineage(&self._project_root)
+    }
+
+    pub(crate) fn activate_lineage(
+        &self,
+        snapshot: &WorkspaceSnapshotId,
+        commit: git2::Oid,
+    ) -> Result<(), WorkspaceBackendError> {
+        Self::verify_snapshot_protection_ref(&self._repo, snapshot, commit)?;
+        self._repo
+            .set_head_detached(commit)
+            .map_err(|error| WorkspaceBackendError::Io(std::io::Error::other(error.to_string())))?;
+        Self::write_active_lineage(&self._project_root, commit)
+    }
+
     fn active_lineage_path(project_root: &Path) -> PathBuf {
         project_root.join(".kat/physical/active_lineage")
     }

@@ -49,6 +49,8 @@ session state.
 
 * `kat init`
 * `kat migrate`
+* `kat commit`
+* `kat record [PATH ...]`
 * `kat change begin`
 * `kat change status`
 * `kat change commit`
@@ -69,6 +71,17 @@ project with an existing `.git` directory, KAT preserves it under
 repository commands fail with a migration-required error until that operation
 completes.
 
+`kat commit` accepts a semantic Change and moves the accepted semantic head.
+It does not capture physical edits or move the workspace base. `kat record`
+creates a complete `RepositoryRevision` from the accepted semantic state and
+tracked physical files, then advances only the workspace base. Previously
+tracked paths are captured automatically; missing tracked paths are deletions.
+New files must be named explicitly. Explicit paths must be relative existing
+regular files or symlinks; directories, ignored paths, and `.kat`/`.git`
+metadata paths are rejected. Parent directories must be real workspace
+directories; a symlinked parent is rejected. Recording never moves a named
+reference.
+
 ---
 
 ## Command Syntax (v0.2)
@@ -76,6 +89,8 @@ completes.
 ```text
 kat init
 kat migrate
+kat commit
+kat record [PATH ...]
 kat status [--compact]
 kat list [<type>] [--type <type>] [--lifecycle <active|deprecated|superseded>]
 kat create <type> --title "..." [--description "..."]

@@ -370,6 +370,13 @@ pub enum QueryError {
         /// ObjectId the ChangeRevision actually results in.
         actual: ObjectId,
     },
+    /// A historical RepositoryRevision's semantic Change does not produce
+    /// the state stored in that revision.
+    RevisionChangeStateMismatch {
+        change: ObjectId,
+        expected: ObjectId,
+        actual: ObjectId,
+    },
     /// A failure returned by the physical workspace backend.
     WorkspaceBackend(crate::domain::workspace::WorkspaceBackendError),
     /// A conflict with another active session in the workspace.
@@ -778,6 +785,54 @@ pub fn history(repository: &Repository) -> Result<Vec<HistoryEntry>, QueryError>
     let mut entries = Vec::new();
     visit(repository, head, &mut states, &mut entries)?;
     Ok(entries)
+}
+
+fn history_for_revision(
+    repository: &Repository,
+    revision: &crate::domain::revision::RepositoryRevision,
+) -> Result<Vec<HistoryEntry>, QueryError> {
+    let state_id = revision.semantic_state.as_object_id();
+    let mut pending = vec![revision.clone()];
+    let mut visited_revisions = HashSet::new();
+    while let Some(candidate) = pending.pop() {
+        if candidate.semantic_state.as_object_id() == state_id
+            && let Some(change_id) = candidate.semantic_change
+        {
+            let change = load_change(repository.object_store(), change_id.as_object_id())?;
+            if change.result_state != state_id {
+                return Err(QueryError::RevisionChangeStateMismatch {
+                    change: change_id.as_object_id(),
+                    expected: state_id,
+                    actual: change.result_state,
+                });
+            }
+            let mut states = HashMap::new();
+            let mut entries = Vec::new();
+            visit(
+                repository,
+                change_id.as_object_id(),
+                &mut states,
+                &mut entries,
+            )?;
+            return Ok(entries);
+        }
+
+        for parent in candidate.parents.into_iter().rev() {
+            if !visited_revisions.insert(parent) {
+                continue;
+            }
+            let object = load_typed(
+                repository.object_store(),
+                parent.as_object_id(),
+                ObjectKind::RepositoryRevision,
+            )?;
+            match object.payload {
+                CanonicalPayload::RepositoryRevision(parent) => pending.push(parent),
+                _ => unreachable!("kind verified by load_typed"),
+            }
+        }
+    }
+    Ok(Vec::new())
 }
 
 /// Depth-first traversal state of one ChangeRevision ObjectId.
@@ -1218,6 +1273,23 @@ pub fn resolve_relationship_baseline_version(
     target_element_id: ElementId,
     draft_ops: &[crate::domain::operation::Operation],
 ) -> Result<ObjectId, QueryError> {
+    let entries = history(repository)?;
+    resolve_relationship_baseline_version_in_history(
+        repository,
+        relationship_id,
+        target_element_id,
+        draft_ops,
+        &entries,
+    )
+}
+
+fn resolve_relationship_baseline_version_in_history(
+    repository: &Repository,
+    relationship_id: RelationshipId,
+    target_element_id: ElementId,
+    draft_ops: &[crate::domain::operation::Operation],
+    entries: &[HistoryEntry],
+) -> Result<ObjectId, QueryError> {
     for op in draft_ops.iter().rev() {
         if let crate::domain::operation::Operation::AccountArtifact {
             reconciliations, ..
@@ -1231,12 +1303,10 @@ pub fn resolve_relationship_baseline_version(
         }
     }
 
-    let entries = history(repository)?;
-
     // `entries` is ordered from accepted head (newest) to oldest.
     // Walk newest to oldest: check if any revision contains an AccountArtifact operation
     // that explicitly reconciled relationship_id!
-    for entry in &entries {
+    for entry in entries {
         for op in &entry.change.operations {
             if let Operation::AccountArtifact {
                 reconciliations, ..
@@ -1253,7 +1323,7 @@ pub fn resolve_relationship_baseline_version(
 
     // Otherwise fallback to finding the introducing state
     let mut introducing_state = None;
-    for entry in &entries {
+    for entry in entries {
         let state = match load_typed(
             repository.object_store(),
             entry.change.result_state,
@@ -1303,6 +1373,13 @@ pub fn analyze_artifact_accountability(
             }
         }
     }
+
+    let history_entries = match &context {
+        Some(AccountabilityContext::Revision(_, revision)) => {
+            history_for_revision(repository, revision)?
+        }
+        _ => history(repository)?,
+    };
 
     let state = if let Some(session) = &session_opt {
         draft_ops = session.operations.clone();
@@ -1475,11 +1552,12 @@ pub fn analyze_artifact_accountability(
 
             let current_version = current_target_version;
 
-            let baseline_version = resolve_relationship_baseline_version(
+            let baseline_version = resolve_relationship_baseline_version_in_history(
                 repository,
                 rel_version.relationship_id,
                 rel_version.target_element_id,
                 &draft_ops,
+                &history_entries,
             )?;
 
             let is_stale = current_version != baseline_version
@@ -2852,6 +2930,14 @@ impl std::fmt::Display for QueryError {
             } => write!(
                 f,
                 "accepted change {change} results in state {actual}, but the accepted state is {expected}"
+            ),
+            Self::RevisionChangeStateMismatch {
+                change,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "repository revision change {change} results in state {actual}, expected {expected}"
             ),
             Self::HistoryCycle(e0) => {
                 write!(f, "history contains a dependency cycle at revision {e0}")
