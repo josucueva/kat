@@ -751,10 +751,14 @@ Migrate v0.4 repositories to v0.5 seamlessly.
 - Keep `kat commit` as semantic Change acceptance; it does not create a complete `RepositoryRevision` or move the workspace base.
 - `kat record [PATH ...]` creates a complete local revision from the accepted semantic head and tracked physical working tree. Existing tracked paths are captured, missing paths are deletions, and new paths must be named explicitly. It advances only the workspace base, never a named reference.
 - Fresh v0.5 `kat init` and v0.4 migration use the same root-revision bootstrap rules: preserve the accepted semantic state, capture the existing non-ignored project tree as the initial physical snapshot, create a parentless root `RepositoryRevision`, and initialize the workspace base to that revision.
+- Initial capture excludes `.kat` and all `.git` administrative paths, including worktree `.git` files and nested Git metadata; Git ignore rules exclude ignored files.
+- A migrated root records the accepted Change head when present. Sequential committed Changes depend on the prior accepted head, so the latest Change provides the full chain; verify its recursively complete object closure and result-state match before exposing the root.
+- For `kat record`, explicit paths are workspace-relative existing regular files or symlinks. Reject absolute/outside paths, `.`/`..`, directories, missing paths, `.kat`/`.git` metadata, and ignored paths even when explicitly named. Directories are not expanded; deleting a tracked file means removing it from the working tree.
 - The complete command contract and the semantic-only, physical-only, and combined transitions are specified in [collaboration-workflow.md](collaboration-workflow.md).
 ### Format and invocation
 - v0.4 uses repository metadata format 1; v0.5 uses format 2. The migration changes metadata and adds new repository/workspace state only; it never rewrites existing canonical objects.
 - Run migration explicitly with `kat migrate`. Opening a format-1 repository must fail with an actionable migration-required error instead of silently mutating it.
+- Keep format 1 until the protected snapshot, root revision, workspace state, and current-workspace pointer are verified. Atomically write format 2 last; retries must validate/reuse immutable state left by interruption. Repeated migration reports already complete and makes no changes.
 ### Design inputs
 - `canonical-impact-audit.md`
 - `repository-revision-model.md`
@@ -782,7 +786,7 @@ Migrate v0.4 repositories to v0.5 seamlessly.
 - `cargo test --workspace`, `cargo fmt --check`, `cargo clippy ... -D warnings`.
 - Post-migration v0.4 ObjectIds verified unchanged.
 ### Failure / recovery cases
-- Interrupted migration can restart or roll back cleanly.
+- Interrupted bootstrap or migration leaves format 1, which cannot be opened as a complete v0.5 repository; retry validates and reuses existing immutable state. Format 2 is visible only after all root/workspace state is recoverable.
 ### Acceptance criteria
 - v0.4 repository opens and migrates without mutating golden ObjectIds.
 ### Artifacts produced

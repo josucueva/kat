@@ -57,6 +57,10 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 - Preserve every existing canonical object from v0.4 without mutation.
 - Detect v0.4 repositories and transition to v0.5.
 - Share root-revision bootstrap invariants between fresh `kat init` and v0.4 migration: capture the initial non-ignored tree, create a parentless `RepositoryRevision`, and initialize the workspace base. Do not create or move a named reference implicitly.
+- Exclude `.kat` and all `.git` administrative paths from initial snapshots. Apply Git ignore rules.
+- Keep format 1 until the protected snapshot, root revision, and workspace metadata verify; atomically publish format 2 last. Retrying an interrupted migration must reuse and verify immutable results, and repeating a completed migration must report no change.
+- Verify that several accepted semantic Changes form a complete dependency chain before a root or recorded revision exposes the latest Change head.
+- `kat record` path contract: existing relative regular files or symlinks only; reject directories, missing/outside/absolute paths, `.`/`..`, `.kat`/`.git`, and ignored paths even when named. Missing previously tracked paths are deletions.
 - **Tests**: v0.4 repo without Git, v0.4 repo inside Git, clean/dirty physical workspace, interrupted/repeated migration.
 
 ### Phase 14: End-to-end evaluation

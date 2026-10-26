@@ -171,11 +171,30 @@ current contents are captured; absent paths are deletions. New paths enter the
 snapshot only when explicitly named. Other untracked and ignored paths remain
 outside the snapshot.
 
+Each `PATH` must be a workspace-relative path to an existing regular file or
+symlink. Absolute paths, paths containing `.` or `..` components, paths outside
+the workspace, directories, missing paths, and any path under `.kat` or a
+`.git` component are rejected. The current Git ignore rules apply even to an
+explicit path; naming an ignored path is an error, not an override. A symlink
+is captured as a symlink entry, without following its target. Directories are
+not expanded implicitly; callers name the desired files. To delete a tracked
+path, remove it from the working tree; passing a missing path does not mean
+deletion. Naming an already tracked existing path is allowed and has no effect
+on the tracked set.
+
 The new revision has the current workspace base as its parent. Its semantic
 state is the current accepted semantic state. `semantic_change` identifies the
 accepted Change head when that semantic state differs from the parent's state;
 it is absent for a physical-only revision. An unchanged snapshot reuses the
 parent's `WorkspaceSnapshotId`.
+
+When several semantic Changes are accepted before one `record`, each committed
+ChangeRevision depends on the previously accepted ChangeRevision. The latest
+accepted Change therefore closes over the complete intervening Change history.
+Before the new RepositoryRevision becomes the workspace base, KAT verifies the
+complete canonical dependency closure and verifies that the latest Change's
+result state equals the revision's semantic state. No new canonical field is
+required for this history chain.
 
 | Recorded transition | Semantic state | Workspace snapshot |
 | --- | --- | --- |
@@ -217,10 +236,23 @@ deleting already tracked files; a new untracked file must be named explicitly.
 Fresh `kat init` and v0.4 migration use the same repository-bootstrap rule to
 create a root `RepositoryRevision` with no parents and initialize the workspace
 base to it. Both capture the existing non-ignored project tree as the initial
-snapshot. A fresh root has no `semantic_change`; a migrated root records the
-existing accepted Change head when present. Migration preserves all
-pre-existing canonical object bytes; later `kat record` operations use the
-explicit-path rule above.
+snapshot, excluding `.kat` and every `.git` administrative path (including a
+worktree `.git` file or nested repository metadata). The project's Git ignore
+rules apply; ignored files are excluded. A fresh root has no
+`semantic_change`; a migrated root records the existing accepted Change head
+when present. Migration preserves all pre-existing canonical object bytes;
+later `kat record` operations use the explicit-path rule above.
+
+For migration and fresh CLI initialization, the format-2 completion marker is
+written atomically only after the snapshot protection ref, root revision,
+workspace state, and current-workspace pointer have been written and verified.
+Until then, metadata remains at format 1 and normal repository opening fails
+with a migration-required message. Retrying `kat migrate` reuses and verifies
+immutable objects and physical snapshot representations left by an interrupted
+attempt. If it finds an already valid format-2 repository, it reports that
+migration is already complete without changing repository state. The version-2
+marker is never exposed while the root revision or workspace state is
+incomplete.
 
 The created `RepositoryRevision` becomes the active workspace base. It does
 not automatically move a local named reference. Repository heads remain

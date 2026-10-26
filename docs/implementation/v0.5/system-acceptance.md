@@ -73,8 +73,18 @@ their implementation and system acceptance remain pending:
    root `RepositoryRevision` and workspace base. `kat commit` remains semantic
    Change acceptance. `kat record [PATH ...]` creates a complete local revision
    from the current accepted semantic state and tracked physical tree, with
-   explicit paths required for newly tracked files. It must cover
+   explicit paths required for newly tracked files. Explicit paths must be
+   workspace-relative existing regular files or symlinks, must not name
+   ignored files or repository metadata, and directories are not expanded.
+   Previously tracked missing files are deletions. It must cover
    semantic-only, physical-only, and combined revisions.
+   Multiple semantic commits before one record must preserve the dependency
+   chain to every ChangeRevision, and the recorded head must pass full closure
+   verification with its result state matching the new revision.
+   Bootstrap excludes `.kat` and `.git` metadata. Migration keeps format 1
+   until the protected root revision and workspace state are complete, then
+   atomically writes format 2; an interrupted migration is retryable and may
+   not expose a partial format-2 repository.
 2. The remote model specifies clone, but the CLI exposes no `kat clone` command.
    Current remote CLI tests use a test helper to copy repository identity,
    semantic objects, physical state, refs, and workspace base into peer
