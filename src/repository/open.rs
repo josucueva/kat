@@ -102,12 +102,29 @@ impl Repository {
 ///     require change.result_state == accepted.state
 /// ```
 pub fn open_repository(path: &Path) -> Result<Repository, RepositoryError> {
+    open_repository_with_metadata(path, false)
+}
+
+/// Opens the semantic repository while allowing the legacy version needed by
+/// the explicit migration command.
+pub(crate) fn open_repository_for_migration(path: &Path) -> Result<Repository, RepositoryError> {
+    open_repository_with_metadata(path, true)
+}
+
+fn open_repository_with_metadata(
+    path: &Path,
+    allow_legacy: bool,
+) -> Result<Repository, RepositoryError> {
     let kat_dir = path.join(".kat");
     if !kat_dir.is_dir() {
         return Err(RepositoryError::NotFound(kat_dir));
     }
 
-    let metadata = RepositoryMetadata::read(&kat_dir.join("repository.toml"))?;
+    let metadata = if allow_legacy {
+        RepositoryMetadata::read_for_migration(&kat_dir.join("repository.toml"))?
+    } else {
+        RepositoryMetadata::read(&kat_dir.join("repository.toml"))?
+    };
     let refs = FileRefStore::new(&kat_dir);
     let accepted = refs.read_accepted()?;
     let store = ObjectStore::new(&kat_dir);

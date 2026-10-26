@@ -58,6 +58,7 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('account', 'account', [CompletionResultType]::ParameterValue, 'Re-baseline artifact accountability (prefer kat author for normal authoring)')
             [CompletionResult]::new('change', 'change', [CompletionResultType]::ParameterValue, 'Manage draft Change transactions explicitly')
             [CompletionResult]::new('init', 'init', [CompletionResultType]::ParameterValue, 'Initialize a KAT repository')
+            [CompletionResult]::new('migrate', 'migrate', [CompletionResultType]::ParameterValue, 'Migrate a v0.4 repository to the current format')
             [CompletionResult]::new('remote', 'remote', [CompletionResultType]::ParameterValue, 'Manage credential-free remote endpoint configuration')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
             break
@@ -394,6 +395,11 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
+        'kat;migrate' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
         'kat;remote' {
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
@@ -466,6 +472,7 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('account', 'account', [CompletionResultType]::ParameterValue, 'Re-baseline artifact accountability (prefer kat author for normal authoring)')
             [CompletionResult]::new('change', 'change', [CompletionResultType]::ParameterValue, 'Manage draft Change transactions explicitly')
             [CompletionResult]::new('init', 'init', [CompletionResultType]::ParameterValue, 'Initialize a KAT repository')
+            [CompletionResult]::new('migrate', 'migrate', [CompletionResultType]::ParameterValue, 'Migrate a v0.4 repository to the current format')
             [CompletionResult]::new('remote', 'remote', [CompletionResultType]::ParameterValue, 'Manage credential-free remote endpoint configuration')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
             break
@@ -595,6 +602,9 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             break
         }
         'kat;help;init' {
+            break
+        }
+        'kat;help;migrate' {
             break
         }
         'kat;help;remote' {

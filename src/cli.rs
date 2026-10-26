@@ -49,6 +49,7 @@ Advanced authoring:
 
 Repository:
   init       Initialize a KAT repository
+  migrate    Migrate a v0.4 repository to v0.5
   remote     Configure authenticated Hub and workspace endpoints
   fetch      Fetch and verify a remote's content
   push       Publish the current workspace revision to a remote reference
@@ -627,6 +628,10 @@ pub enum Command {
     /// Initialize a KAT repository
     #[command(next_help_heading = "Repository")]
     Init,
+
+    /// Migrate a v0.4 repository to the current format
+    #[command(next_help_heading = "Repository")]
+    Migrate,
 
     /// Manage credential-free remote endpoint configuration
     #[command(next_help_heading = "Repository")]

@@ -145,7 +145,10 @@ workspace consistency
 Collaboration does not introduce a separate health model.
 
 Artifact semantic staleness and physical materialization drift remain distinct
-accountability findings.
+accountability findings. Workspace accountability reads the current accepted
+semantic state against the live physical tree; an open draft overlays the
+accepted state. This keeps `check` useful after semantic `commit` and before
+`kat record` creates the complete revision.
 
 ---
 
@@ -252,7 +255,10 @@ immutable objects and physical snapshot representations left by an interrupted
 attempt. If it finds an already valid format-2 repository, it reports that
 migration is already complete without changing repository state. The version-2
 marker is never exposed while the root revision or workspace state is
-incomplete.
+incomplete. Fresh initialization first writes a temporary `.kat-bootstrap.json`
+marker in the project root so `kat migrate` can resume if the process stops
+while creating the initial semantic repository. That marker is removed before
+the initial physical snapshot is captured.
 
 The created `RepositoryRevision` becomes the active workspace base. It does
 not automatically move a local named reference. Repository heads remain

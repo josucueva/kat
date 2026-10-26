@@ -1,4 +1,5 @@
 use git2::Repository;
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -409,6 +410,70 @@ impl GitWorkspaceBackend {
             .map_err(|e| WorkspaceBackendError::Io(std::io::Error::other(e.to_string())))?;
         Ok(BackendSnapshotRepresentation { commit: base_oid })
     }
+
+    /// Lists initial snapshot paths using the repository's ignore rules.
+    /// KAT and Git metadata are never part of the physical project snapshot.
+    pub(crate) fn initial_snapshot_paths(&self) -> Result<Vec<PathBuf>, WorkspaceBackendError> {
+        let linked_worktree = if self._project_root.join(".git").is_file() {
+            Some(Repository::open(&self._project_root).map_err(|error| {
+                WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Failed to open the project's linked Git worktree: {error}"
+                )))
+            })?)
+        } else {
+            None
+        };
+        let ignore_repository = linked_worktree.as_ref().unwrap_or(&self._repo);
+        let mut paths = BTreeSet::new();
+        collect_initial_snapshot_paths(
+            ignore_repository,
+            &self._project_root,
+            Path::new(""),
+            &mut paths,
+        )?;
+        Ok(paths.into_iter().collect())
+    }
+}
+
+fn collect_initial_snapshot_paths(
+    ignore_repository: &Repository,
+    root: &Path,
+    relative_dir: &Path,
+    paths: &mut BTreeSet<PathBuf>,
+) -> Result<(), WorkspaceBackendError> {
+    for entry in fs::read_dir(root.join(relative_dir)).map_err(WorkspaceBackendError::Io)? {
+        let entry = entry.map_err(WorkspaceBackendError::Io)?;
+        let name = entry.file_name();
+        let Some(name_text) = name.to_str() else {
+            return Err(WorkspaceBackendError::UnsupportedPathEncoding(
+                relative_dir.join(name),
+            ));
+        };
+        if matches!(name_text, ".kat" | ".git") {
+            continue;
+        }
+
+        let relative_path = relative_dir.join(name);
+        let metadata = fs::symlink_metadata(entry.path()).map_err(WorkspaceBackendError::Io)?;
+        if metadata.is_dir() {
+            collect_initial_snapshot_paths(ignore_repository, root, &relative_path, paths)?;
+        } else if ignore_repository
+            .status_should_ignore(&relative_path)
+            .map_err(|error| {
+                WorkspaceBackendError::Io(std::io::Error::other(format!(
+                    "Failed to apply Git ignore rules to {}: {error}",
+                    relative_path.display()
+                )))
+            })?
+        {
+            continue;
+        } else if metadata.is_file() || metadata.file_type().is_symlink() {
+            paths.insert(relative_path);
+        } else {
+            return Err(WorkspaceBackendError::UnsupportedPhysicalEntryType);
+        }
+    }
+    Ok(())
 }
 
 fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {

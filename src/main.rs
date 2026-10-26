@@ -21,7 +21,7 @@ use kat::repository::change::{
     UpdateElementInput, commit_draft_session, prepare_change, publish_single_operation,
     stage_operation_into_session,
 };
-use kat::repository::init::init_repository;
+use kat::repository::migration::{MigrationOutcome, initialize_v05_repository, migrate_repository};
 use kat::repository::object_store::ObjectStore;
 use kat::repository::open::{Repository, open_repository};
 use kat::repository::query::{
@@ -71,6 +71,7 @@ fn main() -> ExitCode {
     };
     match cli.command {
         Command::Init => cmd_init(),
+        Command::Migrate => cmd_migrate(),
         Command::Status { compact, json } => run_status(compact, json),
         Command::Fetch { remote, json } => run_fetch(remote, json),
         Command::Push {
@@ -204,17 +205,37 @@ fn main() -> ExitCode {
 
 /// `kat init` — initialize a KAT repository in the current directory.
 fn cmd_init() -> ExitCode {
-    match init_repository(Path::new(".")) {
-        Ok(result) => {
+    match initialize_v05_repository(Path::new(".")) {
+        Ok((result, revision)) => {
             println!("initialized KAT repository");
             println!("  repository_id: {}", result.repository_id);
             println!("  software_id:   {}", result.software_id);
             println!("  ontology (O1): {}", result.ontology);
             println!("  state (S0):    {}", result.state);
+            println!("  root revision: {revision}");
             ExitCode::SUCCESS
         }
         Err(error) => {
             eprintln!("kat init: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn cmd_migrate() -> ExitCode {
+    match migrate_repository(Path::new(".")) {
+        Ok(MigrationOutcome::Migrated(revision)) => {
+            println!("migrated KAT repository to v0.5");
+            println!("  root revision: {revision}");
+            ExitCode::SUCCESS
+        }
+        Ok(MigrationOutcome::AlreadyMigrated(revision)) => {
+            println!("KAT repository is already migrated");
+            println!("  workspace base: {revision}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("kat migrate: {error}");
             ExitCode::FAILURE
         }
     }

@@ -243,7 +243,8 @@ use crate::domain::workspace::{Workspace, WorkspaceBackend};
 
 /// Execution context for resolving physical materializations during artifact accountability.
 pub enum AccountabilityContext<'a> {
-    /// Evaluate against the active mutable workspace physical tree
+    /// Evaluate accepted semantics against the active mutable workspace tree.
+    /// An open draft session overlays the accepted semantic state.
     Workspace(&'a Workspace),
     /// Evaluate against the active mutable physical tree, but bound semantically without a DraftSession
     WorkingTree {
@@ -1308,24 +1309,13 @@ pub fn analyze_artifact_accountability(
         session.working_state.clone()
     } else {
         let state_id = match &context {
-            Some(AccountabilityContext::Workspace(ws)) => {
-                let rev = match load_typed(
-                    repository.object_store(),
-                    ws.base_revision.as_object_id(),
-                    ObjectKind::RepositoryRevision,
-                )?
-                .payload
-                {
-                    CanonicalPayload::RepositoryRevision(r) => r,
-                    _ => unreachable!(),
-                };
-                rev.semantic_state
+            Some(AccountabilityContext::Workspace(_)) | None => {
+                crate::domain::identity::SemanticStateId::from_object_id(
+                    repository.ref_store().read_accepted()?.state,
+                )
             }
             Some(AccountabilityContext::WorkingTree { base_state }) => *base_state,
             Some(AccountabilityContext::Revision(_, rev)) => rev.semantic_state,
-            None => crate::domain::identity::SemanticStateId::from_object_id(
-                repository.ref_store().read_accepted()?.state,
-            ),
         };
         match load_typed(
             repository.object_store(),

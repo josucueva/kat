@@ -1,7 +1,8 @@
 //! Repository initialization (`kat init`).
 //!
-//! The CLI is thin: it parses arguments and calls [`init_repository`], which
-//! orchestrates metadata, the encoder, the ObjectStore, and the RefStore.
+//! The semantic initializer stores metadata, canonical objects, and the
+//! accepted semantic reference. The CLI's full workspace bootstrap is in
+//! [`crate::repository::migration`].
 //!
 //! The core ontology contents come from `docs/ontology.md` and the canonical
 //! type identifiers in `docs/canonical-format.md` — not from implementation
@@ -19,13 +20,15 @@ use crate::encoding::canonical_bytes;
 use crate::encoding::object::{CanonicalObject, CanonicalPayload};
 use crate::repository::error::RepositoryError;
 use crate::repository::metadata::{
-    HashAlgorithm, ObjectEncoding, RepositoryMetadata, SUPPORTED_FORMAT_VERSION,
+    HashAlgorithm, LEGACY_FORMAT_VERSION, ObjectEncoding, RepositoryMetadata,
+    SUPPORTED_FORMAT_VERSION,
 };
 use crate::repository::object_store::ObjectStore;
 use crate::repository::ref_store::{AcceptedRef, FileRefStore};
 
 /// Process-global counter for unique temporary metadata file names.
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+const BOOTSTRAP_MARKER_VERSION: u32 = 1;
 
 /// Outcome of a successful `kat init`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,78 +55,215 @@ pub fn init_repository(path: &Path) -> Result<InitResult, RepositoryError> {
     if kat_dir.exists() {
         return Err(RepositoryError::AlreadyExists(kat_dir));
     }
+    initialize_semantic_repository(
+        path,
+        &BootstrapMarker {
+            marker_version: BOOTSTRAP_MARKER_VERSION,
+            repository_id: RepositoryId::new(),
+            software_id: SoftwareId::new(),
+            ontology_id: OntologyId::new(),
+        },
+        SUPPORTED_FORMAT_VERSION,
+        false,
+    )
+}
 
-    let repository_id = RepositoryId::new();
-    let software_id = SoftwareId::new();
-    let ontology_id = OntologyId::new();
+/// Creates the semantic portion of a new CLI repository in the legacy
+/// in-progress format. `kat init` upgrades the marker only after root
+/// revision and workspace bootstrap have been verified.
+pub(crate) fn init_repository_for_bootstrap(path: &Path) -> Result<InitResult, RepositoryError> {
+    let marker_path = bootstrap_marker_path(path);
+    let marker = if marker_path.exists() {
+        read_bootstrap_marker(&marker_path)?
+    } else {
+        let kat_dir = path.join(".kat");
+        if kat_dir.exists() {
+            return Err(RepositoryError::AlreadyExists(kat_dir));
+        }
+        remove_stale_bootstrap_temps(path)?;
+        if marker_path.exists() {
+            return Err(RepositoryError::Io(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "bootstrap marker already exists",
+            )));
+        }
+        let marker = BootstrapMarker {
+            marker_version: BOOTSTRAP_MARKER_VERSION,
+            repository_id: RepositoryId::new(),
+            software_id: SoftwareId::new(),
+            ontology_id: OntologyId::new(),
+        };
+        write_bootstrap_marker(&marker_path, &marker)?;
+        marker
+    };
+    let initialized = resume_bootstrap(path, &marker)?;
+    fs::remove_file(marker_path)?;
+    Ok(initialized)
+}
 
-    // Create the canonical layout.
+/// Resumes fresh initialization if its atomic marker survived an interruption.
+pub(crate) fn resume_pending_bootstrap(path: &Path) -> Result<Option<InitResult>, RepositoryError> {
+    let marker_path = bootstrap_marker_path(path);
+    if !marker_path.exists() {
+        return Ok(None);
+    }
+    let marker = read_bootstrap_marker(&marker_path)?;
+    let initialized = resume_bootstrap(path, &marker)?;
+    fs::remove_file(marker_path)?;
+    Ok(Some(initialized))
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BootstrapMarker {
+    marker_version: u32,
+    repository_id: RepositoryId,
+    software_id: SoftwareId,
+    ontology_id: OntologyId,
+}
+
+fn bootstrap_marker_path(root: &Path) -> std::path::PathBuf {
+    root.join(".kat-bootstrap.json")
+}
+
+fn remove_stale_bootstrap_temps(root: &Path) -> Result<(), RepositoryError> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".kat-bootstrap.tmp-")
+        {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+fn read_bootstrap_marker(path: &Path) -> Result<BootstrapMarker, RepositoryError> {
+    let bytes = fs::read(path)?;
+    let marker: BootstrapMarker = serde_json::from_slice(&bytes)
+        .map_err(|error| RepositoryError::Io(std::io::Error::other(error)))?;
+    if marker.marker_version != BOOTSTRAP_MARKER_VERSION {
+        return Err(RepositoryError::Io(std::io::Error::other(
+            "unsupported KAT bootstrap marker version",
+        )));
+    }
+    Ok(marker)
+}
+
+fn write_bootstrap_marker(path: &Path, marker: &BootstrapMarker) -> Result<(), RepositoryError> {
+    let bytes = serde_json::to_vec(marker)
+        .map_err(|error| RepositoryError::Io(std::io::Error::other(error)))?;
+    let tmp = path.with_file_name(format!(
+        ".kat-bootstrap.tmp-{}-{}",
+        std::process::id(),
+        NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| -> std::io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        fs::hard_link(&tmp, path)?;
+        fs::remove_file(&tmp)
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(&tmp);
+        return Err(RepositoryError::Io(error));
+    }
+    Ok(())
+}
+
+fn resume_bootstrap(path: &Path, marker: &BootstrapMarker) -> Result<InitResult, RepositoryError> {
+    initialize_semantic_repository(path, marker, LEGACY_FORMAT_VERSION, true)
+}
+
+fn initialize_semantic_repository(
+    path: &Path,
+    marker: &BootstrapMarker,
+    format_version: u32,
+    resume: bool,
+) -> Result<InitResult, RepositoryError> {
+    let kat_dir = path.join(".kat");
     for sub in ["objects", "refs", "locks", "tmp"] {
         fs::create_dir_all(kat_dir.join(sub))?;
     }
 
-    // Write repository.toml atomically (fail-closed against partial writes).
-    let metadata = RepositoryMetadata {
-        format_version: SUPPORTED_FORMAT_VERSION,
-        repository_id,
-        software_id,
-        object_encoding: ObjectEncoding::CborDeterministicV1,
-        hash_algorithm: HashAlgorithm::Sha256,
-    };
-    write_metadata_atomic(&metadata, &kat_dir)?;
+    let metadata_path = kat_dir.join("repository.toml");
+    if metadata_path.exists() {
+        if !resume {
+            return Err(RepositoryError::AlreadyExists(kat_dir));
+        }
+        let metadata = RepositoryMetadata::read_for_migration(&metadata_path)?;
+        if metadata.format_version != format_version
+            || metadata.repository_id != marker.repository_id
+            || metadata.software_id != marker.software_id
+        {
+            return Err(RepositoryError::Io(std::io::Error::other(
+                "incomplete initialization metadata does not match its bootstrap marker",
+            )));
+        }
+    } else {
+        let metadata = RepositoryMetadata {
+            format_version,
+            repository_id: marker.repository_id,
+            software_id: marker.software_id,
+            object_encoding: ObjectEncoding::CborDeterministicV1,
+            hash_algorithm: HashAlgorithm::Sha256,
+        };
+        metadata.write_atomic(&metadata_path)?;
+    }
 
-    // Persist the core ontology O1.
-    let o1 = initial_core_ontology(ontology_id);
     let o1_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::OntologyVersion(o1),
+        payload: CanonicalPayload::OntologyVersion(initial_core_ontology(marker.ontology_id)),
     })?;
     let store = ObjectStore::new(&kat_dir);
     let ontology = store.put(&o1_bytes)?;
-
-    // Persist the empty SemanticState S0 referencing O1.
-    let s0 = SemanticState {
-        ontology_version: ontology,
-        elements: vec![],
-        relationships: vec![],
-    };
     let s0_bytes = canonical_bytes(&CanonicalObject {
-        payload: CanonicalPayload::SemanticState(s0),
+        payload: CanonicalPayload::SemanticState(SemanticState {
+            ontology_version: ontology,
+            elements: vec![],
+            relationships: vec![],
+        }),
     })?;
     let state = store.put(&s0_bytes)?;
-
-    // Publish accepted = { S0, none }.
-    let refs = FileRefStore::new(&kat_dir);
-    refs.init_accepted(&AcceptedRef {
+    let expected = AcceptedRef {
         state,
         change: None,
-    })?;
+    };
+    let refs = FileRefStore::new(&kat_dir);
+    match refs.read_accepted() {
+        Ok(actual) if actual == expected => {}
+        Ok(_) if resume => {
+            return Err(RepositoryError::Io(std::io::Error::other(
+                "incomplete initialization has an unexpected accepted ref",
+            )));
+        }
+        Ok(_) => {
+            return Err(RepositoryError::Io(std::io::Error::other(
+                "repository accepted ref already exists",
+            )));
+        }
+        Err(crate::repository::ref_store::RefStoreError::NotFound) => {
+            match refs.init_accepted(&expected) {
+                Ok(()) => {}
+                Err(crate::repository::ref_store::RefStoreError::Conflict)
+                    if resume && refs.read_accepted()? == expected => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(error) => return Err(error.into()),
+    }
 
     Ok(InitResult {
-        repository_id,
-        software_id,
+        repository_id: marker.repository_id,
+        software_id: marker.software_id,
         ontology,
         state,
     })
-}
-
-/// Writes `repository.toml` to a temporary file under `tmp/`, flushes it, then
-/// atomically renames it into place.
-fn write_metadata_atomic(
-    metadata: &RepositoryMetadata,
-    kat_dir: &Path,
-) -> Result<(), RepositoryError> {
-    let tmp = kat_dir.join("tmp").join(format!(
-        "repository.toml-{}-{}",
-        std::process::id(),
-        NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    {
-        let mut file = fs::File::create(&tmp)?;
-        file.write_all(metadata.to_toml_string().as_bytes())?;
-        file.sync_all()?;
-    }
-    fs::rename(&tmp, kat_dir.join("repository.toml"))?;
-    Ok(())
 }
 
 /// The initial core ontology, defined by `docs/ontology.md` with the canonical
@@ -236,6 +376,46 @@ fn relationship_type(
         name: name.to_string(),
         allowed_source_types: allowed_source_types.iter().map(|s| s.to_string()).collect(),
         allowed_target_types: allowed_target_types.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+#[cfg(test)]
+mod bootstrap_tests {
+    use super::*;
+
+    #[test]
+    fn pending_marker_recovers_semantic_initialization_before_metadata_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = BootstrapMarker {
+            marker_version: BOOTSTRAP_MARKER_VERSION,
+            repository_id: RepositoryId::new(),
+            software_id: SoftwareId::new(),
+            ontology_id: OntologyId::new(),
+        };
+        write_bootstrap_marker(&bootstrap_marker_path(dir.path()), &marker).unwrap();
+
+        let initialized = resume_pending_bootstrap(dir.path()).unwrap().unwrap();
+        assert_eq!(initialized.repository_id, marker.repository_id);
+        assert!(dir.path().join(".kat/refs/accepted").is_file());
+        assert!(!bootstrap_marker_path(dir.path()).exists());
+        assert_eq!(
+            RepositoryMetadata::read_for_migration(&dir.path().join(".kat/repository.toml"))
+                .unwrap()
+                .format_version,
+            LEGACY_FORMAT_VERSION
+        );
+    }
+
+    #[test]
+    fn existing_marker_path_is_not_replaced_or_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = bootstrap_marker_path(dir.path());
+        let contents = b"user data";
+        fs::write(&path, contents).unwrap();
+
+        assert!(init_repository_for_bootstrap(dir.path()).is_err());
+        assert_eq!(fs::read(path).unwrap(), contents);
+        assert!(!dir.path().join(".kat").exists());
     }
 }
 

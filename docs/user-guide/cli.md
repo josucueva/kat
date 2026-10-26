@@ -44,9 +44,11 @@ Commands that invoke semantic operations or read queries defined by `operations.
 
 ### Repository / Tooling Commands
 
-Commands that manage repository initialization or transaction session state.
+Commands that manage repository initialization, migration, or transaction
+session state.
 
 * `kat init`
+* `kat migrate`
 * `kat change begin`
 * `kat change status`
 * `kat change commit`
@@ -58,12 +60,21 @@ Commands that manage repository initialization or transaction session state.
 
 All mutation commands must route through the Change Engine. The CLI must not bypass ontology validation, invariant validation, or atomic publication, and it must not directly modify accepted semantic state.
 
+`kat init` creates the semantic root, captures the current non-ignored project
+files as its initial physical snapshot, and sets the workspace base to the
+resulting root `RepositoryRevision`. If the project has an existing `.git`
+directory, KAT preserves it under `.kat/adoption-backup/original-git` and uses
+its managed physical backend. `kat migrate` explicitly upgrades a v0.4 format-1
+repository; ordinary repository commands fail with a migration-required error
+until that operation completes.
+
 ---
 
 ## Command Syntax (v0.2)
 
 ```text
 kat init
+kat migrate
 kat status [--compact]
 kat list [<type>] [--type <type>] [--lifecycle <active|deprecated|superseded>]
 kat create <type> --title "..." [--description "..."]

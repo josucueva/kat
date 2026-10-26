@@ -492,6 +492,12 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(migrate)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
 (remote)
 _arguments "${_arguments_options[@]}" : \
 '-h[Print help]' \
@@ -764,6 +770,10 @@ esac
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(migrate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (remote)
 _arguments "${_arguments_options[@]}" : \
 ":: :_kat__subcmd__help__subcmd__remote_commands" \
@@ -837,6 +847,7 @@ _kat_commands() {
 'account:Re-baseline artifact accountability (prefer kat author for normal authoring)' \
 'change:Manage draft Change transactions explicitly' \
 'init:Initialize a KAT repository' \
+'migrate:Migrate a v0.4 repository to the current format' \
 'remote:Manage credential-free remote endpoint configuration' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -1010,6 +1021,7 @@ _kat__subcmd__help_commands() {
 'account:Re-baseline artifact accountability (prefer kat author for normal authoring)' \
 'change:Manage draft Change transactions explicitly' \
 'init:Initialize a KAT repository' \
+'migrate:Migrate a v0.4 repository to the current format' \
 'remote:Manage credential-free remote endpoint configuration' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -1145,6 +1157,11 @@ _kat__subcmd__help__subcmd__materialize_commands() {
     local commands; commands=()
     _describe -t commands 'kat help materialize commands' commands "$@"
 }
+(( $+functions[_kat__subcmd__help__subcmd__migrate_commands] )) ||
+_kat__subcmd__help__subcmd__migrate_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat help migrate commands' commands "$@"
+}
 (( $+functions[_kat__subcmd__help__subcmd__ontology_commands] )) ||
 _kat__subcmd__help__subcmd__ontology_commands() {
     local commands; commands=(
@@ -1277,6 +1294,11 @@ _kat__subcmd__list_commands() {
 _kat__subcmd__materialize_commands() {
     local commands; commands=()
     _describe -t commands 'kat materialize commands' commands "$@"
+}
+(( $+functions[_kat__subcmd__migrate_commands] )) ||
+_kat__subcmd__migrate_commands() {
+    local commands; commands=()
+    _describe -t commands 'kat migrate commands' commands "$@"
 }
 (( $+functions[_kat__subcmd__ontology_commands] )) ||
 _kat__subcmd__ontology_commands() {

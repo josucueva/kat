@@ -79,6 +79,9 @@ _kat() {
             kat,materialize)
                 cmd="kat__subcmd__materialize"
                 ;;
+            kat,migrate)
+                cmd="kat__subcmd__migrate"
+                ;;
             kat,ontology)
                 cmd="kat__subcmd__ontology"
                 ;;
@@ -214,6 +217,9 @@ _kat() {
             kat__subcmd__help,materialize)
                 cmd="kat__subcmd__help__subcmd__materialize"
                 ;;
+            kat__subcmd__help,migrate)
+                cmd="kat__subcmd__help__subcmd__migrate"
+                ;;
             kat__subcmd__help,ontology)
                 cmd="kat__subcmd__help__subcmd__ontology"
                 ;;
@@ -338,7 +344,7 @@ _kat() {
 
     case "${cmd}" in
         kat)
-            opts="-h -V --help --version status fetch push sync reconcile conflicts materialize resolve finalize advance switch context author check commit abort list show history trace impact artifacts ontology validate create update deprecate supersede link unlink account change init remote help"
+            opts="-h -V --help --version status fetch push sync reconcile conflicts materialize resolve finalize advance switch context author check commit abort list show history trace impact artifacts ontology validate create update deprecate supersede link unlink account change init migrate remote help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -716,7 +722,7 @@ _kat() {
             return 0
             ;;
         kat__subcmd__help)
-            opts="status fetch push sync reconcile conflicts materialize resolve finalize advance switch context author check commit abort list show history trace impact artifacts ontology validate create update deprecate supersede link unlink account change init remote help"
+            opts="status fetch push sync reconcile conflicts materialize resolve finalize advance switch context author check commit abort list show history trace impact artifacts ontology validate create update deprecate supersede link unlink account change init migrate remote help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1066,6 +1072,20 @@ _kat() {
             return 0
             ;;
         kat__subcmd__help__subcmd__materialize)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        kat__subcmd__help__subcmd__migrate)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -1441,6 +1461,20 @@ _kat() {
             ;;
         kat__subcmd__materialize)
             opts="-h --json --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        kat__subcmd__migrate)
+            opts="-h --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

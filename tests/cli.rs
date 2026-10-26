@@ -1074,7 +1074,7 @@ fn phase4_acceptance_cli_flow_end_to_end() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
-    // 1. kat init (Object count = 2: O1, S0)
+    // 1. kat init (O1, S0, and root RepositoryRevision)
     let (init_out, init_err, ok) = run_kat(root, &["init"]);
     assert!(ok, "kat init failed: {init_err}\n{init_out}");
 
@@ -1083,7 +1083,7 @@ fn phase4_acceptance_cli_flow_end_to_end() {
     let initial_objects = std::fs::read_dir(root.join(".kat/objects"))
         .unwrap()
         .count();
-    assert_eq!(initial_objects, 2);
+    assert_eq!(initial_objects, 3);
 
     // 2. kat create design-decision --title "Original decision"
     let (create_out, create_err, ok) = run_kat(
@@ -1102,7 +1102,7 @@ fn phase4_acceptance_cli_flow_end_to_end() {
     let after_create_objects = std::fs::read_dir(root.join(".kat/objects"))
         .unwrap()
         .count();
-    assert_eq!(after_create_objects, 5); // + V1, S1, C1
+    assert_eq!(after_create_objects, 6); // + V1, S1, C1
 
     // 3. kat supersede E1 design-decision --title "Replacement decision"
     let (sup_out, sup_err, ok) = run_kat(
@@ -1139,7 +1139,7 @@ fn phase4_acceptance_cli_flow_end_to_end() {
     let after_supersede_objects = std::fs::read_dir(root.join(".kat/objects"))
         .unwrap()
         .count();
-    assert_eq!(after_supersede_objects, 10); // + V1_next, V2, R1V, S2, C2
+    assert_eq!(after_supersede_objects, 11); // + V1_next, V2, R1V, S2, C2
 
     // 4. Reopen repository (fresh process) -> accepted ref == { S2, C2 }
     let reopened = open_repository(root).unwrap();
@@ -1249,7 +1249,7 @@ fn kat_link_cli_flow_end_to_end() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
-    // 1. kat init
+    // 1. kat init (O1, S0, and root RepositoryRevision)
     let (out, err, ok) = run_kat(root, &["init"]);
     assert!(ok, "kat init failed: {err}\n{out}");
 
@@ -1484,8 +1484,8 @@ fn phase5_acceptance_cli_flow_end_to_end() {
         .unwrap()
         .count();
     assert_eq!(
-        count0, 2,
-        "init must materialize exactly 2 objects (O1, S0)"
+        count0, 3,
+        "init must materialize O1, S0, and its root RepositoryRevision"
     );
 
     // 2. kat create requirement --title "User must authenticate"
@@ -1504,7 +1504,7 @@ fn phase5_acceptance_cli_flow_end_to_end() {
         .unwrap()
         .count();
     assert_eq!(
-        count1, 5,
+        count1, 6,
         "create requirement must increase objects by 3 (V1, S1, C1)"
     );
 
@@ -1524,7 +1524,7 @@ fn phase5_acceptance_cli_flow_end_to_end() {
         .unwrap()
         .count();
     assert_eq!(
-        count2, 8,
+        count2, 9,
         "create design-decision must increase objects by 3 (V2, S2, C2)"
     );
 
@@ -1557,7 +1557,7 @@ fn phase5_acceptance_cli_flow_end_to_end() {
         .unwrap()
         .count();
     assert_eq!(
-        count3, 11,
+        count3, 12,
         "link must increase objects by EXACTLY 3 (R1V, S3, C3)"
     );
 
@@ -1727,14 +1727,14 @@ fn phase6_acceptance_cli_flow_end_to_end() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
-    // 1. kat init (Object count = 2: O1, S0)
+    // 1. kat init (O1, S0, and root RepositoryRevision)
     let (init_out, init_err, ok) = run_kat(root, &["init"]);
     assert!(ok, "kat init failed: {init_err}\n{init_out}");
 
     let initial_objects = std::fs::read_dir(root.join(".kat/objects"))
         .unwrap()
         .count();
-    assert_eq!(initial_objects, 2);
+    assert_eq!(initial_objects, 3);
 
     // 2. kat create requirement --title "User must authenticate"
     let (c1_out, c1_err, ok) = run_kat(
@@ -1749,7 +1749,7 @@ fn phase6_acceptance_cli_flow_end_to_end() {
     let after_req_objects = std::fs::read_dir(root.join(".kat/objects"))
         .unwrap()
         .count();
-    assert_eq!(after_req_objects, 5); // + V_req, S1, C1
+    assert_eq!(after_req_objects, 6); // + V_req, S1, C1
 
     // 3. kat create design-decision --title "Use OAuth2"
     let (c2_out, c2_err, ok) = run_kat(
@@ -1764,7 +1764,7 @@ fn phase6_acceptance_cli_flow_end_to_end() {
     let after_dec_objects = std::fs::read_dir(root.join(".kat/objects"))
         .unwrap()
         .count();
-    assert_eq!(after_dec_objects, 8); // + V_dec, S2, C2
+    assert_eq!(after_dec_objects, 9); // + V_dec, S2, C2
 
     // 4. kat link addresses <design-decision-id> <requirement-id>
     let (link_out, link_err, ok) = run_kat(
@@ -1780,7 +1780,7 @@ fn phase6_acceptance_cli_flow_end_to_end() {
     let after_link_objects = std::fs::read_dir(root.join(".kat/objects"))
         .unwrap()
         .count();
-    assert_eq!(after_link_objects, 11); // + R1V, S3, C3
+    assert_eq!(after_link_objects, 12); // + R1V, S3, C3
 
     // 5. kat unlink <relationship-id>
     let (unlink_out, unlink_err, ok) = run_kat(root, &["unlink", &r1_id.to_string()]);
@@ -1791,11 +1791,11 @@ fn phase6_acceptance_cli_flow_end_to_end() {
 
     assert_eq!(unlinked_r1_id, r1_id);
 
-    // Objects count becomes 12 because S4 (relationships empty) is identical to S2 (deduplicated by CAS), so only C4 is added.
+    // Objects count becomes 13 because S4 is deduplicated with S2, so only C4 is added.
     let after_unlink_objects = std::fs::read_dir(root.join(".kat/objects"))
         .unwrap()
         .count();
-    assert_eq!(after_unlink_objects, 12); // + C4 (S4 deduplicated = S2)
+    assert_eq!(after_unlink_objects, 13); // + C4 (S4 deduplicated = S2)
 
     // 6. Fresh reopen verification
     let reopened = open_repository(root).unwrap();

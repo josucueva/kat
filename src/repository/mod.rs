@@ -12,6 +12,7 @@ pub mod hub;
 pub mod init;
 pub mod materialize;
 pub mod metadata;
+pub mod migration;
 pub mod object_store;
 pub mod open;
 pub mod query;

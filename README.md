@@ -125,7 +125,8 @@ kat history
 
 | Command | Description |
 |---|---|
-| `kat init` | Initialize a `.kat/` repository in the current directory. |
+| `kat init` | Initialize KAT and create the root software revision and workspace from the current nonignored project files. |
+| `kat migrate` | Explicitly migrate a v0.4 repository while preserving its canonical objects. |
 | `kat status` | Display a concise summary of current accepted repository status and health. |
 | `kat create <type> --title "..."` | Create a new knowledge element (`requirement`, `constraint`, `design-decision`, `implementation`, `artifact`, etc.). |
 | `kat update <element-id> --title "..."` | Update properties on an existing active element (advances version ObjectId). |
@@ -139,6 +140,11 @@ kat history
 | `kat impact <element-id>` | Evaluate potential change impact. |
 | `kat validate` | Run mechanical consistency validation across accepted state. |
 | `kat artifacts` | Evaluate artifact accountability baselines against current accepted state. |
+
+When `kat init` adopts a project with an existing `.git` directory, KAT moves
+that Git repository to `.kat/adoption-backup/original-git` and uses its managed
+physical backend. The prior Git history is preserved there; the project root
+no longer has a `.git` directory for ordinary Git commands.
 
 ---
 
@@ -158,4 +164,3 @@ kat history
 * [docs/operations.md](docs/operations.md) — Semantic operations specification.
 * [docs/cli.md](docs/cli.md) — CLI invocation contract.
 * [docs/v0-1-release-acceptance-review.md](docs/v0-1-release-acceptance-review.md) — Full v0.1 release acceptance review.
-

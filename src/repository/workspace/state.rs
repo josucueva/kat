@@ -1,8 +1,11 @@
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::domain::workspace::Workspace;
+
+static NEXT_POINTER_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceStateError {
@@ -58,11 +61,23 @@ pub fn write_workspace_state_atomic(
     file.sync_all()?;
     fs::rename(tmp, target)?;
 
-    // Update current workspace pointer
+    // Publish the pointer only after the referenced state file is durable.
     let pointer = current_workspace_pointer(repo_root);
-    let mut ptr_file = File::create(&pointer)?;
-    ptr_file.write_all(workspace.id.0.as_bytes())?;
-    ptr_file.sync_all()?;
+    let pointer_tmp = pointer.with_file_name(format!(
+        "current-workspace.tmp-{}-{}",
+        std::process::id(),
+        NEXT_POINTER_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| -> std::io::Result<()> {
+        let mut ptr_file = File::create(&pointer_tmp)?;
+        ptr_file.write_all(workspace.id.0.as_bytes())?;
+        ptr_file.sync_all()?;
+        fs::rename(&pointer_tmp, &pointer)
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(pointer_tmp);
+        return Err(WorkspaceStateError::Io(error));
+    }
 
     Ok(())
 }

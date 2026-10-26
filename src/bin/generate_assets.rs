@@ -117,6 +117,9 @@ Manage draft Change transactions explicitly
 .TP
 .BR kat\-init (1)
 Initialize a KAT repository
+.TP
+.BR kat\-migrate (1)
+Migrate a v0.4 repository to v0.5
 .SH COLLABORATION
 .TP
 .BR kat\-remote (1)
@@ -162,6 +165,7 @@ Print version
 .BR kat\-status (1),
 .BR kat\-check (1),
 .BR kat\-context (1),
+.BR kat\-migrate (1),
 .BR kat\-remote (1),
 .BR kat\-fetch (1),
 .BR kat\-push (1),

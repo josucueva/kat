@@ -4,14 +4,20 @@
 //! (`refs/accepted`, see `ref_store`): dynamic semantic state and accepted
 //! history must never live here.
 
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::domain::identity::{RepositoryId, SoftwareId};
 
-/// Supported repository format version (v0.1).
-pub const SUPPORTED_FORMAT_VERSION: u32 = 1;
+/// Repository format used by v0.4 and awaiting explicit migration.
+pub const LEGACY_FORMAT_VERSION: u32 = 1;
+/// Current repository format.
+pub const SUPPORTED_FORMAT_VERSION: u32 = 2;
+
+static NEXT_METADATA_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Stable repository configuration persisted at `.kat/repository.toml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,11 +91,24 @@ pub enum MetadataError {
     Parse(toml::de::Error),
     /// The file is valid TOML but violates the metadata contract.
     Invalid(String),
+    /// The repository is valid but requires explicit migration.
+    MigrationRequired(u32),
 }
 
 impl RepositoryMetadata {
     /// Reads and validates metadata from a TOML file.
     pub fn read(path: &Path) -> Result<Self, MetadataError> {
+        let text = fs::read_to_string(path)?;
+        let table: toml::Table = toml::from_str(&text)?;
+        let metadata = Self::from_table(&table)?;
+        if metadata.format_version == LEGACY_FORMAT_VERSION {
+            return Err(MetadataError::MigrationRequired(metadata.format_version));
+        }
+        Ok(metadata)
+    }
+
+    /// Reads current or legacy metadata for the explicit migration path.
+    pub(crate) fn read_for_migration(path: &Path) -> Result<Self, MetadataError> {
         let text = fs::read_to_string(path)?;
         let table: toml::Table = toml::from_str(&text)?;
         Self::from_table(&table)
@@ -98,6 +117,29 @@ impl RepositoryMetadata {
     /// Writes this metadata as TOML.
     pub fn write(&self, path: &Path) -> Result<(), MetadataError> {
         fs::write(path, self.to_toml_string())?;
+        Ok(())
+    }
+
+    /// Atomically replaces repository metadata after the new state is durable.
+    pub(crate) fn write_atomic(&self, path: &Path) -> Result<(), MetadataError> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| MetadataError::Invalid("metadata path has no parent".into()))?;
+        let tmp = parent.join(format!(
+            "repository.toml.tmp-{}-{}",
+            std::process::id(),
+            NEXT_METADATA_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let result = (|| -> std::io::Result<()> {
+            let mut file = File::create(&tmp)?;
+            file.write_all(self.to_toml_string().as_bytes())?;
+            file.sync_all()?;
+            fs::rename(&tmp, path)
+        })();
+        if let Err(error) = result {
+            let _ = fs::remove_file(&tmp);
+            return Err(MetadataError::Io(error));
+        }
         Ok(())
     }
 
@@ -123,7 +165,9 @@ impl RepositoryMetadata {
 
     fn from_table(table: &toml::Table) -> Result<Self, MetadataError> {
         let format_version = integer_field(table, "format_version")?;
-        if format_version != i64::from(SUPPORTED_FORMAT_VERSION) {
+        if format_version != i64::from(SUPPORTED_FORMAT_VERSION)
+            && format_version != i64::from(LEGACY_FORMAT_VERSION)
+        {
             return Err(MetadataError::Invalid(format!(
                 "unsupported format_version: {format_version}"
             )));
@@ -173,6 +217,10 @@ impl std::fmt::Display for MetadataError {
             Self::Io(e0) => write!(f, "repository metadata I/O error: {e0}"),
             Self::Parse(e0) => write!(f, "repository metadata is not valid TOML: {e0}"),
             Self::Invalid(e0) => write!(f, "invalid repository metadata: {e0}"),
+            Self::MigrationRequired(version) => write!(
+                f,
+                "repository format {version} requires migration; run `kat migrate`"
+            ),
         }
     }
 }
@@ -208,7 +256,7 @@ mod tests {
 
     fn metadata() -> RepositoryMetadata {
         RepositoryMetadata {
-            format_version: 1,
+            format_version: SUPPORTED_FORMAT_VERSION,
             repository_id: RepositoryId::from_uuid(Uuid::parse_str(UUID_A).unwrap()),
             software_id: SoftwareId::from_uuid(Uuid::parse_str(UUID_B).unwrap()),
             object_encoding: ObjectEncoding::CborDeterministicV1,
@@ -249,7 +297,7 @@ mod tests {
         let path = dir.path().join("repository.toml");
         write_metadata(
             &path,
-            "2",
+            "3",
             UUID_A,
             UUID_B,
             "cbor-deterministic-v1",
@@ -263,7 +311,7 @@ mod tests {
     fn unsupported_object_encoding_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("repository.toml");
-        write_metadata(&path, "1", UUID_A, UUID_B, "bogus", "sha256");
+        write_metadata(&path, "2", UUID_A, UUID_B, "bogus", "sha256");
         let err = RepositoryMetadata::read(&path).unwrap_err();
         assert!(matches!(err, MetadataError::Invalid(_)));
     }
@@ -272,7 +320,7 @@ mod tests {
     fn unsupported_hash_algorithm_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("repository.toml");
-        write_metadata(&path, "1", UUID_A, UUID_B, "cbor-deterministic-v1", "md5");
+        write_metadata(&path, "2", UUID_A, UUID_B, "cbor-deterministic-v1", "md5");
         let err = RepositoryMetadata::read(&path).unwrap_err();
         assert!(matches!(err, MetadataError::Invalid(_)));
     }
@@ -283,7 +331,7 @@ mod tests {
         let path = dir.path().join("repository.toml");
         write_metadata(
             &path,
-            "1",
+            "2",
             "not-a-uuid",
             UUID_B,
             "cbor-deterministic-v1",
@@ -291,5 +339,30 @@ mod tests {
         );
         let err = RepositoryMetadata::read(&path).unwrap_err();
         assert!(matches!(err, MetadataError::Invalid(_)));
+    }
+
+    #[test]
+    fn legacy_metadata_requires_explicit_migration_for_normal_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("repository.toml");
+        write_metadata(
+            &path,
+            "1",
+            UUID_A,
+            UUID_B,
+            "cbor-deterministic-v1",
+            "sha256",
+        );
+
+        assert!(matches!(
+            RepositoryMetadata::read(&path),
+            Err(MetadataError::MigrationRequired(1))
+        ));
+        assert_eq!(
+            RepositoryMetadata::read_for_migration(&path)
+                .unwrap()
+                .format_version,
+            LEGACY_FORMAT_VERSION
+        );
     }
 }
