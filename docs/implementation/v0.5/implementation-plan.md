@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phases 10 and 11 are frozen. Phase 12's transport, Hub, authenticated remote workflows, and CLI contract review are complete locally (`54bbaa4`, `e93a140`); deployment verification remains pending. Phase 13 migration is not complete. Phase 14 has a coverage audit, scenario specification, and passing regression baseline in [system-acceptance.md](system-acceptance.md); SYS-01..SYS-05 remain pending Phase 13 and the user-path prerequisites identified there.
+Phases 10 and 11 are frozen. Phase 12's transport, Hub, authenticated remote workflows, and CLI contract review are complete locally (`54bbaa4`, `e93a140`); deployment verification remains pending. Phase 13 migration and root-workspace bootstrap are implemented and locally verified. Phase 14 has a coverage audit and scenario specification in [system-acceptance.md](system-acceptance.md); SYS-01..SYS-05 remain pending the `kat record` and `kat clone` workflows.
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -31,6 +31,7 @@ Phases 10 and 11 are frozen. Phase 12's transport, Hub, authenticated remote wor
 | Phase 12.5.4 | `11e47b8`, `42bab72` | Complete locally. Authenticated `remote add/list`, `fetch`, `push`, and `sync` workflows persist no credentials and are exercised in separate CLI processes. |
 | Phase 12.5 CLI contract review | `54bbaa4`, `e93a140` | Complete locally. Push enforces fast-forward ancestry before CAS; topology retains all six outcomes; live endpoint binding and partial fetch JSON outcomes are covered. Deployment acceptance remains pending. |
 | Phase 14 coverage audit | `62ef064` | Mapped UC-001..UC-008, current suites, invariants, SYS-01..SYS-05, and the missing user-path prerequisites. Current workspace tests, formatting, and Clippy pass; full system scenarios remain pending. |
+| Phase 13 | `c603b37` | Complete locally. `kat init` and explicit `kat migrate` share root-revision bootstrap; migration preserves existing canonical objects, verifies semantic closure and Git snapshot protection, and writes format 2 last. Migration and CLI tests plus the full workspace gate pass. Deployment acceptance and Phase 14 workflows remain separate. |
 
 ## 1. Objective
 
@@ -747,6 +748,8 @@ Implement the actual remote sync via KAT Hub/Git.
 ## Phase 13: Migration and compatibility
 ### Goal
 Migrate v0.4 repositories to v0.5 seamlessly.
+### Status
+Complete locally. Fresh CLI initialization and explicit v0.4 migration create a verified root revision and workspace base; the full verification gate passed on 2026-10-25.
 ### Local revision contract
 - Keep `kat commit` as semantic Change acceptance; it does not create a complete `RepositoryRevision` or move the workspace base.
 - `kat record [PATH ...]` creates a complete local revision from the accepted semantic head and tracked physical working tree. Existing tracked paths are captured, missing paths are deletions, and new paths must be named explicitly. It advances only the workspace base, never a named reference.
@@ -759,6 +762,7 @@ Migrate v0.4 repositories to v0.5 seamlessly.
 - v0.4 uses repository metadata format 1; v0.5 uses format 2. The migration changes metadata and adds new repository/workspace state only; it never rewrites existing canonical objects.
 - Run migration explicitly with `kat migrate`. Opening a format-1 repository must fail with an actionable migration-required error instead of silently mutating it.
 - Keep format 1 until the protected snapshot, root revision, workspace state, and current-workspace pointer are verified. Atomically write format 2 last; retries must validate/reuse immutable state left by interruption. Repeated migration reports already complete and makes no changes.
+- Fresh `kat init` uses an atomic temporary root marker to resume semantic initialization if interrupted before the accepted ref exists; remove the marker before snapshot capture.
 ### Design inputs
 - `canonical-impact-audit.md`
 - `repository-revision-model.md`
@@ -780,8 +784,9 @@ Migrate v0.4 repositories to v0.5 seamlessly.
 - Do not create or move a local named reference implicitly; revision heads are derived from topology and local references remain optional.
 - Record repository format version transition.
 ### Tests
-- Fresh `kat init` creates a root `RepositoryRevision`, Git-backed snapshot, and workspace base through the same bootstrap invariants as migration.
-- v0.4 repo without Git, v0.4 repo already inside Git, clean physical workspace, dirty physical workspace, migration interrupted, migration repeated, and post-migration v0.4 `ObjectId`s unchanged.
+- `tests/migration_cli.rs` exercises fresh `kat init`, initialization inside an existing Git project, explicit migration, and repeated migration in separate CLI processes.
+- Six migration tests and two bootstrap-marker tests cover a root revision, ignored and Git metadata exclusion, dirty working-tree capture, full Change dependency closure, byte-for-byte preservation of existing objects, interrupted migration retry, and marker-path collision.
+- `cargo test --workspace`, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo run --bin generate_assets` pass; generated assets are current.
 ### Regression checks
 - `cargo test --workspace`, `cargo fmt --check`, `cargo clippy ... -D warnings`.
 - Post-migration v0.4 ObjectIds verified unchanged.
@@ -789,6 +794,7 @@ Migrate v0.4 repositories to v0.5 seamlessly.
 - Interrupted bootstrap or migration leaves format 1, which cannot be opened as a complete v0.5 repository; retry validates and reuses existing immutable state. Format 2 is visible only after all root/workspace state is recoverable.
 ### Acceptance criteria
 - v0.4 repository opens and migrates without mutating golden ObjectIds.
+- Normal repository open rejects format 1 until migration completes; repeat migration verifies the completed root and does not move the workspace base.
 ### Artifacts produced
 - Migration subsystem.
 ### Out of scope for this phase

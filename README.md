@@ -141,10 +141,11 @@ kat history
 | `kat validate` | Run mechanical consistency validation across accepted state. |
 | `kat artifacts` | Evaluate artifact accountability baselines against current accepted state. |
 
-When `kat init` adopts a project with an existing `.git` directory, KAT moves
-that Git repository to `.kat/adoption-backup/original-git` and uses its managed
-physical backend. The prior Git history is preserved there; the project root
-no longer has a `.git` directory for ordinary Git commands.
+When `kat init` or `kat migrate` adopts a project with an existing `.git`
+directory, KAT moves that Git repository to
+`.kat/adoption-backup/original-git` and uses its managed physical backend. The
+prior Git history is preserved there; the project root no longer has a `.git`
+directory for ordinary Git commands.
 
 ---
 

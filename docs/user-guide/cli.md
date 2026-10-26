@@ -62,11 +62,12 @@ All mutation commands must route through the Change Engine. The CLI must not byp
 
 `kat init` creates the semantic root, captures the current non-ignored project
 files as its initial physical snapshot, and sets the workspace base to the
-resulting root `RepositoryRevision`. If the project has an existing `.git`
-directory, KAT preserves it under `.kat/adoption-backup/original-git` and uses
-its managed physical backend. `kat migrate` explicitly upgrades a v0.4 format-1
-repository; ordinary repository commands fail with a migration-required error
-until that operation completes.
+resulting root `RepositoryRevision`. If initialization or migration adopts a
+project with an existing `.git` directory, KAT preserves it under
+`.kat/adoption-backup/original-git` and uses its managed physical backend.
+`kat migrate` explicitly upgrades a v0.4 format-1 repository; ordinary
+repository commands fail with a migration-required error until that operation
+completes.
 
 ---
 

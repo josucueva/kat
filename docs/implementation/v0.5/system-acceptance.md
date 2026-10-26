@@ -1,6 +1,6 @@
 # KAT v0.5 System Acceptance
 
-**Status:** Coverage audit and scenario specification drafted. No system scenario has been executed or accepted by this document.
+**Status:** Coverage audit and scenario specification drafted; Phase 13 migration/bootstrap is complete locally. No system scenario has been executed or accepted by this document.
 
 ## Purpose and boundary
 
@@ -15,19 +15,19 @@ state. The existing loopback Hub and Git test services are suitable for local
 acceptance. TLS deployment, production retention, durability, and performance
 remain separate deployment gates.
 
-Phase 13 migration remains a Phase 14 precondition. Preparation of this audit
-can proceed now, but Phase 14 cannot be declared complete until Phases 1–13 and
-the user-path prerequisites below are complete.
+Phase 13 migration and root-workspace bootstrap are implemented and locally
+verified. Phase 14 still requires the user-path prerequisites below and the
+SYS-01..SYS-05 executions before it can be declared complete.
 
 ## Existing coverage audit
 
-“Existing coverage” identifies tests present in the repository; it does not
-claim that they were rerun during this audit. Component and feature tests are
-not substitutes for the integrated scenarios below.
+“Existing coverage” identifies component and feature tests; they are not
+substitutes for the integrated scenarios below. Only the gates with explicit
+evidence in the status table are marked passed.
 
 | Area | Existing coverage | Remaining system-level gap |
 | --- | --- | --- |
-| A. Repository lifecycle | `tests/init.rs`, `tests/open.rs`, `tests/cli.rs`, and `tests/v04_porcelain.rs` cover initialization, reopening, inspection, semantic authoring, and persistence. | One user journey does not yet span supported CLI workspace setup, semantic and physical evolution, validation, and reopening a complete `RepositoryRevision`. |
+| A. Repository lifecycle | `tests/init.rs`, `tests/migration_cli.rs`, `tests/open.rs`, `tests/cli.rs`, and `tests/v04_porcelain.rs` cover initialization, explicit migration, reopening, inspection, semantic authoring, and persistence. | One user journey does not yet combine semantic and physical evolution, validation, and reopening a complete sequence of `RepositoryRevision`s. |
 | B. Semantic evolution | `tests/change.rs`, `tests/query.rs`, and CLI flows in `tests/cli.rs` cover element creation/update/lifecycle, relationships, trace, impact, validation, accountability, and multi-operation Changes. | These flows are not combined with accepted physical revisions and remote collaboration in one software-development journey. |
 | C. Physical evolution | `tests/workspace.rs`, `tests/workspace_git.rs`, `tests/reconcile_physical.rs`, and `tests/reconcile_conformance.rs` cover snapshot identity, content and mode changes, protection refs, and physical merges. | The audited CLI has no command that captures ordinary working-tree edits into a new local `RepositoryRevision`; tests construct snapshots/revisions through repository APIs. |
 | D. Workspace behavior | `tests/collaboration_json.rs` covers the Phase 10 E2E-01..10 workflows through CLI invocations, including restart, conflict resolution, abort, advance, switch, and reference preservation. | These workflows use prepared revision fixtures; they do not begin with ordinary local physical development and end in a remotely shared revision. |
@@ -65,13 +65,11 @@ not substitutes for the integrated scenarios below.
 ## User-path prerequisites
 
 The current tests establish transport behavior using helpers that bypass two
-user-facing transitions required by the proposed scenarios. Their contracts
-are now defined in [collaboration-workflow.md](collaboration-workflow.md), but
-their implementation and system acceptance remain pending:
+user-facing transitions required by the proposed scenarios. Root initialization
+and migration are implemented and locally tested; the contracts are defined in
+[collaboration-workflow.md](collaboration-workflow.md). The remaining work is:
 
-1. Fresh `kat init` and v0.4 migration must create the same kind of initial
-   root `RepositoryRevision` and workspace base. `kat commit` remains semantic
-   Change acceptance. `kat record [PATH ...]` creates a complete local revision
+1. `kat record [PATH ...]` creates a complete local revision
    from the current accepted semantic state and tracked physical tree, with
    explicit paths required for newly tracked files. Explicit paths must be
    workspace-relative existing regular files or symlinks, must not name
@@ -81,10 +79,6 @@ their implementation and system acceptance remain pending:
    Multiple semantic commits before one record must preserve the dependency
    chain to every ChangeRevision, and the recorded head must pass full closure
    verification with its result state matching the new revision.
-   Bootstrap excludes `.kat` and `.git` metadata. Migration keeps format 1
-   until the protected root revision and workspace state are complete, then
-   atomically writes format 2; an interrupted migration is retryable and may
-   not expose a partial format-2 repository.
 2. The remote model specifies clone, but the CLI exposes no `kat clone` command.
    Current remote CLI tests use a test helper to copy repository identity,
    semantic objects, physical state, refs, and workspace base into peer
@@ -93,10 +87,10 @@ their implementation and system acceptance remain pending:
 These are not test-harness gaps. Until the supported user workflows exist (or
 the project explicitly scopes them out and documents another supported path),
 the multi-developer and complete software-lifecycle scenarios cannot be claimed
-as user-level system acceptance. The audit confirmed this in `src/cli.rs` and
-`src/main.rs::run_commit`; `tests/remote_cli_e2e.rs::clone_at_base` supplies the
-peer bootstrap through test-only repository APIs. A fixture that recreates the
-test helper would only repeat component integration evidence.
+as user-level system acceptance. The remaining gaps are in `src/cli.rs` and
+`src/main.rs::run_commit`; `tests/remote_cli_e2e.rs::clone_at_base` supplies
+the peer bootstrap through test-only repository APIs. A fixture that recreates
+the test helper would only repeat component integration evidence.
 
 ## System scenarios
 
@@ -142,8 +136,8 @@ revisions have the expected parents and component identities; tracked bytes
 and executable mode match; read/validation
 commands do not mutate accepted state; history explains the accepted Change.
 
-**Current status:** Blocked by the local workspace/revision capture user path.
-The semantic subflows exist independently.
+**Current status:** Blocked by the missing `kat record` workflow. The semantic
+subflows and root initialization exist independently.
 
 ### SYS-02: Two developers evolve independently and converge
 
@@ -169,9 +163,9 @@ fixture.
 result; remote-tracking refs move only on fetch; neither fetch nor sync moves a
 workspace base; the final physical tree and semantic state agree across users.
 
-**Current status:** Blocked by the missing CLI clone workflow and local
-revision-capture path. Existing `remote_cli_e2e` seeds peer state and revisions
-with test helpers.
+**Current status:** Blocked by the missing `kat clone` and `kat record`
+workflows. Existing `remote_cli_e2e` seeds peer state and revisions with test
+helpers.
 
 ### SYS-03: Resolve simultaneous semantic and physical conflicts
 
@@ -268,9 +262,10 @@ The first five gates establish local system acceptance. Readiness-1 and
 Deployment-1 are separate release-readiness work; passing local tests must not
 be reported as deployment proof.
 
-The baseline run completed successfully on 2026-10-25: `cargo test --workspace`,
-`cargo fmt --check`, and `cargo clippy --workspace --all-targets -- -D warnings`.
-It verifies the existing suite, not the integrated SYS scenarios.
+The regression gate passed on 2026-10-25 with `cargo test --workspace`,
+`cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+and generated-asset verification. It verifies the existing suite, not the
+integrated SYS scenarios.
 
 ## Stateful sequence testing
 
@@ -285,14 +280,12 @@ the current conformance suite.
 
 ## Execution order
 
-1. Complete Phase 13 migration, as required by the existing Phase 14
-   precondition.
-2. Resolve the missing CLI workspace/revision capture and clone workflows, or
-   explicitly narrow the v0.5 user-facing support contract.
-3. Implement the smallest repeatable SYS-01..SYS-05 harness by reusing
+1. Implement and accept the missing CLI `kat record` and `kat clone` workflows,
+   or explicitly narrow the v0.5 user-facing support contract.
+2. Implement the smallest repeatable SYS-01..SYS-05 harness by reusing
    `tests/collaboration_json.rs`, `tests/remote_cli_e2e.rs`, and existing
    repository inspection helpers.
-4. Run the scenarios, fix product defects with focused regressions, and record
+3. Run the scenarios, fix product defects with focused regressions, and record
    exact results in the Phase 14 tracker.
-5. Run the full regression/conformance gate. Schedule deployment acceptance
+4. Run the full regression/conformance gate. Schedule deployment acceptance
    separately.

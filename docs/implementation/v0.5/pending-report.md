@@ -1,6 +1,6 @@
 # v0.5 Implementation Pending Report
 
-This report outlines the remaining work for KAT v0.5. **Phases 10 and 11 are frozen. Phase 12.0–12.5 remote design, local implementations, authenticated workflows, and CLI contract review are complete locally; deployment verification remains pending. Phase 13 migration remains pending. Phase 14's coverage audit and scenario specification are committed in `62ef064`; the existing workspace test, format, and Clippy baseline passed on 2026-10-25. SYS-01..SYS-05 remain unexecuted pending Phase 13 and the user-path prerequisites in [system-acceptance.md](system-acceptance.md).**
+This report outlines the remaining work for KAT v0.5. **Phases 10 and 11 are frozen. Phase 12.0–12.5 remote design, local implementations, authenticated workflows, and CLI contract review are complete locally; deployment verification remains pending. Phase 13 migration and root-workspace bootstrap are complete locally. Phase 14's coverage audit and scenario specification are committed in `62ef064`; its regression gate passed on 2026-10-25. SYS-01..SYS-05 remain unexecuted pending the `kat record`/`kat clone` user paths in [system-acceptance.md](system-acceptance.md).**
 
 ## What Has Been Completed
 
@@ -28,10 +28,11 @@ All core reconciliation, conflict resolution, topology traversal, and collaborat
 - AUTH-17/18 (`8712523`): Added Unix loopback acceptance tests composing `RemoteCoordinator`, authenticated Hub HTTP, and authenticated Git smart HTTP. AUTH-17 publishes semantic and physical changes with publish access, reopens clients, then fetches with read access into a second repository; complete closure, tracking references, and preservation of local refs, accepted state, workspace base, active lineage, and working-tree bytes are checked. AUTH-18 transfers physical snapshots and one canonical object, then revokes publish access so the next real Hub HTTP object upload receives `403`; no named ref advances. Wrong-repository grants, read-only publication, shared Hub/Git revocation, authorized retry, and stale CAS are also checked. Full workspace tests, build, formatting, Clippy, and generated-asset checks pass. This is loopback evidence, not deployed TLS or retention proof.
 - Step 12.5.4 (`11e47b8`) remote CLI workflows, hardened by `54bbaa4`: Added `remote add/list`, `fetch`, `push`, and `sync`. Named remotes persist only HTTPS endpoints and repository/backend identities; `KAT_REMOTE_TOKEN` and optional `KAT_REMOTE_CA_FILE` are runtime-only. Push publishes the current clean workspace base revision only when its semantic state matches the accepted state and the working tree is clean. Existing remote targets must be ancestors of the candidate; the observed target remains the CAS expectation to catch later races. Hub operations are scoped to the configured local `RepositoryId`, and Git snapshot operations verify the live backend marker. Fetch and sync preserve local authority, partial tracking outcomes retain all fields in versioned JSON, and topology output distinguishes `Same`, `LocalAhead`, `OtherAhead`, `Diverged`, `AmbiguousMergeBase`, and `Unrelated`. Separate-process tests cover remote persistence, authenticated end-to-end publication and fetch, stale CAS, non-fast-forward rejection, live backend mismatch, partial tracking updates, invalid and revoked credentials, read-only push denial, and local authority preservation. The focused CLI suite and full workspace verification passed; formatting, build, Clippy, and generated assets are clean. Deployment TLS/proxy isolation, direct-backend access control, retention, and durability remain unverified.
 - Phase 14 coverage audit (`62ef064`): Mapped UC-001..UC-008, invariant coverage, and existing tests into SYS-01..SYS-05. The current baseline passed `cargo test --workspace`, `cargo fmt --check`, and `cargo clippy --workspace --all-targets -- -D warnings` on 2026-10-25. No system workflow is marked passed. The audit found the CLI does not expose local physical revision capture or same-identity clone; current remote E2E fixtures construct these through repository APIs.
+- Phase 13 migration/bootstrap (`c603b37`): `kat init` now creates a complete parentless root revision and workspace base; `kat migrate` explicitly upgrades format-1 repositories and leaves their existing canonical object bytes unchanged. Snapshot capture excludes `.kat`, `.git`, and ignored paths, and captures the current working tree even when its prior Git tree is dirty. Format 2 is written only after the protected snapshot, revision closure, workspace state, and pointer verify. Migration retries reuse the root and workspace; existing data at the bootstrap-marker path is not replaced. Six migration tests, two bootstrap-marker tests, three separate-process CLI tests, and the full workspace, fmt, Clippy, and generated-asset gates pass. SYS-01..SYS-05 are still unexecuted; `kat record` and `kat clone` remain prerequisites.
 
 ## What Remains Pending
 
-The remaining effort is compatibility migration, full-system local acceptance, then separate deployment acceptance. Deployment work is not the next milestone.
+The remaining effort is the `kat record` and `kat clone` user paths, full-system local acceptance, then separate deployment acceptance. Deployment work is not the next milestone.
 
 ### Phase 11: Remote abstraction — Complete
 
@@ -53,12 +54,14 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 - **Tests**: Deployment retention/durability and cross-platform or deployed remote workflows.
 
 ### Phase 13: Migration and compatibility
+**Status:** Complete locally in `c603b37`; see the Phase 13 implementation checkpoint in [implementation-plan.md](implementation-plan.md).
 **Goal:** Migrate v0.4 repositories to v0.5 seamlessly.
 - Preserve every existing canonical object from v0.4 without mutation.
 - Detect v0.4 repositories and transition to v0.5.
 - Share root-revision bootstrap invariants between fresh `kat init` and v0.4 migration: capture the initial non-ignored tree, create a parentless `RepositoryRevision`, and initialize the workspace base. Do not create or move a named reference implicitly.
 - Exclude `.kat` and all `.git` administrative paths from initial snapshots. Apply Git ignore rules.
 - Keep format 1 until the protected snapshot, root revision, and workspace metadata verify; atomically publish format 2 last. Retrying an interrupted migration must reuse and verify immutable results, and repeating a completed migration must report no change.
+- Fresh CLI initialization uses a temporary atomic marker to resume if interrupted before semantic initialization completes; the marker is removed before capturing project files.
 - Verify that several accepted semantic Changes form a complete dependency chain before a root or recorded revision exposes the latest Change head.
 - `kat record` path contract: existing relative regular files or symlinks only; reject directories, missing/outside/absolute paths, `.`/`..`, `.kat`/`.git`, and ignored paths even when named. Missing previously tracked paths are deletions.
 - **Tests**: v0.4 repo without Git, v0.4 repo inside Git, clean/dirty physical workspace, interrupted/repeated migration.
@@ -73,4 +76,4 @@ Step 11.1 satisfies the Phase 11 acceptance criteria. The implementation plan co
 
 ## Next Steps
 
-Complete Phase 13 migration and compatibility tests using the shared root bootstrap contract, then implement `kat record` and `kat clone`. After those user paths pass focused acceptance, execute the local SYS-01..SYS-05 harness. Keep performance characterization and TLS/proxy isolation, backend retention, and storage durability as separate deployment-readiness gates.
+Implement `kat record` and `kat clone` after the shared root bootstrap contract. After those user paths pass focused acceptance, execute the local SYS-01..SYS-05 harness. Keep performance characterization and TLS/proxy isolation, backend retention, and storage durability as separate deployment-readiness gates.
