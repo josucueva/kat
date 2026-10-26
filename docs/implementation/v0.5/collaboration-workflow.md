@@ -274,7 +274,24 @@ After successful recording, the workspace is based on the new revision.
 
 ---
 
-## 6. Synchronization
+## 6. Creating a developer workspace
+
+`kat clone <REMOTE> <REFERENCE> <DESTINATION>` creates another local workspace
+for the same logical repository. Run it from a KAT repository that already has
+the named remote configured. The source metadata supplies the stable
+`RepositoryId` and `SoftwareId`; the saved remote configuration supplies the
+Hub and Git endpoints and backend binding. Runtime credentials come from
+`KAT_REMOTE_TOKEN` and are not copied.
+
+Clone fetches and verifies remote references and their immutable closures,
+selects the requested named reference, initializes accepted semantic state,
+remote-tracking and local named references, and materializes the selected
+revision's physical snapshot. It builds in a sibling staging directory and
+publishes the destination only after verification. The destination must not
+exist or overlap the source repository. Clone does not move any source
+reference or workspace authority.
+
+## 7. Synchronization
 
 Synchronization updates the local repository's knowledge of shared repository
 history.
@@ -306,7 +323,7 @@ diverged
 
 ---
 
-## 7. Repository movement
+## 8. Repository movement
 
 Moving to another accepted software state operates on a complete
 `RepositoryRevision`.
@@ -332,7 +349,7 @@ Local work must not be silently destroyed during repository movement.
 
 ---
 
-## 8. Publication
+## 9. Publication
 
 Publication makes accepted local repository history visible to collaborators.
 
@@ -358,7 +375,7 @@ Concurrent remote history must never be silently overwritten.
 
 ---
 
-## 9. Divergence
+## 10. Divergence
 
 Concurrent accepted histories are valid.
 
@@ -379,7 +396,7 @@ If neither is an ancestor of the other, KAT may reconcile them.
 
 ---
 
-## 10. Reconciliation
+## 11. Reconciliation
 
 Reconciliation attempts to produce a common descendant of divergent accepted
 histories.
@@ -414,7 +431,7 @@ No competing accepted history is silently discarded.
 
 ---
 
-## 11. Conflict interaction
+## 12. Conflict interaction
 
 Conflicts are first-class reconciliation state.
 
@@ -437,7 +454,7 @@ automatically conflicts.
 
 ---
 
-## 12. Named references
+## 13. Named references
 
 Named references are optional human-readable pointers to
 `RepositoryRevision`s.
@@ -461,7 +478,7 @@ mandatory branch-oriented workflows.
 
 ---
 
-## 13. Git boundary
+## 14. Git boundary
 
 Normal KAT collaboration should not require direct Git version-control
 operations.
@@ -485,7 +502,7 @@ KAT workspace base must be detected and must not silently change semantic state.
 
 ---
 
-## 14. Core command responsibilities
+## 15. Core command responsibilities
 
 The expected collaboration intentions are:
 
@@ -527,7 +544,7 @@ validation.
 
 ---
 
-## 15. Collaboration principles
+## 16. Collaboration principles
 
 The workflow follows these principles:
 

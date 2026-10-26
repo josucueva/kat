@@ -1,6 +1,6 @@
 # KAT v0.5 System Acceptance
 
-**Status:** Coverage audit and scenario specification are active; Phase 13 migration/bootstrap and SYS-01 are complete locally. SYS-02..SYS-05 remain pending.
+**Status:** Phase 13 migration/bootstrap, SYS-01, the clone workflow, and SYS-03 are complete locally. SYS-02 has been exercised and is blocked at publication after reconciliation; SYS-04..SYS-05 remain pending.
 
 ## Purpose and boundary
 
@@ -17,8 +17,10 @@ remain separate deployment gates.
 
 Phase 13 migration and root-workspace bootstrap are implemented and locally
 verified. `kat record` is implemented and SYS-01 passes through separate CLI
-processes with persistent-state assertions. Phase 14 still requires `kat clone`
-and SYS-02..SYS-05 before it can be declared complete.
+processes with persistent-state assertions. `kat clone` creates and verifies
+same-identity workspaces. SYS-02 revealed that finalization can leave the
+workspace base and accepted semantic head at different states, which ordinary
+push rejects. This authority contract must be resolved before SYS-02 can pass.
 
 ## Existing coverage audit
 
@@ -168,14 +170,18 @@ fixture.
 result; remote-tracking refs move only on fetch; neither fetch nor sync moves a
 workspace base; the final physical tree and semantic state agree across users.
 
-**Current status:** Blocked by the missing `kat clone` and `kat record`
-workflows. Existing `remote_cli_e2e` seeds peer state and revisions with test
-helpers.
+**Current status:** Executed locally through separate CLI processes. Both
+clones were coherent; independent semantic and physical changes fetched and
+reconciled cleanly. After finalization, `kat push` returned
+`PUSH_WORKSPACE_STATE_MISMATCH` because the merge revision's semantic state
+differs from `refs/accepted`. The remote named reference and developer B's
+local authority remained unchanged. SYS-02 is not passed until the finalize/push
+authority contract permits a verified merged revision to be published.
 
 ### SYS-03: Resolve simultaneous semantic and physical conflicts
 
-**Preconditions:** SYS-02 clone and local revision workflows available; two
-developers start from the same revision.
+**Preconditions:** Same-identity clone and local revision workflows are
+available; two developers start from the same revision.
 
 **Steps:**
 
@@ -195,8 +201,15 @@ input revisions; the resolved semantic choice and physical file content match
 the explicit decisions.
 
 **Current status:** The conflict mechanisms and local CLI flows exist. The
-multi-user publication sequence is not yet exercised through user-created
-repositories.
+scenario passes locally on 2026-10-25 through separate CLI processes. Two
+clones independently changed the same requirement and tracked source file,
+published separate heads, fetched and inspected divergence, and observed both
+conflict classes. Finalization was rejected while conflicts remained; resolving
+the semantic side independently, then choosing the physical working file,
+produced a merge revision with both parents and the intended content. The
+selected local semantic state matched `refs/accepted`, so the merged revision
+published successfully. The unselected developer's accepted state is not moved
+by fetch or publication.
 
 ### SYS-04: Interrupt publication, restart, and retry
 
@@ -249,14 +262,15 @@ cross-process fault/recovery scenario remains to be run.
 
 ## Release gates
 
-The current local score is **2/5**: SYS-01 and the regression/conformance
-baseline have passed. SYS-02..SYS-05 remain pending; performance and deployment
-gates are tracked separately.
+Two of five local release gates have passed: Local-1 (SYS-01) and Local-5
+(regression/conformance). SYS-02 is blocked by the finalize/push authority
+mismatch; SYS-04..SYS-05 remain pending. SYS-03 passes, but Local-2 requires
+both SYS-02 and SYS-03. Performance and deployment gates are tracked separately.
 
 | Gate | Evidence required | Status |
 | --- | --- | --- |
 | Local-1: lifecycle and critical CLI workflows | SYS-01 passes through real CLI processes and persistent state assertions. | Passed 2026-10-25 |
-| Local-2: semantic and physical reconciliation | SYS-02 and SYS-03 preserve intended changes, conflicts, and ancestry. | Blocked by user-path prerequisites |
+| Local-2: semantic and physical reconciliation | SYS-02 and SYS-03 preserve intended changes, conflicts, and ancestry. | Blocked: SYS-02 cannot publish a finalized merged semantic state. |
 | Local-3: failure isolation | SYS-04 and SYS-05 show no silent authority movement and successful recovery where promised. | Not run |
 | Local-4: remote publication integrity | Complete closure, CAS, fetch isolation, and retry pass through Hub and Git transports together. | Existing component evidence; system gate not run |
 | Local-5: regression and conformance | `cargo test --workspace`, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, including canonical vectors. | Passed 2026-10-25 |
@@ -285,10 +299,11 @@ the current conformance suite.
 
 ## Execution order
 
-1. Implement and accept same-identity `kat clone` for the multi-developer
-   workflow; `kat record` and SYS-01 are complete locally.
-2. Execute SYS-02..SYS-05 using the real CLI and persistent repositories,
-   reusing existing loopback services and repository inspection helpers.
-3. Fix discovered defects with focused regressions and record exact results in
-   this tracker. Run the full regression/conformance gate after implementation
-   changes; schedule deployment acceptance separately.
+1. Resolve how explicit reconciliation finalization accepts a non-conflicting
+   merged semantic
+   state while preserving Change and revision history; retain the push guard's
+   fail-closed behavior until that contract is implemented.
+2. Complete SYS-02 and execute SYS-04..SYS-05 using real CLI processes and
+   persistent repositories.
+3. Record exact results and run the full regression/conformance gate after
+   implementation changes; schedule deployment acceptance separately.

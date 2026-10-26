@@ -1,7 +1,7 @@
 # KAT v0.5 Implementation Plan
 
 ## Status
-Phases 10 and 11 are frozen. Phase 12's transport, Hub, authenticated remote workflows, and CLI contract review are complete locally (`54bbaa4`, `e93a140`); deployment verification remains pending. Phase 13 migration and root-workspace bootstrap are implemented and locally verified. Phase 14.1 `kat record` and SYS-01 are complete locally; `kat clone` and SYS-02..SYS-05 remain pending in [system-acceptance.md](system-acceptance.md).
+Phases 10 and 11 are frozen. Phase 12's transport, Hub, authenticated remote workflows, and CLI contract review are complete locally (`54bbaa4`, `e93a140`); deployment verification remains pending. Phase 13 migration and root-workspace bootstrap are implemented and locally verified. Phase 14.1 `kat record` and SYS-01 are complete locally. Phase 14.2 `kat clone` and SYS-03 are implemented and verified; SYS-02 has been exercised but cannot publish a reconciled revision because finalization leaves the accepted semantic head behind the workspace base. SYS-04..SYS-05 remain pending in [system-acceptance.md](system-acceptance.md).
 
 ## Progress Log
 | Phase | Commit | Notes |
@@ -33,6 +33,7 @@ Phases 10 and 11 are frozen. Phase 12's transport, Hub, authenticated remote wor
 | Phase 14 coverage audit | `62ef064` | Mapped UC-001..UC-008, current suites, invariants, SYS-01..SYS-05, and the missing user-path prerequisites. Current workspace tests, formatting, and Clippy pass; full system scenarios remain pending. |
 | Phase 13 | `c603b37` | Complete locally. `kat init` and explicit `kat migrate` share root-revision bootstrap; migration preserves existing canonical objects, verifies semantic closure and Git snapshot protection, and writes format 2 last. Migration and CLI tests plus the full workspace gate pass. Deployment acceptance and Phase 14 workflows remain separate. |
 | Phase 14.1 | `cfd7302` | `kat record [PATH ...]` creates complete semantic-only, physical-only, and combined revisions, advances only workspace base, verifies closure before authority movement, and recovers failed recording. Six focused record tests and SYS-01 pass; the full workspace suite, formatting, Clippy, and generated assets are clean. |
+| Phase 14.2 | `8506bba` | `kat clone <REMOTE> <REFERENCE> <DESTINATION>` creates a verified same-identity workspace from a configured remote. Clone acceptance and SYS-03 pass. SYS-02 reaches clean reconciliation, then push fails closed with `PUSH_WORKSPACE_STATE_MISMATCH`; the remote reference and workspace remain unchanged. |
 
 ## 1. Objective
 
@@ -810,18 +811,19 @@ Validate KAT v0.5 as a complete user-facing software repository across semantic 
 - Maps UC-001..UC-008, collaboration invariants, and remote authority rules to repeatable CLI scenarios and persistent-state assertions.
 ### Preconditions
 - Phases 1-13 complete.
-- The supported CLI can initialize a local workspace and create complete revisions through `kat record`; same-`RepositoryId` developer creation through `kat clone` remains a prerequisite for multi-developer scenarios.
+- The supported CLI can initialize a local workspace and create complete revisions through `kat record`; same-`RepositoryId` developer repositories can be created through `kat clone`.
 ### Design constraints
 - Use separate real `kat` processes and persistent isolated repository roots.
 - Assert durable refs, objects, workspace bases, Git snapshots, and working-tree contents in addition to exit codes and output.
 - Reuse existing component/conformance tests; do not duplicate them as system tests.
 - Keep local loopback acceptance separate from deployment proof.
 ### Implementation work
-- Status: Coverage audit and SYS-01..SYS-05 specification are committed. Phase 14.1 `kat record` and SYS-01 are complete locally; `kat clone` and SYS-02..SYS-05 remain pending.
+- Status: Coverage audit and SYS-01..SYS-05 specification are committed. Phase 14.1 `kat record` and SYS-01 are complete locally. Phase 14.2 clone and SYS-03 are verified locally; SYS-02 exposed a publication blocker after reconciliation. SYS-04..SYS-05 remain pending.
 - [x] Implement `kat record [PATH ...]` for semantic-only, physical-only, and combined revisions without changing the meaning of `kat commit`.
-- [ ] Implement `kat clone` to establish a same-`RepositoryId` developer repository through the supported remote workflow.
+- [x] Implement `kat clone` to establish a same-`RepositoryId` developer repository through the configured remote workflow.
 - [x] Execute SYS-01 through separate CLI processes with persistent-state assertions.
-- [ ] Execute SYS-02..SYS-05 after their user-path prerequisites are available.
+- [x] Execute SYS-03 through separate CLI clones, independent semantic and physical conflicts, explicit resolutions, finalization, and publication.
+- [ ] Resolve the finalized non-conflicting merge authority contract, then pass SYS-02 and execute SYS-04..SYS-05.
 ### Tests
 - SYS-01 Build and reopen a software repository; cover UC-001..UC-008.
 - SYS-02 Two developers evolve independently and converge.
