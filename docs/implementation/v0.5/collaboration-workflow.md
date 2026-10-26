@@ -179,11 +179,13 @@ symlink. Absolute paths, paths containing `.` or `..` components, paths outside
 the workspace, directories, missing paths, and any path under `.kat` or a
 `.git` component are rejected. The current Git ignore rules apply even to an
 explicit path; naming an ignored path is an error, not an override. A symlink
-is captured as a symlink entry, without following its target. Directories are
-not expanded implicitly; callers name the desired files. To delete a tracked
-path, remove it from the working tree; passing a missing path does not mean
-deletion. Naming an already tracked existing path is allowed and has no effect
-on the tracked set.
+is captured as a symlink entry, without following its target. Parent
+components of tracked or explicitly named files must be real workspace
+directories; a symlinked parent is rejected so tracked paths cannot resolve
+outside the workspace. Directories are not expanded implicitly; callers name
+the desired files. To delete a tracked path, remove it from the working tree;
+passing a missing path does not mean deletion. Naming an already tracked
+existing path is allowed and has no effect on the tracked set.
 
 The new revision has the current workspace base as its parent. Its semantic
 state is the current accepted semantic state. `semantic_change` identifies the

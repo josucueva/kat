@@ -1,6 +1,6 @@
 # KAT v0.5 System Acceptance
 
-**Status:** Coverage audit and scenario specification drafted; Phase 13 migration/bootstrap is complete locally. No system scenario has been executed or accepted by this document.
+**Status:** Coverage audit and scenario specification are active; Phase 13 migration/bootstrap and SYS-01 are complete locally. SYS-02..SYS-05 remain pending.
 
 ## Purpose and boundary
 
@@ -16,8 +16,9 @@ acceptance. TLS deployment, production retention, durability, and performance
 remain separate deployment gates.
 
 Phase 13 migration and root-workspace bootstrap are implemented and locally
-verified. Phase 14 still requires the user-path prerequisites below and the
-SYS-01..SYS-05 executions before it can be declared complete.
+verified. `kat record` is implemented and SYS-01 passes through separate CLI
+processes with persistent-state assertions. Phase 14 still requires `kat clone`
+and SYS-02..SYS-05 before it can be declared complete.
 
 ## Existing coverage audit
 
@@ -100,8 +101,8 @@ loopback Hub and controlled Git services. Assertions inspect command exit status
 human/JSON output as applicable, and persisted refs, objects, workspace state,
 Git tree, and working-tree bytes after the process exits.
 
-The scenarios are specified now; the affected product workflows above must be
-available before their full user-level execution.
+Each scenario is executed through separate CLI processes; the test records
+below identify which user-level workflows have passed.
 
 ### SYS-01: Build and reopen a software repository
 
@@ -116,13 +117,13 @@ local revision-capture workflows available.
    Decision, Implementation, Artifact, and Validation. Link the decision to
    its requirement/constraint, the implementation and validation to their
    semantic targets, and the Artifact to the represented implementation.
-   Run `kat check`, `kat validate`, and `kat commit`, then `kat record` without
-   paths. Between `kat commit` and `kat record`, verify `status` reports the
-   accepted semantic head as not yet bound to a complete revision and `push`
-   refuses it. Then verify recording creates a semantic-only revision and
-   reuses the initial physical snapshot. Exercise update, supersede, deprecate,
-   and accountability operations on suitable elements while preserving at
-   least one active trace path; accept and record the resulting semantic state.
+   Run `kat commit`, then `kat check` and `kat validate` against the accepted
+   semantic state. Before `kat record`, verify `status` reports that state as
+   unrecorded and `push` refuses it. Record without paths; verify a
+   semantic-only revision reuses the initial physical snapshot. Exercise update,
+   supersede, deprecate, and accountability operations on suitable elements
+   while preserving an active trace path; accept several Changes before one
+   record and verify their full history remains available.
 3. Add a tracked source file and an executable file by naming both paths to
    `kat record`. Verify this creates a physical-only revision with the expected
    bytes and executable mode. Then change semantic knowledge and a tracked file,
@@ -136,8 +137,12 @@ revisions have the expected parents and component identities; tracked bytes
 and executable mode match; read/validation
 commands do not mutate accepted state; history explains the accepted Change.
 
-**Current status:** Blocked by the missing `kat record` workflow. The semantic
-subflows and root initialization exist independently.
+**Current status:** Passed locally on 2026-10-25 by
+`tests/system_acceptance.rs::sys_01_build_and_reopen_through_separate_cli_processes`.
+The test uses fresh `kat` processes for each command and checks root bootstrap,
+all three revision transitions, multiple semantic Changes before recording,
+artifact accountability history, push refusal before recording, executable
+mode, immutable named references, reopen behavior, and read-command isolation.
 
 ### SYS-02: Two developers evolve independently and converge
 
@@ -244,13 +249,13 @@ cross-process fault/recovery scenario remains to be run.
 
 ## Release gates
 
-The current local score is **1/5**: only the regression/conformance baseline
-has passed. None of SYS-01..SYS-05 has been executed; performance and deployment
+The current local score is **2/5**: SYS-01 and the regression/conformance
+baseline have passed. SYS-02..SYS-05 remain pending; performance and deployment
 gates are tracked separately.
 
 | Gate | Evidence required | Status |
 | --- | --- | --- |
-| Local-1: lifecycle and critical CLI workflows | SYS-01 passes through real CLI processes and persistent state assertions. | Not run |
+| Local-1: lifecycle and critical CLI workflows | SYS-01 passes through real CLI processes and persistent state assertions. | Passed 2026-10-25 |
 | Local-2: semantic and physical reconciliation | SYS-02 and SYS-03 preserve intended changes, conflicts, and ancestry. | Blocked by user-path prerequisites |
 | Local-3: failure isolation | SYS-04 and SYS-05 show no silent authority movement and successful recovery where promised. | Not run |
 | Local-4: remote publication integrity | Complete closure, CAS, fetch isolation, and retry pass through Hub and Git transports together. | Existing component evidence; system gate not run |
@@ -264,8 +269,8 @@ be reported as deployment proof.
 
 The regression gate passed on 2026-10-25 with `cargo test --workspace`,
 `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
-and generated-asset verification. It verifies the existing suite, not the
-integrated SYS scenarios.
+and generated-asset verification. SYS-01 is a separate process-level scenario;
+the remaining integrated scenarios are not yet accepted.
 
 ## Stateful sequence testing
 
@@ -280,12 +285,10 @@ the current conformance suite.
 
 ## Execution order
 
-1. Implement and accept the missing CLI `kat record` and `kat clone` workflows,
-   or explicitly narrow the v0.5 user-facing support contract.
-2. Implement the smallest repeatable SYS-01..SYS-05 harness by reusing
-   `tests/collaboration_json.rs`, `tests/remote_cli_e2e.rs`, and existing
-   repository inspection helpers.
-3. Run the scenarios, fix product defects with focused regressions, and record
-   exact results in the Phase 14 tracker.
-4. Run the full regression/conformance gate. Schedule deployment acceptance
-   separately.
+1. Implement and accept same-identity `kat clone` for the multi-developer
+   workflow; `kat record` and SYS-01 are complete locally.
+2. Execute SYS-02..SYS-05 using the real CLI and persistent repositories,
+   reusing existing loopback services and repository inspection helpers.
+3. Fix discovered defects with focused regressions and record exact results in
+   this tracker. Run the full regression/conformance gate after implementation
+   changes; schedule deployment acceptance separately.
