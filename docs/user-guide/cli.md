@@ -51,6 +51,7 @@ session state.
 * `kat migrate`
 * `kat commit`
 * `kat record [PATH ...]`
+* `kat clone <REMOTE> <REFERENCE> <DESTINATION>`
 * `kat change begin`
 * `kat change status`
 * `kat change commit`
@@ -81,6 +82,13 @@ regular files or symlinks; directories, ignored paths, and `.kat`/`.git`
 metadata paths are rejected. Parent directories must be real workspace
 directories; a symlinked parent is rejected. Recording never moves a named
 reference.
+
+Run `kat clone` from a KAT repository that already has the remote configured.
+It fetches and verifies the remote revision closure, initializes the new
+workspace with the same repository and software identities, materializes the
+selected revision, and saves the credential-free remote binding. The
+destination must not exist or overlap the source repository. Supply the runtime
+token with `KAT_REMOTE_TOKEN`; it is not copied to the clone.
 
 ---
 

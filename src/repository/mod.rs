@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod author;
 pub mod change;
+pub mod clone;
 pub mod conflicts;
 pub mod error;
 pub mod git_http;

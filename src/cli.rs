@@ -53,6 +53,7 @@ Repository:
   init       Initialize a KAT repository
   migrate    Migrate a v0.4 repository to v0.5
   remote     Configure authenticated Hub and workspace endpoints
+  clone      Create a developer workspace from a configured remote reference
   fetch      Fetch and verify a remote's content
   push       Publish the current workspace revision to a remote reference
   sync       Fetch and report topology without moving workspace authority
@@ -91,6 +92,23 @@ pub enum Command {
     // -----------------------------------------------------------------------
     // Collaboration
     // -----------------------------------------------------------------------
+    /// Create a same-repository developer workspace from a remote named reference
+    #[command(next_help_heading = "Collaboration")]
+    Clone {
+        /// Configured remote name in the source repository
+        remote: String,
+
+        /// Remote named reference to clone (for example, main)
+        reference: String,
+
+        /// New destination directory
+        destination: PathBuf,
+
+        /// Output structured machine JSON envelope
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Fetch and verify remote content, updating remote-tracking refs only
     #[command(next_help_heading = "Collaboration")]
     Fetch {

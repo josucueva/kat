@@ -123,6 +123,9 @@ kat record
 
 # New files enter the tracked workspace only when named
 kat record src/new-module.rs
+
+# Create another developer workspace from a configured remote
+kat clone origin main ../kat-dev-b
 ```
 
 ---
@@ -136,6 +139,7 @@ kat record src/new-module.rs
 | `kat status` | Display a concise summary of current accepted repository status and health. |
 | `kat commit` | Accept the current semantic Change without moving the complete workspace revision. |
 | `kat record [PATH ...]` | Create a complete local revision from accepted semantics and tracked physical files; named references do not move. |
+| `kat clone <REMOTE> <REFERENCE> <DESTINATION>` | Create a same-repository developer workspace from a configured remote reference. |
 | `kat create <type> --title "..."` | Create a new knowledge element (`requirement`, `constraint`, `design-decision`, `implementation`, `artifact`, etc.). |
 | `kat update <element-id> --title "..."` | Update properties on an existing active element (advances version ObjectId). |
 | `kat deprecate <element-id>` | Mark an active element as Deprecated. |

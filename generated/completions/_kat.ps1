@@ -26,6 +26,7 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('-V', '-V ', [CompletionResultType]::ParameterName, 'Print version')
             [CompletionResult]::new('--version', '--version', [CompletionResultType]::ParameterName, 'Print version')
             [CompletionResult]::new('status', 'status', [CompletionResultType]::ParameterValue, 'Show accepted repository state and current draft status')
+            [CompletionResult]::new('clone', 'clone', [CompletionResultType]::ParameterValue, 'Create a same-repository developer workspace from a remote named reference')
             [CompletionResult]::new('fetch', 'fetch', [CompletionResultType]::ParameterValue, 'Fetch and verify remote content, updating remote-tracking refs only')
             [CompletionResult]::new('push', 'push', [CompletionResultType]::ParameterValue, 'Publish the current clean workspace revision using named-reference CAS')
             [CompletionResult]::new('sync', 'sync', [CompletionResultType]::ParameterValue, 'Fetch a remote and report its topology relative to the workspace base')
@@ -69,6 +70,12 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'kat;clone' {
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output structured machine JSON envelope')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
         'kat;fetch' {
@@ -447,6 +454,7 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
         }
         'kat;help' {
             [CompletionResult]::new('status', 'status', [CompletionResultType]::ParameterValue, 'Show accepted repository state and current draft status')
+            [CompletionResult]::new('clone', 'clone', [CompletionResultType]::ParameterValue, 'Create a same-repository developer workspace from a remote named reference')
             [CompletionResult]::new('fetch', 'fetch', [CompletionResultType]::ParameterValue, 'Fetch and verify remote content, updating remote-tracking refs only')
             [CompletionResult]::new('push', 'push', [CompletionResultType]::ParameterValue, 'Publish the current clean workspace revision using named-reference CAS')
             [CompletionResult]::new('sync', 'sync', [CompletionResultType]::ParameterValue, 'Fetch a remote and report its topology relative to the workspace base')
@@ -486,6 +494,9 @@ Register-ArgumentCompleter -Native -CommandName 'kat' -ScriptBlock {
             break
         }
         'kat;help;status' {
+            break
+        }
+        'kat;help;clone' {
             break
         }
         'kat;help;fetch' {

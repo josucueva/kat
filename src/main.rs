@@ -43,7 +43,7 @@ use kat::repository::session::{
 
 use clap::Parser;
 use kat::cli::machine_presenter::MachinePresenter;
-use kat::cli::remote::{run_fetch, run_push, run_remote_add, run_remote_list, run_sync};
+use kat::cli::remote::{run_clone, run_fetch, run_push, run_remote_add, run_remote_list, run_sync};
 use kat::cli::{Cli, Command, OntologyCommands, RemoteCommands};
 
 use kat::repository::query::{
@@ -74,6 +74,12 @@ fn main() -> ExitCode {
         Command::Migrate => cmd_migrate(),
         Command::Status { compact, json } => run_status(compact, json),
         Command::Fetch { remote, json } => run_fetch(remote, json),
+        Command::Clone {
+            remote,
+            reference,
+            destination,
+            json,
+        } => run_clone(remote, reference, destination, json),
         Command::Push {
             remote,
             reference,

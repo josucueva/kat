@@ -1,7 +1,7 @@
 //! User-facing remote configuration and fetch/push/sync workflows.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::cli::machine_presenter::MachinePresenter;
@@ -21,6 +21,85 @@ use crate::repository::workspace::git_transport::{
 use crate::repository::workspace::{WorkspaceError, open_workspace};
 
 const TOKEN_ENV: &str = "KAT_REMOTE_TOKEN";
+
+pub fn run_clone(
+    remote_name: String,
+    reference: String,
+    destination: PathBuf,
+    json: bool,
+) -> ExitCode {
+    let source = match open_repository(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => return failure(None, json, "clone", "NOT_IN_REPOSITORY", error),
+    };
+    let remote = match RemoteConfig::open(
+        source.root_dir(),
+        &remote_name,
+        source.metadata.repository_id,
+    ) {
+        Ok(remote) => remote,
+        Err(error) => {
+            return failure(
+                Some(&source),
+                json,
+                "clone",
+                remote_config_code(&error),
+                error,
+            );
+        }
+    };
+    let token = match std::env::var(TOKEN_ENV) {
+        Ok(token) => token,
+        Err(_) => {
+            return failure(
+                Some(&source),
+                json,
+                "clone",
+                "REMOTE_CREDENTIAL_MISSING",
+                format!("set {TOKEN_ENV} for this command; credentials are never stored in KAT"),
+            );
+        }
+    };
+    match crate::repository::clone::clone_repository(
+        source.root_dir(),
+        &remote,
+        &reference,
+        &destination,
+        &token,
+    ) {
+        Ok(outcome) => match open_repository(Path::new(&outcome.destination)) {
+            Ok(repository) => {
+                if json {
+                    MachinePresenter::present_success(&repository, &outcome);
+                } else {
+                    println!(
+                        "Cloned {}/{} into {}.",
+                        remote_name, reference, outcome.destination
+                    );
+                    println!("  repository_id: {}", outcome.repository_id);
+                    println!("  revision_id:   {}", outcome.revision_id);
+                }
+                ExitCode::SUCCESS
+            }
+            Err(error) => failure(Some(&source), json, "clone", "CLONE_FAILED", error),
+        },
+        Err(error) => {
+            let code = match error {
+                crate::repository::clone::CloneError::InvalidReference(_) => "INVALID_REFERENCE",
+                crate::repository::clone::CloneError::ReferenceNotFound { .. } => {
+                    "CLONE_REFERENCE_NOT_FOUND"
+                }
+                crate::repository::clone::CloneError::InvalidDestination
+                | crate::repository::clone::CloneError::OverlappingDestination
+                | crate::repository::clone::CloneError::DestinationExists(_) => {
+                    "CLONE_INVALID_DESTINATION"
+                }
+                _ => "CLONE_FAILED",
+            };
+            failure(Some(&source), json, "clone", code, error)
+        }
+    }
+}
 
 pub fn run_remote_add(
     name: String,

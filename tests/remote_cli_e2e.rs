@@ -336,24 +336,26 @@ impl Fixture {
         let temp = tempfile::tempdir().unwrap();
         let source_root = temp.path().join("source");
         fs::create_dir_all(&source_root).unwrap();
-        let initialized = init_repository(&source_root).unwrap();
-        let source_backend = GitWorkspaceBackend::init(&source_root).unwrap();
-        let base_snapshot = source_backend.create_snapshot(&[]).unwrap();
-        let source_store = ObjectStore::new(source_root.join(".kat"));
-        let base_revision = put_revision(
-            &source_store,
-            vec![],
-            SemanticStateId::from_object_id(initialized.state),
-            base_snapshot.clone(),
+        let initialized = run_kat(&source_root, &["init"], None, None);
+        assert!(
+            initialized.status.success(),
+            "init failed: {}",
+            String::from_utf8_lossy(&initialized.stderr)
         );
+        let source_repository = open_repository(&source_root).unwrap();
+        let source_workspace = read_workspace_state(&source_root).unwrap();
+        let base_revision = source_workspace.base_revision;
+        let base_snapshot = source_repository
+            .read_revision(base_revision)
+            .unwrap()
+            .workspace_snapshot;
         let source_refs = FileRefStore::new(source_root.join(".kat"));
         source_refs
             .compare_and_swap_ref("local/main", None, base_revision)
             .unwrap();
-        init_workspace(&source_root, base_revision).unwrap();
 
         let binding = GitWorkspaceBinding {
-            repository_id: initialized.repository_id,
+            repository_id: source_repository.metadata.repository_id,
             workspace_backend_id: WorkspaceBackendId::new(),
         };
         let workspace_remote = temp.path().join("workspace.git");
@@ -364,7 +366,7 @@ impl Fixture {
         let policy_path = temp.path().join("authorization.json");
         write_policy(
             &policy_path,
-            initialized.repository_id,
+            source_repository.metadata.repository_id,
             &[READ_TOKEN, PUBLISH_TOKEN],
         );
         let authorization = Arc::new(AuthorizationVerifier::open(&policy_path).unwrap());
@@ -402,7 +404,7 @@ impl Fixture {
             hub_root,
             policy_path,
             ca_file,
-            repository_id: initialized.repository_id,
+            repository_id: source_repository.metadata.repository_id,
             binding,
             base_revision,
             base_snapshot,
@@ -904,6 +906,696 @@ fn authenticated_cli_publish_fetch_sync_and_partial_failure_use_separate_process
         "authorized retry failed: {}",
         String::from_utf8_lossy(&retry_fetch.stdout)
     );
+}
+
+#[test]
+fn authenticated_clone_creates_a_coherent_persistent_workspace() {
+    let fixture = Fixture::new();
+    fixture.configure_remote(&fixture.source_root, None);
+    let pushed = run_kat(
+        &fixture.source_root,
+        &["push", "origin", "main", "--json"],
+        Some(PUBLISH_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(
+        pushed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pushed.stdout)
+    );
+
+    let destination = fixture._temp.path().join("clone");
+    let cloned = run_kat(
+        &fixture.source_root,
+        &[
+            "clone",
+            "origin",
+            "main",
+            destination.to_str().unwrap(),
+            "--json",
+        ],
+        Some(READ_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(
+        cloned.status.success(),
+        "clone failed: {}{}",
+        String::from_utf8_lossy(&cloned.stdout),
+        String::from_utf8_lossy(&cloned.stderr)
+    );
+    let clone_result: serde_json::Value = serde_json::from_slice(&cloned.stdout).unwrap();
+    assert_eq!(
+        clone_result["data"]["repository_id"],
+        fixture.repository_id.to_string()
+    );
+    assert_eq!(
+        clone_result["data"]["revision_id"],
+        fixture.base_revision.to_string()
+    );
+
+    let source = open_repository(&fixture.source_root).unwrap();
+    let clone = open_repository(&destination).unwrap();
+    assert_eq!(clone.metadata.repository_id, source.metadata.repository_id);
+    assert_eq!(clone.metadata.software_id, source.metadata.software_id);
+    assert_eq!(clone.accepted, source.accepted);
+    let workspace = read_workspace_state(&destination).unwrap();
+    assert_eq!(workspace.base_revision, fixture.base_revision);
+    let refs = FileRefStore::new(destination.join(".kat"));
+    assert_eq!(refs.read_ref("local/main").unwrap(), fixture.base_revision);
+    assert_eq!(
+        refs.read_ref("remotes/origin/main").unwrap(),
+        fixture.base_revision
+    );
+    let backend = GitWorkspaceBackend::open(&destination).unwrap();
+    assert!(
+        backend
+            .verify_snapshot_integrity(&fixture.base_snapshot)
+            .unwrap()
+    );
+    assert!(
+        backend
+            .inspect_working_state(&fixture.base_snapshot)
+            .unwrap()
+            .changes
+            .is_clean()
+    );
+    let remote_config = fs::read_to_string(destination.join(".kat/remotes/origin.json")).unwrap();
+    assert!(!remote_config.contains(READ_TOKEN));
+    assert!(
+        run_kat(
+            &destination,
+            &["status", "--json"],
+            Some(READ_TOKEN),
+            Some(&fixture.ca_file)
+        )
+        .status
+        .success(),
+        "clone must reopen in a new CLI process"
+    );
+
+    let missing_destination = fixture._temp.path().join("missing-reference-clone");
+    let missing = run_kat(
+        &fixture.source_root,
+        &[
+            "clone",
+            "origin",
+            "does-not-exist",
+            missing_destination.to_str().unwrap(),
+            "--json",
+        ],
+        Some(READ_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(!missing.status.success());
+    let missing_result: serde_json::Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(missing_result["error"]["code"], "CLONE_REFERENCE_NOT_FOUND");
+    assert!(!missing_destination.exists());
+    assert!(fs::read_dir(fixture._temp.path()).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".kat-clone-")
+    }));
+}
+
+#[test]
+fn sys_02_cli_clone_and_reconcile_fail_closed_before_publication() {
+    let fixture = Fixture::new();
+    fixture.configure_remote(&fixture.source_root, None);
+    let initial_push = run_kat(
+        &fixture.source_root,
+        &["push", "origin", "main", "--json"],
+        Some(PUBLISH_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(
+        initial_push.status.success(),
+        "{}",
+        String::from_utf8_lossy(&initial_push.stdout)
+    );
+
+    let developer_a = fixture._temp.path().join("developer-a");
+    let developer_b = fixture._temp.path().join("developer-b");
+    for destination in [&developer_a, &developer_b] {
+        let cloned = run_kat(
+            &fixture.source_root,
+            &["clone", "origin", "main", destination.to_str().unwrap()],
+            Some(READ_TOKEN),
+            Some(&fixture.ca_file),
+        );
+        assert!(
+            cloned.status.success(),
+            "clone failed: {}{}",
+            String::from_utf8_lossy(&cloned.stdout),
+            String::from_utf8_lossy(&cloned.stderr)
+        );
+        assert_eq!(
+            read_workspace_state(destination).unwrap().base_revision,
+            fixture.base_revision
+        );
+    }
+
+    let begin_a = run_kat(
+        &developer_a,
+        &[
+            "change",
+            "begin",
+            "--description",
+            "Add service requirement",
+        ],
+        None,
+        None,
+    );
+    assert!(
+        begin_a.status.success(),
+        "{}",
+        String::from_utf8_lossy(&begin_a.stderr)
+    );
+    let requirement = run_kat(
+        &developer_a,
+        &[
+            "create",
+            "requirement",
+            "--title",
+            "The service keeps its data",
+        ],
+        None,
+        None,
+    );
+    assert!(
+        requirement.status.success(),
+        "{}",
+        String::from_utf8_lossy(&requirement.stderr)
+    );
+    let requirement_id = output_field(&requirement.stdout, "element_id");
+    for args in [
+        vec!["commit"],
+        vec!["record"],
+        vec!["push", "origin", "main"],
+    ] {
+        let output = run_kat(
+            &developer_a,
+            &args,
+            Some(PUBLISH_TOKEN),
+            Some(&fixture.ca_file),
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let revision_a = read_workspace_state(&developer_a).unwrap().base_revision;
+
+    let begin_b = run_kat(
+        &developer_b,
+        &[
+            "change",
+            "begin",
+            "--description",
+            "Add implementation module",
+        ],
+        None,
+        None,
+    );
+    assert!(
+        begin_b.status.success(),
+        "{}",
+        String::from_utf8_lossy(&begin_b.stderr)
+    );
+    let implementation = run_kat(
+        &developer_b,
+        &[
+            "create",
+            "implementation",
+            "--title",
+            "Persistent storage module",
+        ],
+        None,
+        None,
+    );
+    assert!(
+        implementation.status.success(),
+        "{}",
+        String::from_utf8_lossy(&implementation.stderr)
+    );
+    let implementation_id = output_field(&implementation.stdout, "element_id");
+    let commit = run_kat(&developer_b, &["commit"], None, None);
+    assert!(
+        commit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+    fs::create_dir_all(developer_b.join("src")).unwrap();
+    fs::write(
+        developer_b.join("src/module.rs"),
+        "pub fn durable() -> bool { true }\n",
+    )
+    .unwrap();
+    let recorded = run_kat(&developer_b, &["record", "src/module.rs"], None, None);
+    assert!(
+        recorded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recorded.stderr)
+    );
+    let revision_b = read_workspace_state(&developer_b).unwrap().base_revision;
+
+    let fetch = run_kat(
+        &developer_b,
+        &["fetch", "origin"],
+        Some(READ_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(
+        fetch.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fetch.stderr)
+    );
+    let remote_revision = FileRefStore::new(developer_b.join(".kat"))
+        .read_ref("remotes/origin/main")
+        .unwrap();
+    let sync = run_kat(
+        &developer_b,
+        &["sync", "origin", "--json"],
+        Some(READ_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(
+        sync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sync.stdout)
+    );
+    let sync_result: serde_json::Value = serde_json::from_slice(&sync.stdout).unwrap();
+    assert!(
+        sync_result["data"]["topology"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| { item["reference"] == "main" && item["state"] == "Diverged" })
+    );
+    assert_eq!(
+        read_workspace_state(&developer_b).unwrap().base_revision,
+        revision_b
+    );
+
+    let reconcile = run_kat(
+        &developer_b,
+        &["reconcile", &remote_revision.to_string(), "--json"],
+        None,
+        None,
+    );
+    assert!(
+        reconcile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reconcile.stdout)
+    );
+    let prepared: serde_json::Value = serde_json::from_slice(&reconcile.stdout).unwrap();
+    assert_eq!(prepared["data"]["status"], "prepared_clean");
+    let finalize = run_kat(&developer_b, &["finalize"], None, None);
+    assert!(
+        finalize.status.success(),
+        "{}",
+        String::from_utf8_lossy(&finalize.stderr)
+    );
+    let merge_revision = read_workspace_state(&developer_b).unwrap().base_revision;
+    let merge = open_repository(&developer_b)
+        .unwrap()
+        .read_revision(merge_revision)
+        .unwrap();
+    assert!(merge.parents.contains(&revision_a));
+    assert!(merge.parents.contains(&revision_b));
+
+    let before_push = authority(&developer_b);
+    let remote_before_push =
+        TrustedHubSemanticTransport::open(&fixture.hub_root, fixture.repository_id)
+            .unwrap()
+            .list_references(fixture.repository_id)
+            .unwrap()
+            .named
+            .into_iter()
+            .find(|reference| reference.name == "main")
+            .unwrap()
+            .target;
+    assert_eq!(remote_before_push, revision_a);
+    let push = run_kat(
+        &developer_b,
+        &["push", "origin", "main", "--json"],
+        Some(PUBLISH_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(!push.status.success());
+    let push_result: serde_json::Value = serde_json::from_slice(&push.stdout).unwrap();
+    assert_eq!(
+        push_result["error"]["code"],
+        "PUSH_WORKSPACE_STATE_MISMATCH"
+    );
+    assert_eq!(authority(&developer_b), before_push);
+    let remote_after_push =
+        TrustedHubSemanticTransport::open(&fixture.hub_root, fixture.repository_id)
+            .unwrap()
+            .list_references(fixture.repository_id)
+            .unwrap()
+            .named
+            .into_iter()
+            .find(|reference| reference.name == "main")
+            .unwrap()
+            .target;
+    assert_eq!(remote_after_push, remote_before_push);
+    let accepted = open_repository(&developer_b).unwrap().accepted;
+    assert_ne!(accepted.state, merge.semantic_state.as_object_id());
+    assert_eq!(
+        read_workspace_state(&developer_a).unwrap().base_revision,
+        revision_a
+    );
+    assert_eq!(
+        read_workspace_state(&developer_b).unwrap().base_revision,
+        merge_revision
+    );
+    assert!(
+        run_kat(&developer_a, &["show", &requirement_id], None, None)
+            .status
+            .success()
+    );
+    assert!(
+        run_kat(&developer_b, &["show", &implementation_id], None, None)
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn sys_03_two_cli_developers_resolve_semantic_and_physical_conflicts() {
+    let fixture = Fixture::new();
+    fixture.configure_remote(&fixture.source_root, None);
+    let begin = run_kat(
+        &fixture.source_root,
+        &["change", "begin", "--description", "Seed conflict targets"],
+        None,
+        None,
+    );
+    assert!(begin.status.success());
+    let created = run_kat(
+        &fixture.source_root,
+        &["create", "requirement", "--title", "Original requirement"],
+        None,
+        None,
+    );
+    assert!(created.status.success());
+    let requirement_id = output_field(&created.stdout, "element_id");
+    assert!(
+        run_kat(&fixture.source_root, &["commit"], None, None)
+            .status
+            .success()
+    );
+    fs::create_dir_all(fixture.source_root.join("src")).unwrap();
+    fs::write(
+        fixture.source_root.join("src/module.rs"),
+        "pub fn value() -> u8 { 0 }\n",
+    )
+    .unwrap();
+    assert!(
+        run_kat(
+            &fixture.source_root,
+            &["record", "src/module.rs"],
+            None,
+            None
+        )
+        .status
+        .success()
+    );
+    let seed_push = run_kat(
+        &fixture.source_root,
+        &["push", "origin", "main"],
+        Some(PUBLISH_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(
+        seed_push.status.success(),
+        "{}",
+        String::from_utf8_lossy(&seed_push.stderr)
+    );
+
+    let developer_a = fixture._temp.path().join("conflict-a");
+    let developer_b = fixture._temp.path().join("conflict-b");
+    for destination in [&developer_a, &developer_b] {
+        let cloned = run_kat(
+            &fixture.source_root,
+            &["clone", "origin", "main", destination.to_str().unwrap()],
+            Some(READ_TOKEN),
+            Some(&fixture.ca_file),
+        );
+        assert!(
+            cloned.status.success(),
+            "{}",
+            String::from_utf8_lossy(&cloned.stderr)
+        );
+        assert_eq!(
+            fs::read(destination.join("src/module.rs")).unwrap(),
+            b"pub fn value() -> u8 { 0 }\n"
+        );
+    }
+
+    let base_revision = read_workspace_state(&developer_a).unwrap().base_revision;
+    for (root, title, body, reference) in [
+        (
+            &developer_a,
+            "Requirement chosen by A",
+            "pub fn value() -> u8 { 1 }\n",
+            "main",
+        ),
+        (
+            &developer_b,
+            "Requirement chosen by B",
+            "pub fn value() -> u8 { 2 }\n",
+            "developer-b",
+        ),
+    ] {
+        assert!(
+            run_kat(root, &["change", "begin"], None, None)
+                .status
+                .success()
+        );
+        let update = run_kat(
+            root,
+            &["update", &requirement_id, "--title", title],
+            None,
+            None,
+        );
+        assert!(
+            update.status.success(),
+            "{}",
+            String::from_utf8_lossy(&update.stderr)
+        );
+        assert!(run_kat(root, &["commit"], None, None).status.success());
+        fs::write(root.join("src/module.rs"), body).unwrap();
+        let record = run_kat(root, &["record", "src/module.rs"], None, None);
+        assert!(
+            record.status.success(),
+            "{}",
+            String::from_utf8_lossy(&record.stderr)
+        );
+        let push = run_kat(
+            root,
+            &["push", "origin", reference],
+            Some(PUBLISH_TOKEN),
+            Some(&fixture.ca_file),
+        );
+        assert!(
+            push.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&push.stdout),
+            String::from_utf8_lossy(&push.stderr)
+        );
+    }
+    let revision_a = read_workspace_state(&developer_a).unwrap().base_revision;
+    let revision_b = read_workspace_state(&developer_b).unwrap().base_revision;
+    assert_ne!(revision_a, revision_b);
+
+    let fetched = run_kat(
+        &developer_a,
+        &["fetch", "origin"],
+        Some(READ_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(
+        fetched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fetched.stderr)
+    );
+    let synchronized = run_kat(
+        &developer_a,
+        &["sync", "origin", "--json"],
+        Some(READ_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(
+        synchronized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synchronized.stdout)
+    );
+    let topology: serde_json::Value = serde_json::from_slice(&synchronized.stdout).unwrap();
+    assert!(
+        topology["data"]["topology"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| { item["reference"] == "developer-b" && item["state"] == "Diverged" })
+    );
+    let target = FileRefStore::new(developer_a.join(".kat"))
+        .read_ref("remotes/origin/developer-b")
+        .unwrap();
+    let reconcile = run_kat(
+        &developer_a,
+        &["reconcile", &target.to_string(), "--json"],
+        None,
+        None,
+    );
+    assert!(
+        reconcile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reconcile.stdout)
+    );
+    let conflicts = run_kat(&developer_a, &["conflicts", "--json"], None, None);
+    let conflicts: serde_json::Value = serde_json::from_slice(&conflicts.stdout).unwrap();
+    let semantic_id = conflicts["data"]["semantic_conflicts"][0]["conflict_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let physical_id = conflicts["data"]["physical_conflicts"][0]["conflict_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let before_failed_finalize = authority(&developer_a);
+    let blocked_finalize = run_kat(&developer_a, &["finalize", "--json"], None, None);
+    assert!(!blocked_finalize.status.success());
+    assert_eq!(authority(&developer_a), before_failed_finalize);
+
+    let semantic_resolution = run_kat(
+        &developer_a,
+        &[
+            "resolve",
+            "semantic",
+            &semantic_id,
+            "--accept",
+            "local",
+            "--json",
+        ],
+        None,
+        None,
+    );
+    assert!(
+        semantic_resolution.status.success(),
+        "{}",
+        String::from_utf8_lossy(&semantic_resolution.stdout)
+    );
+    let still_blocked = run_kat(&developer_a, &["finalize", "--json"], None, None);
+    assert!(!still_blocked.status.success());
+    assert_eq!(authority(&developer_a), before_failed_finalize);
+
+    assert!(
+        run_kat(&developer_a, &["materialize"], None, None)
+            .status
+            .success()
+    );
+    fs::write(
+        developer_a.join("src/module.rs"),
+        "pub fn value() -> u8 { 1 }\n",
+    )
+    .unwrap();
+    let physical_resolution = run_kat(
+        &developer_a,
+        &[
+            "resolve",
+            "physical",
+            &physical_id,
+            "--accept",
+            "working",
+            "--json",
+        ],
+        None,
+        None,
+    );
+    assert!(
+        physical_resolution.status.success(),
+        "{}",
+        String::from_utf8_lossy(&physical_resolution.stdout)
+    );
+    let finalize = run_kat(&developer_a, &["finalize"], None, None);
+    assert!(
+        finalize.status.success(),
+        "{}",
+        String::from_utf8_lossy(&finalize.stderr)
+    );
+
+    let merged_id = read_workspace_state(&developer_a).unwrap().base_revision;
+    let merged = open_repository(&developer_a)
+        .unwrap()
+        .read_revision(merged_id)
+        .unwrap();
+    assert!(merged.parents.contains(&revision_a));
+    assert!(merged.parents.contains(&revision_b));
+    assert_eq!(
+        merged.semantic_state.as_object_id(),
+        open_repository(&developer_a).unwrap().accepted.state
+    );
+    assert_eq!(
+        fs::read(developer_a.join("src/module.rs")).unwrap(),
+        b"pub fn value() -> u8 { 1 }\n"
+    );
+    assert_eq!(
+        read_workspace_state(&developer_b).unwrap().base_revision,
+        revision_b
+    );
+    assert_eq!(
+        FileRefStore::new(developer_a.join(".kat"))
+            .read_ref("local/main")
+            .unwrap(),
+        base_revision
+    );
+
+    let published = run_kat(
+        &developer_a,
+        &["push", "origin", "main"],
+        Some(PUBLISH_TOKEN),
+        Some(&fixture.ca_file),
+    );
+    assert!(
+        published.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&published.stdout),
+        String::from_utf8_lossy(&published.stderr)
+    );
+    let remote_main = TrustedHubSemanticTransport::open(&fixture.hub_root, fixture.repository_id)
+        .unwrap()
+        .list_references(fixture.repository_id)
+        .unwrap()
+        .named
+        .into_iter()
+        .find(|item| item.name == "main")
+        .unwrap()
+        .target;
+    assert_eq!(remote_main, merged_id);
+    assert!(
+        run_kat(&developer_a, &["show", &requirement_id], None, None)
+            .status
+            .success()
+    );
+}
+
+fn output_field(output: &[u8], key: &str) -> String {
+    String::from_utf8_lossy(output)
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.trim().split_once(':')?;
+            (name == key).then(|| value.trim().to_owned())
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "missing {key} in output: {}",
+                String::from_utf8_lossy(output)
+            )
+        })
 }
 
 #[derive(Debug, PartialEq, Eq)]
