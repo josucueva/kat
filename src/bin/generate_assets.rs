@@ -36,7 +36,7 @@ fn main() -> Result<(), Error> {
 
 fn render_man_pages(cmd: &clap::Command, out_dir: &Path) -> Result<(), Error> {
     // 1. Generate kat(1) root man page
-    let root_man = r#".TH kat 1 "kat 0.4.4"
+    let root_man = r#".TH kat 1 "kat @VERSION@"
 .SH NAME
 kat \- Knowledge Abstraction Tracker
 .SH SYNOPSIS
@@ -171,10 +171,13 @@ Print version
 .BR kat\-push (1),
 .BR kat\-sync (1)
 "#;
-    fs::write(out_dir.join("kat.1"), root_man)?;
+    fs::write(
+        out_dir.join("kat.1"),
+        root_man.replace("@VERSION@", env!("CARGO_PKG_VERSION")),
+    )?;
 
     // 2. Generate kat-author(1) canonical authoring reference man page
-    let author_man = r#".TH kat\-author 1 "kat 0.4.4"
+    let author_man = r#".TH kat\-author 1 "kat @VERSION@"
 .SH NAME
 kat\-author \- Stage a semantic Change from declarative JSON
 .SH SYNOPSIS
@@ -258,10 +261,13 @@ Supported via \fB\-\-json\fR flag, emitting structured \fBCommonResultEnvelope\f
 .BR kat\-abort (1),
 .BR kat\-ontology (1)
 "#;
-    fs::write(out_dir.join("kat-author.1"), author_man)?;
+    fs::write(
+        out_dir.join("kat-author.1"),
+        author_man.replace("@VERSION@", env!("CARGO_PKG_VERSION")),
+    )?;
 
     // 3. Generate kat-change(1) explicit transaction control man page
-    let change_man = r#".TH kat\-change 1 "kat 0.4.4"
+    let change_man = r#".TH kat\-change 1 "kat @VERSION@"
 .SH NAME
 kat\-change \- Manage draft Change transactions explicitly
 .SH SYNOPSIS
@@ -290,7 +296,10 @@ Abort open change transaction and discard all staged operations.
 .BR kat\-commit (1),
 .BR kat\-abort (1)
 "#;
-    fs::write(out_dir.join("kat-change.1"), change_man)?;
+    fs::write(
+        out_dir.join("kat-change.1"),
+        change_man.replace("@VERSION@", env!("CARGO_PKG_VERSION")),
+    )?;
 
     // 4. Generate remaining subcommand man pages
     for sub in cmd.get_subcommands() {

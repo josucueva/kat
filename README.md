@@ -4,6 +4,8 @@
 
 KAT treats the specification — intent, requirements, constraints, design decisions, and their relationships — as the authoritative knowledge of a software system. Source code, tests, configuration, and documentation are artifacts that represent, implement, validate, or materialize that knowledge. They remain traceable to it, but they never independently redefine the intended state of the software.
 
+**Current source version: 0.5.0.** v0.5 system and deployment acceptance remain in progress; the published installer may provide an earlier release.
+
 ---
 
 ## Key Capabilities

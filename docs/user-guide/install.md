@@ -2,6 +2,8 @@
 
 The `kat` CLI is a single Rust binary that builds on **Linux** and **Windows**.
 
+This checkout builds version **0.5.0**. The one-line installer prefers the latest published release, which may differ from this checkout. Use the source installation below to install the version in this checkout.
+
 ## Prerequisites
  
 - [Rust](https://rustup.rs) (stable, via `rustup`)

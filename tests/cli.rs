@@ -4002,6 +4002,15 @@ fn docs_man_pages_regenerate_without_diff_test() {
 
     let change_man = std::fs::read_to_string("generated/man/kat-change.1").unwrap();
     assert!(change_man.contains("automatically opens a draft Change when needed."));
+
+    let version = format!("\"kat {}\"", env!("CARGO_PKG_VERSION"));
+    for man in [&root_man, &author_man, &change_man] {
+        assert!(man.lines().next().unwrap().ends_with(&version));
+    }
+    assert_eq!(
+        std::fs::read_to_string("version.txt").unwrap().trim(),
+        env!("CARGO_PKG_VERSION")
+    );
 }
 
 // ---------------------------------------------------------------------------
